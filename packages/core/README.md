@@ -34,7 +34,7 @@ const restored = decode(result.encoded, result.mapping);
 
 ## Why Use This?
 
-LLMs tokenize UUIDs inefficiently - a single UUID consumes 5-10 tokens. By replacing IDs with short placeholders:
+LLMs tokenize UUIDs inefficiently - a single UUID consumes ~18 tokens. By replacing IDs with short placeholders:
 
 - **Reduce token usage** by up to 90% on ID-heavy prompts
 - **Lower API costs** proportionally
