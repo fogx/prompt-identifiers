@@ -1,0 +1,64 @@
+{
+  "name": "prompt-identifiers-baml",
+  "version": "0.1.0",
+  "description": "BAML integration for prompt-identifiers. Efficient ID compression for token optimization.",
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.mts",
+        "default": "./dist/index.mjs"
+      },
+      "require": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
+    }
+  },
+  "sideEffects": false,
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts --format cjs,esm --dts --clean",
+    "test": "jest",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "llm",
+    "ai",
+    "baml",
+    "boundaryml",
+    "tokens",
+    "compression",
+    "prompt",
+    "uuid",
+    "ulid"
+  ],
+  "author": "Leon Wolf <fogxdev@gmail.com>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/fogx/prompt-identifiers"
+  },
+  "peerDependencies": {
+    "prompt-identifiers": ">=0.1.0",
+    "@boundaryml/baml": ">=0.70.0"
+  },
+  "peerDependenciesMeta": {
+    "@boundaryml/baml": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/jest": "^29.0.0",
+    "@types/node": "^20.0.0",
+    "jest": "^29.0.0",
+    "prompt-identifiers": "workspace:*",
+    "ts-jest": "^29.0.0",
+    "tsup": "^8.5.1",
+    "typescript": "^5.0.0"
+  }
+}

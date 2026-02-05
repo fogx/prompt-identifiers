@@ -1,0 +1,16 @@
+{
+  "name": "prompt-identifiers",
+  "private": true,
+  "scripts": {
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "changeset": "changeset",
+    "version": "changeset version",
+    "release": "pnpm build && changeset publish"
+  },
+  "devDependencies": {
+    "@changesets/cli": "^2.27.0",
+    "@types/jest": "^29.5.14",
+    "@types/node": "^25.0.10"
+  }
+}
