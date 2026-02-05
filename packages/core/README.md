@@ -18,7 +18,7 @@ import { encode, decode } from 'prompt-identifiers';
 // Encode UUIDs to short placeholders
 const result = encode(
   'User 123e4567-e89b-42d3-a456-426655440000 sent message to 987fcdeb-51a2-43f7-8d9c-0123456789ab',
-  { inputFormat: 'UUIDv4', outputFormat: 'Numeric' }
+  { inputFormat: 'UUID', outputFormat: 'Numeric' }
 );
 
 console.log(result.encoded);
@@ -48,7 +48,7 @@ The mapping preserves the original IDs for perfect reconstruction.
 
 | Format | Pattern | Example |
 |--------|---------|---------|
-| `'UUIDv4'` | RFC 4122 UUID v4 | `123e4567-e89b-42d3-a456-426655440000` |
+| `'UUID'` | RFC 4122 UUID v4 | `123e4567-e89b-42d3-a456-426655440000` |
 | `'ULID'` | Crockford Base32, 26 chars | `01ARZ3NDEKTSV4RRFFQ69G5FAV` |
 
 ### Custom RegExp
@@ -107,19 +107,19 @@ Use `{ template: string }` with format specifiers:
 
 ```typescript
 // Plain numeric
-encode(text, { inputFormat: 'UUIDv4', outputFormat: { template: '<id:{i}>' } });
+encode(text, { inputFormat: 'UUID', outputFormat: { template: '<id:{i}>' } });
 // → <id:0>, <id:1>, <id:2>, ...
 
 // Zero-padded to 4 digits
-encode(text, { inputFormat: 'UUIDv4', outputFormat: { template: 'ID_{i:04}' } });
+encode(text, { inputFormat: 'UUID', outputFormat: { template: 'ID_{i:04}' } });
 // → ID_0000, ID_0001, ID_0002, ...
 
 // Base62 encoding
-encode(text, { inputFormat: 'UUIDv4', outputFormat: { template: '[{i:base62}]' } });
+encode(text, { inputFormat: 'UUID', outputFormat: { template: '[{i:base62}]' } });
 // → [0], [A], [z], [10], ...
 
 // Smart triplet expansion (like SafeNumeric but with custom delimiters)
-encode(text, { inputFormat: 'UUIDv4', outputFormat: { template: '[[{i:zeroFilled}]]' } });
+encode(text, { inputFormat: 'UUID', outputFormat: { template: '[[{i:zeroFilled}]]' } });
 // → [[000]], [[001]], ..., [[999]], [[001000]], ...
 ```
 
@@ -136,21 +136,21 @@ For full control, pass a formatter function:
 ```typescript
 // Custom prefix
 encode(text, {
-  inputFormat: 'UUIDv4',
+  inputFormat: 'UUID',
   outputFormat: (i) => `[[ID_${i}]]`
 });
 // → [[ID_0]], [[ID_1]], ...
 
 // Hex encoding
 encode(text, {
-  inputFormat: 'UUIDv4',
+  inputFormat: 'UUID',
   outputFormat: (i) => `0x${i.toString(16).toUpperCase()}`
 });
 // → 0x0, 0x1, ..., 0xA, 0xB, ...
 
 // Letter-based
 encode(text, {
-  inputFormat: 'UUIDv4',
+  inputFormat: 'UUID',
   outputFormat: (i) => String.fromCharCode(65 + i)
 });
 // → A, B, C, ...

@@ -13,9 +13,9 @@ npm run bench
 
 ## Part 1: Output Format Comparison
 
-All tests use identical UUIDv4 input data for fair comparison.
+All tests use identical UUID input data for fair comparison.
 
-### UUIDv4 → Numeric (Recommended)
+### UUID → Numeric (Recommended)
 
 | IDs | Encode (μs) | Decode (μs) | Roundtrip (μs) |
 |-----|-------------|-------------|----------------|
@@ -29,7 +29,7 @@ All tests use identical UUIDv4 input data for fair comparison.
 |  500 |      266.52 |      122.43 |         388.95 |
 | 1000 |      323.94 |      219.27 |         543.21 |
 
-### UUIDv4 → IdToken (base62)
+### UUID → IdToken (base62)
 
 | IDs | Encode (μs) | Decode (μs) | Roundtrip (μs) |
 |-----|-------------|-------------|----------------|
@@ -40,7 +40,7 @@ All tests use identical UUIDv4 input data for fair comparison.
 |  500 |      193.50 |      154.91 |         348.41 |
 | 1000 |      434.34 |      326.56 |         760.90 |
 
-### UUIDv4 → Template {i:03}
+### UUID → Template {i:03}
 
 | IDs | Encode (μs) | Decode (μs) | Roundtrip (μs) |
 |-----|-------------|-------------|----------------|
@@ -51,7 +51,7 @@ All tests use identical UUIDv4 input data for fair comparison.
 |  500 |      234.01 |      109.17 |         343.19 |
 | 1000 |      442.33 |      218.49 |         660.82 |
 
-### UUIDv4 → Custom Function
+### UUID → Custom Function
 
 | IDs | Encode (μs) | Decode (μs) | Roundtrip (μs) |
 |-----|-------------|-------------|----------------|
@@ -64,7 +64,7 @@ All tests use identical UUIDv4 input data for fair comparison.
 
 ## Part 2: Input Format Comparison
 
-### UUIDv4 (primary use case)
+### UUID (primary use case)
 
 | IDs | Encode (μs) | Decode (μs) | Roundtrip (μs) |
 |-----|-------------|-------------|----------------|
@@ -99,23 +99,23 @@ Testing whether regex complexity affects performance. Using `/[0-9a-f-]{36}/gi` 
 |  500 |      197.01 |      107.93 |         304.95 |
 | 1000 |      390.81 |      227.26 |         618.07 |
 
-**Result:** Nearly identical to the full UUIDv4 pattern (~61μs vs ~67μs at 100 IDs). Regex complexity doesn't matter.
+**Result:** Nearly identical to the full UUID pattern (~61μs vs ~67μs at 100 IDs). Regex complexity doesn't matter.
 
 ## Summary at 100 IDs
 
 | Configuration | Roundtrip (μs) |
 |---------------|----------------|
-| UUIDv4 → Numeric | 57 |
-| UUIDv4 → IdToken | 66 |
-| UUIDv4 → Template | 85 |
-| UUIDv4 → Function | 66 |
+| UUID → Numeric | 57 |
+| UUID → IdToken | 66 |
+| UUID → Template | 85 |
+| UUID → Function | 66 |
 
 ## Analysis
 
 ### Key Findings
 
 1. **Regex complexity doesn't matter**
-   The built-in UUIDv4 pattern (with version/variant validation) performs the same as a simple `/[0-9a-f-]{36}/gi` pattern. V8's regex engine is highly optimized.
+   The built-in UUID pattern (with version/variant validation) performs the same as a simple `/[0-9a-f-]{36}/gi` pattern. V8's regex engine is highly optimized.
 
 2. **All output formats are fast**
    Numeric, IdToken, templates, and functions all perform within 50% of each other.

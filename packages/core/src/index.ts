@@ -9,7 +9,7 @@
 // =============================================================================
 
 /**
- * UUIDv4 pattern - RFC 4122 compliant
+ * UUID pattern - RFC 4122 compliant
  * Matches: 123e4567-e89b-42d3-a456-426655440000
  */
 const UUID_V4_REGEX = /\b[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi;
@@ -26,7 +26,7 @@ const ULID_REGEX = /\b[0-9A-HJKMNP-TV-Z]{26}\b/gi;
 // =============================================================================
 
 /** Input format: built-in name or custom RegExp */
-export type InputFormat = 'UUIDv4' | 'ULID' | RegExp;
+export type InputFormat = 'UUID' | 'ULID' | RegExp;
 
 /** Template-based output format */
 export interface TemplateFormat {
@@ -230,7 +230,7 @@ function getPattern(inputFormat: InputFormat): RegExp {
   }
 
   // Built-in formats - return new instance to reset lastIndex
-  if (inputFormat === 'UUIDv4') {
+  if (inputFormat === 'UUID') {
     return new RegExp(UUID_V4_REGEX.source, UUID_V4_REGEX.flags);
   }
 
@@ -253,7 +253,7 @@ function getPattern(inputFormat: InputFormat): RegExp {
  * @example
  * // Built-in formats
  * encode("User 123e4567-e89b-42d3-a456-426655440000", {
- *   inputFormat: 'UUIDv4',
+ *   inputFormat: 'UUID',
  *   outputFormat: 'Numeric'
  * });
  * // → { encoded: "User 000", mapping: { "000": "123e4567-..." } }
@@ -268,7 +268,7 @@ function getPattern(inputFormat: InputFormat): RegExp {
  * @example
  * // Template with format specifier
  * encode("User 123e4567-e89b-42d3-a456-426655440000", {
- *   inputFormat: 'UUIDv4',
+ *   inputFormat: 'UUID',
  *   outputFormat: { template: '<id:{i:03}>' }
  * });
  * // → { encoded: "User <id:000>", mapping: { "<id:000>": "123e4567-..." } }
@@ -276,7 +276,7 @@ function getPattern(inputFormat: InputFormat): RegExp {
  * @example
  * // Custom formatter function
  * encode("User 123e4567-e89b-42d3-a456-426655440000", {
- *   inputFormat: 'UUIDv4',
+ *   inputFormat: 'UUID',
  *   outputFormat: (i) => `[[ID_${i}]]`
  * });
  * // → { encoded: "User [[ID_0]]", mapping: { "[[ID_0]]": "123e4567-..." } }

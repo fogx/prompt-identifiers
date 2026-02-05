@@ -16,7 +16,7 @@ import { b } from './baml_client';
 
 // Wrap your BAML function
 const analyzeUser = wrapBamlFunction(b.AnalyzeUser, {
-  config: { inputFormat: 'UUIDv4', outputFormat: 'SafeNumeric' },
+  config: { inputFormat: 'UUID', outputFormat: 'SafeNumeric' },
 });
 
 // Use normally - IDs are automatically encoded/decoded
@@ -49,7 +49,7 @@ This is completely transparent - you work with real IDs, the LLM works with comp
 wrapBamlFunction(fn, {
   // Required: encoding configuration
   config: {
-    inputFormat: 'UUIDv4',      // or 'ULID' or custom RegExp
+    inputFormat: 'UUID',      // or 'ULID' or custom RegExp
     outputFormat: 'SafeNumeric', // or 'Numeric', 'IdToken', { template: '...' }
   },
 
@@ -83,7 +83,7 @@ The `encodeFields` option supports dot notation and array wildcards:
 
 | Format | Description | Example |
 |--------|-------------|---------|
-| `'UUIDv4'` | RFC 4122 UUIDs | `123e4567-e89b-42d3-a456-426655440000` |
+| `'UUID'` | RFC 4122 UUIDs | `123e4567-e89b-42d3-a456-426655440000` |
 | `'ULID'` | Crockford Base32 ULIDs | `01ARZ3NDEKTSV4RRFFQ69G5FAV` |
 | `RegExp` | Custom pattern | `/user-\d{6}/gi` |
 
@@ -105,7 +105,7 @@ import { wrapBamlStreamingFunction } from 'prompt-identifiers-baml';
 import { b } from './baml_client';
 
 const streamAnalysis = wrapBamlStreamingFunction(b.stream.AnalyzeUser, {
-  config: { inputFormat: 'UUIDv4', outputFormat: 'SafeNumeric' },
+  config: { inputFormat: 'UUID', outputFormat: 'SafeNumeric' },
 });
 
 // IDs are decoded in real-time as partials arrive
@@ -125,7 +125,7 @@ import { encodeObject } from 'prompt-identifiers-baml';
 
 const { encoded, mapping } = encodeObject(
   { user_id: 'uuid-here', data: { owner: 'other-uuid' } },
-  { inputFormat: 'UUIDv4', outputFormat: 'SafeNumeric' }
+  { inputFormat: 'UUID', outputFormat: 'SafeNumeric' }
 );
 
 // encoded: { user_id: '<000>', data: { owner: '<001>' } }
@@ -177,12 +177,12 @@ const result: AnalyzeUserOutput = await analyzeUser({
 ```typescript
 // Auto-detection: all UUIDs encoded
 const wrapped1 = wrapBamlFunction(fn, {
-  config: { inputFormat: 'UUIDv4', outputFormat: 'SafeNumeric' },
+  config: { inputFormat: 'UUID', outputFormat: 'SafeNumeric' },
 });
 
 // Explicit: only user_id and item IDs encoded
 const wrapped2 = wrapBamlFunction(fn, {
-  config: { inputFormat: 'UUIDv4', outputFormat: 'SafeNumeric' },
+  config: { inputFormat: 'UUID', outputFormat: 'SafeNumeric' },
   encodeFields: ['user_id', 'items[].id'],
 });
 ```

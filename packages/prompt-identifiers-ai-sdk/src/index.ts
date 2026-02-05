@@ -297,7 +297,7 @@ function createStreamingDecoder(mapping: Record<string, string>) {
  * const model = wrapLanguageModel({
  *   model: openai('gpt-4o'),
  *   middleware: promptIdentifiersMiddleware({
- *     config: { inputFormat: 'UUIDv4', outputFormat: 'SafeNumeric' },
+ *     config: { inputFormat: 'UUID', outputFormat: 'SafeNumeric' },
  *     onEncode: (result) => console.log(`Encoded ${result.encodedCount} IDs`),
  *   })
  * });

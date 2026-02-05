@@ -9,7 +9,7 @@ import type { EncodeConfig } from 'prompt-identifiers';
 
 describe('prompt-identifiers-baml', () => {
   const defaultConfig: EncodeConfig = {
-    inputFormat: 'UUIDv4',
+    inputFormat: 'UUID',
     outputFormat: 'SafeNumeric',
   };
 
@@ -460,7 +460,7 @@ describe('prompt-identifiers-baml', () => {
       }));
 
       const wrapped = wrapBamlFunction(mockFn, {
-        config: { inputFormat: 'UUIDv4', outputFormat: 'Numeric' },
+        config: { inputFormat: 'UUID', outputFormat: 'Numeric' },
       });
 
       await wrapped({ id: uuid1 });
@@ -474,7 +474,7 @@ describe('prompt-identifiers-baml', () => {
       }));
 
       const wrapped = wrapBamlFunction(mockFn, {
-        config: { inputFormat: 'UUIDv4', outputFormat: { template: '[ID:{i}]' } },
+        config: { inputFormat: 'UUID', outputFormat: { template: '[ID:{i}]' } },
       });
 
       await wrapped({ id: uuid1 });

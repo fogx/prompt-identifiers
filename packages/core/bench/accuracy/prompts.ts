@@ -87,7 +87,7 @@ CRITICAL REQUIREMENTS:
   // Build a text with all class_ids to encode
   const classIdText = items.map((item) => `CLASSID:${item.class_id}`).join('\n');
   const { encoded: encodedClassIdText, mapping } = encode(classIdText, {
-    inputFormat: 'UUIDv4',
+    inputFormat: 'UUID',
     outputFormat,
   });
 

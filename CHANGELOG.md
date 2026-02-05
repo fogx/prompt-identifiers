@@ -23,7 +23,7 @@ Initial release of all packages.
 
 #### Added
 - `encode()` and `decode()` functions
-- Input formats: UUIDv4, ULID, custom RegExp
+- Input formats: UUID, ULID, custom RegExp
 - Output formats: SafeNumeric, Numeric, IdToken, custom templates
 - Zero runtime dependencies
 

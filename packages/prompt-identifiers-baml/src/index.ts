@@ -143,7 +143,7 @@ function getInputPattern(inputFormat: EncodeConfig['inputFormat']): RegExp {
     const flags = inputFormat.flags.includes('g') ? inputFormat.flags : inputFormat.flags + 'g';
     return new RegExp(inputFormat.source, flags);
   }
-  if (inputFormat === 'UUIDv4') {
+  if (inputFormat === 'UUID') {
     return /\b[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi;
   }
   // ULID
@@ -348,7 +348,7 @@ function deepDecode<T>(
  * import { b } from './baml_client';
  *
  * const analyzeUser = wrapBamlFunction(b.AnalyzeUser, {
- *   config: { inputFormat: 'UUIDv4', outputFormat: 'SafeNumeric' },
+ *   config: { inputFormat: 'UUID', outputFormat: 'SafeNumeric' },
  *   encodeFields: ['user_id', 'items[].id'],  // Optional: specific fields
  * });
  *
@@ -408,7 +408,7 @@ export function wrapBamlFunction<TInput, TOutput>(
  * import { b } from './baml_client';
  *
  * const streamAnalysis = wrapBamlStreamingFunction(b.stream.AnalyzeUser, {
- *   config: { inputFormat: 'UUIDv4', outputFormat: 'SafeNumeric' },
+ *   config: { inputFormat: 'UUID', outputFormat: 'SafeNumeric' },
  * });
  *
  * for await (const partial of streamAnalysis({ user_id: 'uuid-here' })) {
@@ -476,7 +476,7 @@ export function wrapBamlStreamingFunction<TInput, TPartial, TFinal>(
  * ```typescript
  * const { encoded, mapping } = encodeObject(
  *   { user_id: 'uuid-here', data: { owner: 'other-uuid' } },
- *   { inputFormat: 'UUIDv4', outputFormat: 'SafeNumeric' }
+ *   { inputFormat: 'UUID', outputFormat: 'SafeNumeric' }
  * );
  * ```
  */

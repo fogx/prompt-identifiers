@@ -19,7 +19,7 @@ import { promptIdentifiersMiddleware } from 'prompt-identifiers-ai-sdk';
 const model = wrapLanguageModel({
   model: openai('gpt-4o'),
   middleware: promptIdentifiersMiddleware({
-    config: { inputFormat: 'UUIDv4', outputFormat: 'SafeNumeric' },
+    config: { inputFormat: 'UUID', outputFormat: 'SafeNumeric' },
   }),
 });
 
@@ -49,7 +49,7 @@ This is completely transparent - you work with real IDs, the LLM works with comp
 promptIdentifiersMiddleware({
   // Required: encoding configuration
   config: {
-    inputFormat: 'UUIDv4',      // or 'ULID' or custom RegExp
+    inputFormat: 'UUID',      // or 'ULID' or custom RegExp
     outputFormat: 'SafeNumeric', // or 'Numeric', 'IdToken', { template: '...' }
   },
 
@@ -68,7 +68,7 @@ promptIdentifiersMiddleware({
 
 | Format | Description | Example |
 |--------|-------------|---------|
-| `'UUIDv4'` | RFC 4122 UUIDs | `123e4567-e89b-42d3-a456-426655440000` |
+| `'UUID'` | RFC 4122 UUIDs | `123e4567-e89b-42d3-a456-426655440000` |
 | `'ULID'` | Crockford Base32 ULIDs | `01ARZ3NDEKTSV4RRFFQ69G5FAV` |
 | `RegExp` | Custom pattern | `/user-\d{6}/gi` |
 

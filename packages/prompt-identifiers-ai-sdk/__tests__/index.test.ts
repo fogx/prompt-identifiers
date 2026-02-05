@@ -22,7 +22,7 @@ import {
 
 describe('prompt-identifiers-ai-sdk', () => {
   const defaultConfig: EncodeConfig = {
-    inputFormat: 'UUIDv4',
+    inputFormat: 'UUID',
     outputFormat: 'SafeNumeric',
   };
 
@@ -644,7 +644,7 @@ describe('prompt-identifiers-ai-sdk', () => {
 
     test('works with Numeric format', async () => {
       const middleware = createMiddleware({
-        config: { inputFormat: 'UUIDv4', outputFormat: 'Numeric' },
+        config: { inputFormat: 'UUID', outputFormat: 'Numeric' },
       });
 
       const params = createParams([
@@ -662,7 +662,7 @@ describe('prompt-identifiers-ai-sdk', () => {
 
     test('works with custom template format', async () => {
       const middleware = createMiddleware({
-        config: { inputFormat: 'UUIDv4', outputFormat: { template: '[ID:{i}]' } },
+        config: { inputFormat: 'UUID', outputFormat: { template: '[ID:{i}]' } },
       });
 
       const params = createParams([

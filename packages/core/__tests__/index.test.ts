@@ -3,18 +3,18 @@ import { decode, encode, EncodeConfig } from '../src/index';
 describe('prompt-identifiers', () => {
   // Shared test configuration
   const UUID_NUMERIC_CONFIG: EncodeConfig = {
-    inputFormat: 'UUIDv4',
+    inputFormat: 'UUID',
     outputFormat: 'Numeric',
   };
 
-  // Shared helper to generate valid UUIDv4-like strings
+  // Shared helper to generate valid UUID-like strings
   function makeUuid(n: number): string {
     const hex = n.toString(16).padStart(4, '0');
     return `12345678-1234-4234-8234-${hex.padStart(12, '0')}`;
   }
 
   describe('Basic encode/decode', () => {
-    test('encode() with UUIDv4 and Numeric format', () => {
+    test('encode() with UUID and Numeric format', () => {
       const prompt = 'User 123e4567-e89b-42d3-a456-426655440000 requested access';
 
       const result = encode(prompt, UUID_NUMERIC_CONFIG);
@@ -68,7 +68,7 @@ describe('prompt-identifiers', () => {
   });
 
   describe('InputFormat enum values', () => {
-    test('UUIDv4 format works', () => {
+    test('UUID format works', () => {
       const prompt = 'ID: 123e4567-e89b-42d3-a456-426655440000';
 
       const { encoded } = encode(prompt, UUID_NUMERIC_CONFIG);
@@ -103,7 +103,7 @@ describe('prompt-identifiers', () => {
 
     test('Numeric format', () => {
       const { encoded } = encode(uuidPrompt, {
-        inputFormat: 'UUIDv4',
+        inputFormat: 'UUID',
         outputFormat: 'Numeric',
       });
       expect(encoded).toBe('ID: 000');
@@ -111,7 +111,7 @@ describe('prompt-identifiers', () => {
 
     test('IdToken format', () => {
       const { encoded } = encode(uuidPrompt, {
-        inputFormat: 'UUIDv4',
+        inputFormat: 'UUID',
         outputFormat: 'IdToken',
       });
       expect(encoded).toBe('ID: 0');
@@ -119,7 +119,7 @@ describe('prompt-identifiers', () => {
 
     test('Passthrough format', () => {
       const { encoded, mapping } = encode(uuidPrompt, {
-        inputFormat: 'UUIDv4',
+        inputFormat: 'UUID',
         outputFormat: 'Passthrough',
       });
       expect(encoded).toBe(uuidPrompt);
@@ -130,7 +130,7 @@ describe('prompt-identifiers', () => {
   describe('Edge cases', () => {
     test('empty string input', () => {
       const { encoded, mapping } = encode('', {
-        inputFormat: 'UUIDv4',
+        inputFormat: 'UUID',
         outputFormat: 'Numeric',
       });
 
@@ -141,7 +141,7 @@ describe('prompt-identifiers', () => {
     test('no IDs in input returns original', () => {
       const prompt = 'This has no identifiers at all';
       const { encoded, mapping } = encode(prompt, {
-        inputFormat: 'UUIDv4',
+        inputFormat: 'UUID',
         outputFormat: 'Numeric',
       });
 
@@ -154,7 +154,7 @@ describe('prompt-identifiers', () => {
       const uuids = Array.from({ length: 1001 }, (_, i) => makeUuid(i));
       const prompt = uuids.join(' ');
       const { encoded, mapping } = encode(prompt, {
-        inputFormat: 'UUIDv4',
+        inputFormat: 'UUID',
         outputFormat: 'Numeric',
       });
 
@@ -175,14 +175,14 @@ describe('prompt-identifiers', () => {
     test('zeroFilled smart triplet expansion', () => {
       // Single ID -> "000"
       let result = encode(`ID: ${makeUuid(0)}`, {
-        inputFormat: 'UUIDv4',
+        inputFormat: 'UUID',
         outputFormat: 'Numeric',
       });
       expect(Object.keys(result.mapping)[0]).toBe('000');
 
       // 10 IDs -> "000" through "009"
       const tenUuids = Array.from({ length: 10 }, (_, i) => makeUuid(i)).join(' ');
-      result = encode(tenUuids, { inputFormat: 'UUIDv4', outputFormat: 'Numeric' });
+      result = encode(tenUuids, { inputFormat: 'UUID', outputFormat: 'Numeric' });
       expect(Object.keys(result.mapping).sort()).toEqual([
         '000',
         '001',
@@ -201,7 +201,7 @@ describe('prompt-identifiers', () => {
       // Generate 63 UUIDs to test base62 rollover
       const manyUuids = Array.from({ length: 63 }, (_, i) => makeUuid(i)).join(' ');
       const result = encode(manyUuids, {
-        inputFormat: 'UUIDv4',
+        inputFormat: 'UUID',
         outputFormat: 'IdToken',
       });
 
@@ -302,7 +302,7 @@ describe('prompt-identifiers', () => {
 
     test('template with plain {i}', () => {
       const { encoded } = encode(uuidPrompt, {
-        inputFormat: 'UUIDv4',
+        inputFormat: 'UUID',
         outputFormat: { template: '<id:{i}>' },
       });
 
@@ -311,7 +311,7 @@ describe('prompt-identifiers', () => {
 
     test('template with {i:base62}', () => {
       const { encoded } = encode(uuidPrompt, {
-        inputFormat: 'UUIDv4',
+        inputFormat: 'UUID',
         outputFormat: { template: '[ID_{i:base62}]' },
       });
 
@@ -320,7 +320,7 @@ describe('prompt-identifiers', () => {
 
     test('template with {i:04} zero-padding', () => {
       const { encoded } = encode(uuidPrompt, {
-        inputFormat: 'UUIDv4',
+        inputFormat: 'UUID',
         outputFormat: { template: 'ID{i:04}' },
       });
 
@@ -329,7 +329,7 @@ describe('prompt-identifiers', () => {
 
     test('template with {i:zeroFilled} smart triplet expansion', () => {
       const { encoded } = encode(uuidPrompt, {
-        inputFormat: 'UUIDv4',
+        inputFormat: 'UUID',
         outputFormat: { template: '[[{i:zeroFilled}]]' },
       });
 
@@ -338,7 +338,7 @@ describe('prompt-identifiers', () => {
 
     test('template roundtrip', () => {
       const { encoded, mapping } = encode(uuidPrompt, {
-        inputFormat: 'UUIDv4',
+        inputFormat: 'UUID',
         outputFormat: { template: '[[id:{i}]]' },
       });
 
@@ -352,7 +352,7 @@ describe('prompt-identifiers', () => {
     test('invalid template throws error', () => {
       expect(() =>
         encode('test 123e4567-e89b-42d3-a456-426655440000', {
-          inputFormat: 'UUIDv4',
+          inputFormat: 'UUID',
           outputFormat: { template: 'no_placeholder' },
         })
       ).toThrow('must contain {i}');
@@ -365,7 +365,7 @@ describe('prompt-identifiers', () => {
 
     test('custom formatter function', () => {
       const { encoded } = encode(uuidPrompt, {
-        inputFormat: 'UUIDv4',
+        inputFormat: 'UUID',
         outputFormat: (i) => `[[ID_${i}]]`,
       });
 
@@ -374,7 +374,7 @@ describe('prompt-identifiers', () => {
 
     test('hex formatter function', () => {
       const { encoded } = encode(uuidPrompt, {
-        inputFormat: 'UUIDv4',
+        inputFormat: 'UUID',
         outputFormat: (i) => `0x${i.toString(16).toUpperCase()}`,
       });
 
@@ -383,7 +383,7 @@ describe('prompt-identifiers', () => {
 
     test('function formatter roundtrip', () => {
       const { encoded, mapping } = encode(uuidPrompt, {
-        inputFormat: 'UUIDv4',
+        inputFormat: 'UUID',
         outputFormat: (i) => `{${i}}`,
       });
 
@@ -400,7 +400,7 @@ describe('prompt-identifiers', () => {
 
     test('default delimiters use angle brackets', () => {
       const { encoded, mapping } = encode(uuidPrompt, {
-        inputFormat: 'UUIDv4',
+        inputFormat: 'UUID',
         outputFormat: 'SafeNumeric',
       });
 
@@ -411,7 +411,7 @@ describe('prompt-identifiers', () => {
     test('custom delimiters via template', () => {
       // For custom delimiters, use template format instead of SafeNumeric
       const { encoded, mapping } = encode(uuidPrompt, {
-        inputFormat: 'UUIDv4',
+        inputFormat: 'UUID',
         outputFormat: { template: 'ID_{i:03}_' },
       });
 
@@ -423,7 +423,7 @@ describe('prompt-identifiers', () => {
       const prompt =
         'User 123e4567-e89b-42d3-a456-426655440000 sent message to 987fcdeb-51a2-43f7-8d9c-0123456789ab';
       const { encoded, mapping } = encode(prompt, {
-        inputFormat: 'UUIDv4',
+        inputFormat: 'UUID',
         outputFormat: 'SafeNumeric',
       });
 
@@ -435,7 +435,7 @@ describe('prompt-identifiers', () => {
     test('no collision with natural numbers', () => {
       const prompt = 'User 123e4567-e89b-42d3-a456-426655440000';
       const { mapping } = encode(prompt, {
-        inputFormat: 'UUIDv4',
+        inputFormat: 'UUID',
         outputFormat: 'SafeNumeric',
       });
 
@@ -450,7 +450,7 @@ describe('prompt-identifiers', () => {
         'A: 123e4567-e89b-42d3-a456-426655440000, B: 987fcdeb-51a2-43f7-8d9c-0123456789ab, ' +
         'A again: 123e4567-e89b-42d3-a456-426655440000';
       const { encoded, mapping } = encode(prompt, {
-        inputFormat: 'UUIDv4',
+        inputFormat: 'UUID',
         outputFormat: 'SafeNumeric',
       });
 
@@ -466,7 +466,7 @@ describe('prompt-identifiers', () => {
       const uuids = Array.from({ length: 1001 }, (_, i) => makeUuid(i));
       const prompt = uuids.join(' ');
       const { encoded, mapping } = encode(prompt, {
-        inputFormat: 'UUIDv4',
+        inputFormat: 'UUID',
         outputFormat: 'SafeNumeric',
       });
 

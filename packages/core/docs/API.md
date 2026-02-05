@@ -15,7 +15,7 @@ Complete technical reference for `prompt-identifiers`.
   - [TemplateFormat](#templateformat)
   - [FormatterFn](#formatterfn)
 - [Input Format Details](#input-format-details)
-  - [UUIDv4](#uuidv4)
+  - [UUID](#uuid)
   - [ULID](#ulid)
   - [Custom RegExp](#custom-regexp)
 - [Output Format Details](#output-format-details)
@@ -53,7 +53,7 @@ Replace identifiers in text with short placeholders.
 ```typescript
 const result = encode(
   'User 123e4567-e89b-42d3-a456-426655440000 logged in',
-  { inputFormat: 'UUIDv4', outputFormat: 'Numeric' }
+  { inputFormat: 'UUID', outputFormat: 'Numeric' }
 );
 // result.encoded: "User 000 logged in"
 // result.mapping: { "000": "123e4567-e89b-42d3-a456-426655440000" }
@@ -91,14 +91,14 @@ const decoded = decode(
 ### InputFormat
 
 ```typescript
-type InputFormat = 'UUIDv4' | 'ULID' | RegExp
+type InputFormat = 'UUID' | 'ULID' | RegExp
 ```
 
 Specifies how to detect identifiers in the input text.
 
 | Value | Description |
 |-------|-------------|
-| `'UUIDv4'` | Match RFC 4122 UUID version 4 |
+| `'UUID'` | Match RFC 4122 UUID version 4 |
 | `'ULID'` | Match ULID (26-char Crockford Base32) |
 | `RegExp` | Custom pattern (global flag added if missing) |
 
@@ -177,7 +177,7 @@ Custom function that converts an index to a placeholder string.
 
 ## Input Format Details
 
-### UUIDv4
+### UUID
 
 Matches [RFC 4122](https://www.rfc-editor.org/rfc/rfc4122) UUID version 4.
 
@@ -275,7 +275,7 @@ Returns original text unchanged with empty mapping. Useful for testing or condit
 
 ```typescript
 const result = encode(text, {
-  inputFormat: 'UUIDv4',
+  inputFormat: 'UUID',
   outputFormat: 'Passthrough'
 });
 // result.encoded === text
@@ -363,7 +363,7 @@ All identifiers are normalized to lowercase in the mapping. This ensures:
 
 ```typescript
 const result = encode('ID: 123E4567-E89B-42D3-A456-426655440000', {
-  inputFormat: 'UUIDv4',
+  inputFormat: 'UUID',
   outputFormat: 'Numeric'
 });
 // result.mapping: { "000": "123e4567-e89b-42d3-a456-426655440000" }
@@ -403,7 +403,7 @@ Templates must contain `{i}` or `{i:specifier}`.
 
 ```typescript
 encode(text, {
-  inputFormat: 'UUIDv4',
+  inputFormat: 'UUID',
   outputFormat: { template: 'no_placeholder' }
 });
 // Throws: Error: Invalid template "no_placeholder": must contain {i} or {i:specifier}
@@ -419,7 +419,7 @@ Unknown format specifiers fall back to plain numeric:
 
 ```typescript
 encode(text, {
-  inputFormat: 'UUIDv4',
+  inputFormat: 'UUID',
   outputFormat: { template: '{i:unknown}' }
 });
 // Uses plain numeric: 0, 1, 2, ...

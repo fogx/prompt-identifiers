@@ -24,7 +24,7 @@ import {
 
 describe('AI SDK Integration', () => {
   const defaultConfig: EncodeConfig = {
-    inputFormat: 'UUIDv4',
+    inputFormat: 'UUID',
     outputFormat: 'SafeNumeric',
   };
 
