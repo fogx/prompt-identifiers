@@ -5,7 +5,7 @@
  * in inputs and decode them in outputs.
  */
 
-import { decode, EncodeConfig } from 'prompt-identifiers';
+import { decode, EncodeConfig } from "prompt-identifiers";
 
 // =============================================================================
 // Types
@@ -50,7 +50,7 @@ export type BamlFunction<TInput, TOutput> = (input: TInput) => Promise<TOutput>;
 
 /** A BAML streaming function type */
 export type BamlStreamingFunction<TInput, TPartial, TFinal> = (
-  input: TInput
+  input: TInput,
 ) => AsyncGenerator<TPartial, TFinal, unknown>;
 
 // =============================================================================
@@ -63,22 +63,22 @@ export type BamlStreamingFunction<TInput, TPartial, TFinal> = (
  */
 function parseFieldPath(path: string): string[] {
   const segments: string[] = [];
-  let current = '';
+  let current = "";
 
   for (let i = 0; i < path.length; i++) {
     const char = path[i];
 
-    if (char === '.') {
+    if (char === ".") {
       if (current) {
         segments.push(current);
-        current = '';
+        current = "";
       }
-    } else if (char === '[' && path[i + 1] === ']') {
+    } else if (char === "[" && path[i + 1] === "]") {
       if (current) {
         segments.push(current);
-        current = '';
+        current = "";
       }
-      segments.push('[]');
+      segments.push("[]");
       i++; // skip ']'
     } else {
       current += char;
@@ -97,7 +97,7 @@ function parseFieldPath(path: string): string[] {
  */
 function matchesFieldPath(
   currentPath: string[],
-  targetSegments: string[]
+  targetSegments: string[],
 ): boolean {
   if (currentPath.length !== targetSegments.length) {
     return false;
@@ -108,7 +108,7 @@ function matchesFieldPath(
     const current = currentPath[i];
 
     // '[]' matches any array index
-    if (target === '[]') {
+    if (target === "[]") {
       if (!/^\d+$/.test(current)) {
         return false;
       }
@@ -138,12 +138,14 @@ interface EncodeContext {
 /**
  * Get the pattern regex for the input format.
  */
-function getInputPattern(inputFormat: EncodeConfig['inputFormat']): RegExp {
+function getInputPattern(inputFormat: EncodeConfig["inputFormat"]): RegExp {
   if (inputFormat instanceof RegExp) {
-    const flags = inputFormat.flags.includes('g') ? inputFormat.flags : inputFormat.flags + 'g';
+    const flags = inputFormat.flags.includes("g")
+      ? inputFormat.flags
+      : inputFormat.flags + "g";
     return new RegExp(inputFormat.source, flags);
   }
-  if (inputFormat === 'UUID') {
+  if (inputFormat === "UUID") {
     return /\b[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi;
   }
   // ULID
@@ -153,21 +155,25 @@ function getInputPattern(inputFormat: EncodeConfig['inputFormat']): RegExp {
 /**
  * Format a placeholder based on output format and index.
  */
-function formatPlaceholder(outputFormat: EncodeConfig['outputFormat'], index: number): string {
-  if (outputFormat === 'SafeNumeric') {
+function formatPlaceholder(
+  outputFormat: EncodeConfig["outputFormat"],
+  index: number,
+): string {
+  if (outputFormat === "SafeNumeric") {
     const s = index.toString();
     const width = Math.max(3, Math.ceil(s.length / 3) * 3);
-    return `<${s.padStart(width, '0')}>`;
+    return `[${s.padStart(width, "0")}]`;
   }
-  if (outputFormat === 'Numeric') {
+  if (outputFormat === "Numeric") {
     const s = index.toString();
     const width = Math.max(3, Math.ceil(s.length / 3) * 3);
-    return s.padStart(width, '0');
+    return s.padStart(width, "0");
   }
-  if (outputFormat === 'IdToken') {
-    const BASE62 = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
+  if (outputFormat === "IdToken") {
+    const BASE62 =
+      "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
     if (index < 62) return BASE62[index];
-    let result = '';
+    let result = "";
     let n = index;
     while (n > 0) {
       result = BASE62[n % 62] + result;
@@ -175,10 +181,10 @@ function formatPlaceholder(outputFormat: EncodeConfig['outputFormat'], index: nu
     }
     return result;
   }
-  if (outputFormat === 'Passthrough') {
-    return ''; // Should not be called
+  if (outputFormat === "Passthrough") {
+    return ""; // Should not be called
   }
-  if (typeof outputFormat === 'function') {
+  if (typeof outputFormat === "function") {
     return outputFormat(index);
   }
   // Template format
@@ -190,25 +196,26 @@ function formatPlaceholder(outputFormat: EncodeConfig['outputFormat'], index: nu
   let formatted: string;
   if (!specifier) {
     formatted = index.toString();
-  } else if (specifier === 'base62') {
-    const BASE62 = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
+  } else if (specifier === "base62") {
+    const BASE62 =
+      "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
     if (index < 62) formatted = BASE62[index];
     else {
-      formatted = '';
+      formatted = "";
       let n = index;
       while (n > 0) {
         formatted = BASE62[n % 62] + formatted;
         n = Math.floor(n / 62);
       }
     }
-  } else if (specifier === 'zeroFilled') {
+  } else if (specifier === "zeroFilled") {
     const s = index.toString();
     const width = Math.max(3, Math.ceil(s.length / 3) * 3);
-    formatted = s.padStart(width, '0');
+    formatted = s.padStart(width, "0");
   } else {
     const padMatch = specifier.match(/^(\d+)$/);
     if (padMatch) {
-      formatted = index.toString().padStart(parseInt(padMatch[1], 10), '0');
+      formatted = index.toString().padStart(parseInt(padMatch[1], 10), "0");
     } else {
       formatted = index.toString();
     }
@@ -220,7 +227,7 @@ function formatPlaceholder(outputFormat: EncodeConfig['outputFormat'], index: nu
  * Encode a string using context's global state for consistent placeholder assignment.
  */
 function encodeStringWithContext(text: string, ctx: EncodeContext): string {
-  if (ctx.config.outputFormat === 'Passthrough') {
+  if (ctx.config.outputFormat === "Passthrough") {
     return text;
   }
 
@@ -236,7 +243,10 @@ function encodeStringWithContext(text: string, ctx: EncodeContext): string {
     }
 
     // New ID - assign next placeholder
-    const placeholder = formatPlaceholder(ctx.config.outputFormat, ctx.nextIndex);
+    const placeholder = formatPlaceholder(
+      ctx.config.outputFormat,
+      ctx.nextIndex,
+    );
     ctx.nextIndex++;
     ctx.idToPlaceholder.set(id, placeholder);
     ctx.mapping[placeholder] = id;
@@ -255,7 +265,7 @@ function deepEncode<T>(value: T, ctx: EncodeContext, path: string[] = []): T {
   }
 
   // Handle strings - the primary encoding target
-  if (typeof value === 'string') {
+  if (typeof value === "string") {
     // Check if this field should be encoded
     const shouldEncode =
       ctx.fieldPaths === null ||
@@ -272,12 +282,12 @@ function deepEncode<T>(value: T, ctx: EncodeContext, path: string[] = []): T {
   // Handle arrays
   if (Array.isArray(value)) {
     return value.map((item, index) =>
-      deepEncode(item, ctx, [...path, String(index)])
+      deepEncode(item, ctx, [...path, String(index)]),
     ) as T;
   }
 
   // Handle objects
-  if (typeof value === 'object') {
+  if (typeof value === "object") {
     const result: Record<string, unknown> = {};
 
     for (const [key, val] of Object.entries(value)) {
@@ -298,7 +308,7 @@ function deepEncode<T>(value: T, ctx: EncodeContext, path: string[] = []): T {
 function deepDecode<T>(
   value: T,
   mapping: Record<string, string>,
-  countRef: { count: number }
+  countRef: { count: number },
 ): T {
   // Handle null/undefined
   if (value === null || value === undefined) {
@@ -306,7 +316,7 @@ function deepDecode<T>(
   }
 
   // Handle strings
-  if (typeof value === 'string') {
+  if (typeof value === "string") {
     const decoded = decode(value, mapping);
     // Count replacements
     if (decoded !== value) {
@@ -321,7 +331,7 @@ function deepDecode<T>(
   }
 
   // Handle objects
-  if (typeof value === 'object') {
+  if (typeof value === "object") {
     const result: Record<string, unknown> = {};
 
     for (const [key, val] of Object.entries(value)) {
@@ -361,7 +371,7 @@ function deepDecode<T>(
  */
 export function wrapBamlFunction<TInput, TOutput>(
   fn: BamlFunction<TInput, TOutput>,
-  options: WrapBamlFunctionOptions
+  options: WrapBamlFunctionOptions,
 ): BamlFunction<TInput, TOutput> {
   const { config, encodeFields, onEncode, onDecode } = options;
 
@@ -418,7 +428,7 @@ export function wrapBamlFunction<TInput, TOutput>(
  */
 export function wrapBamlStreamingFunction<TInput, TPartial, TFinal>(
   fn: BamlStreamingFunction<TInput, TPartial, TFinal>,
-  options: WrapBamlFunctionOptions
+  options: WrapBamlFunctionOptions,
 ): BamlStreamingFunction<TInput, TPartial, TFinal> {
   const { config, encodeFields, onEncode, onDecode } = options;
 
@@ -426,7 +436,7 @@ export function wrapBamlStreamingFunction<TInput, TPartial, TFinal>(
   const fieldPaths = encodeFields ? encodeFields.map(parseFieldPath) : null;
 
   return async function* (
-    input: TInput
+    input: TInput,
   ): AsyncGenerator<TPartial, TFinal, unknown> {
     // Encode input
     const ctx: EncodeContext = {
@@ -483,7 +493,7 @@ export function wrapBamlStreamingFunction<TInput, TPartial, TFinal>(
 export function encodeObject<T>(
   obj: T,
   config: EncodeConfig,
-  encodeFields?: string[]
+  encodeFields?: string[],
 ): { encoded: T; mapping: Record<string, string> } {
   const fieldPaths = encodeFields ? encodeFields.map(parseFieldPath) : null;
 
@@ -511,11 +521,7 @@ export function encodeObject<T>(
  * );
  * ```
  */
-export function decodeObject<T>(
-  obj: T,
-  mapping: Record<string, string>
-): T {
+export function decodeObject<T>(obj: T, mapping: Record<string, string>): T {
   const countRef = { count: 0 };
   return deepDecode(obj, mapping, countRef);
 }
-

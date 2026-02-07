@@ -12,7 +12,8 @@
  * UUID pattern - RFC 4122 compliant
  * Matches: 123e4567-e89b-42d3-a456-426655440000
  */
-const UUID_V4_REGEX = /\b[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi;
+const UUID_V4_REGEX =
+  /\b[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi;
 
 /**
  * ULID pattern - Crockford Base32, 26 characters
@@ -26,7 +27,7 @@ const ULID_REGEX = /\b[0-9A-HJKMNP-TV-Z]{26}\b/gi;
 // =============================================================================
 
 /** Input format: built-in name or custom RegExp */
-export type InputFormat = 'UUID' | 'ULID' | RegExp;
+export type InputFormat = "UUID" | "ULID" | RegExp;
 
 /** Template-based output format */
 export interface TemplateFormat {
@@ -59,17 +60,17 @@ export type FormatterFn = (index: number) => string;
  * - 'Numeric'     → smart triplet: 000, 001, ..., 999, 001000, ...
  * - 'IdToken'     → base62: 0, 1, ..., 9, A, ..., Z, a, ..., z, 10, ...
  * - 'Passthrough' → no replacement (returns original text)
- * - 'SafeNumeric' → collision-safe: <000>, <001>, ... (angle bracket-wrapped)
+ * - 'SafeNumeric' → collision-safe: [000], [001], ... (square bracket-wrapped)
  *
  * Custom formats:
  * - { template: string } → template with {i} placeholder (use for custom delimiters)
  * - (index) => string    → custom formatter function
  */
 export type OutputFormat =
-  | 'Numeric'
-  | 'IdToken'
-  | 'Passthrough'
-  | 'SafeNumeric'
+  | "Numeric"
+  | "IdToken"
+  | "Passthrough"
+  | "SafeNumeric"
   | TemplateFormat
   | FormatterFn;
 
@@ -91,10 +92,11 @@ export interface EncodeResult {
 // Placeholder Generation
 // =============================================================================
 
-const BASE62_ALPHABET = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
+const BASE62_ALPHABET =
+  "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 
 // Pre-computed base62 values for 0-61 (single character lookups)
-const BASE62_CACHE = BASE62_ALPHABET.split('');
+const BASE62_CACHE = BASE62_ALPHABET.split("");
 
 /**
  * Convert a number to base-62 representation.
@@ -114,7 +116,7 @@ function base62(n: number): string {
   if (n < 62) return BASE62_CACHE[n];
 
   // Multi-character: loop for n >= 62
-  let result = '';
+  let result = "";
   while (n > 0) {
     result = BASE62_ALPHABET[n % 62] + result;
     n = Math.floor(n / 62);
@@ -139,24 +141,27 @@ function base62(n: number): string {
 function zeroFilled(n: number): string {
   const s = n.toString();
   const width = Math.max(3, Math.ceil(s.length / 3) * 3);
-  return s.padStart(width, '0');
+  return s.padStart(width, "0");
 }
 
 /**
  * Parse and apply a format specifier to an index.
  * Supports: {i}, {i:02}, {i:03}, {i:base62}, {i:zeroFilled}, etc.
  */
-function applyFormatSpecifier(index: number, specifier: string | undefined): string {
+function applyFormatSpecifier(
+  index: number,
+  specifier: string | undefined,
+): string {
   if (!specifier) {
     return index.toString();
   }
 
-  if (specifier === 'base62') {
+  if (specifier === "base62") {
     return base62(index);
   }
 
   // Smart triplet expansion: 000-999, 001000-999999, etc.
-  if (specifier === 'zeroFilled') {
+  if (specifier === "zeroFilled") {
     return zeroFilled(index);
   }
 
@@ -164,7 +169,7 @@ function applyFormatSpecifier(index: number, specifier: string | undefined): str
   const padMatch = specifier.match(/^(\d+)$/);
   if (padMatch) {
     const width = parseInt(padMatch[1], 10);
-    return index.toString().padStart(width, '0');
+    return index.toString().padStart(width, "0");
   }
 
   // Unknown specifier - just use plain numeric
@@ -179,7 +184,9 @@ function parseTemplate(template: string): FormatterFn {
   // Match {i} or {i:specifier}
   const match = template.match(/\{i(?::([^}]+))?\}/);
   if (!match) {
-    throw new Error(`Invalid template "${template}": must contain {i} or {i:specifier}`);
+    throw new Error(
+      `Invalid template "${template}": must contain {i} or {i:specifier}`,
+    );
   }
 
   const specifier = match[1]; // undefined if just {i}
@@ -196,21 +203,21 @@ function parseTemplate(template: string): FormatterFn {
  */
 function createFormatter(format: OutputFormat): FormatterFn {
   // Custom function
-  if (typeof format === 'function') return format;
+  if (typeof format === "function") return format;
 
   // Template format
-  if (typeof format === 'object') return parseTemplate(format.template);
+  if (typeof format === "object") return parseTemplate(format.template);
 
   // Built-in string formats
   switch (format) {
-    case 'Numeric':
+    case "Numeric":
       return zeroFilled;
-    case 'IdToken':
+    case "IdToken":
       return base62;
-    case 'SafeNumeric':
-      return (n: number) => `<${zeroFilled(n)}>`;
-    case 'Passthrough':
-      throw new Error('Passthrough should not create formatter');
+    case "SafeNumeric":
+      return (n: number) => `[${zeroFilled(n)}]`;
+    case "Passthrough":
+      throw new Error("Passthrough should not create formatter");
   }
 }
 
@@ -225,16 +232,18 @@ function getPattern(inputFormat: InputFormat): RegExp {
   // Custom RegExp
   if (inputFormat instanceof RegExp) {
     // Ensure global flag is set, preserve other flags
-    const flags = inputFormat.flags.includes('g') ? inputFormat.flags : inputFormat.flags + 'g';
+    const flags = inputFormat.flags.includes("g")
+      ? inputFormat.flags
+      : inputFormat.flags + "g";
     return new RegExp(inputFormat.source, flags);
   }
 
   // Built-in formats - return new instance to reset lastIndex
-  if (inputFormat === 'UUID') {
+  if (inputFormat === "UUID") {
     return new RegExp(UUID_V4_REGEX.source, UUID_V4_REGEX.flags);
   }
 
-  if (inputFormat === 'ULID') {
+  if (inputFormat === "ULID") {
     return new RegExp(ULID_REGEX.source, ULID_REGEX.flags);
   }
 
@@ -283,7 +292,7 @@ function getPattern(inputFormat: InputFormat): RegExp {
  */
 export function encode(text: string, config: EncodeConfig): EncodeResult {
   // Passthrough mode - return original text with empty mapping
-  if (config.outputFormat === 'Passthrough') {
+  if (config.outputFormat === "Passthrough") {
     return { encoded: text, mapping: {} };
   }
 
@@ -335,8 +344,10 @@ export function decode(text: string, mapping: Record<string, string>): string {
 
     // Build a single regex matching all placeholders - O(n) single pass
     pattern = new RegExp(
-      placeholders.map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'),
-      'g'
+      placeholders
+        .map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+        .join("|"),
+      "g",
     );
 
     decodeRegexCache.set(mapping, pattern);

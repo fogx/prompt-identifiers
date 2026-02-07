@@ -1,23 +1,22 @@
+import type { EncodeConfig } from "prompt-identifiers";
 import {
+  decodeObject,
+  encodeObject,
   wrapBamlFunction,
   wrapBamlStreamingFunction,
-  encodeObject,
-  decodeObject,
-  WrapBamlFunctionOptions,
-} from '../src/index';
-import type { EncodeConfig } from 'prompt-identifiers';
+} from "../src/index";
 
-describe('prompt-identifiers-baml', () => {
+describe("prompt-identifiers-baml", () => {
   const defaultConfig: EncodeConfig = {
-    inputFormat: 'UUID',
-    outputFormat: 'SafeNumeric',
+    inputFormat: "UUID",
+    outputFormat: "SafeNumeric",
   };
 
-  const uuid1 = '123e4567-e89b-42d3-a456-426655440000';
-  const uuid2 = '987fcdeb-51a2-43f7-8d9c-0123456789ab';
+  const uuid1 = "123e4567-e89b-42d3-a456-426655440000";
+  const uuid2 = "987fcdeb-51a2-43f7-8d9c-0123456789ab";
 
-  describe('wrapBamlFunction', () => {
-    test('encodes UUIDs in input and decodes in output', async () => {
+  describe("wrapBamlFunction", () => {
+    test("encodes UUIDs in input and decodes in output", async () => {
       // Mock BAML function that echoes input in output
       const mockFn = jest.fn(async (input: { user_id: string }) => ({
         summary: `Analysis for user ${input.user_id}`,
@@ -29,14 +28,14 @@ describe('prompt-identifiers-baml', () => {
       const result = await wrapped({ user_id: uuid1 });
 
       // Verify mock was called with encoded input
-      expect(mockFn).toHaveBeenCalledWith({ user_id: '<000>' });
+      expect(mockFn).toHaveBeenCalledWith({ user_id: "[000]" });
 
       // Verify output is decoded
       expect(result.summary).toBe(`Analysis for user ${uuid1}`);
       expect(result.user_id).toBe(uuid1);
     });
 
-    test('handles nested objects', async () => {
+    test("handles nested objects", async () => {
       interface Input {
         data: {
           user: {
@@ -53,12 +52,14 @@ describe('prompt-identifiers-baml', () => {
         };
       }
 
-      const mockFn = jest.fn(async (input: Input): Promise<Output> => ({
-        result: {
-          user_id: input.data.user.id,
-          message: `Hello ${input.data.user.name}, your ID is ${input.data.user.id}`,
-        },
-      }));
+      const mockFn = jest.fn(
+        async (input: Input): Promise<Output> => ({
+          result: {
+            user_id: input.data.user.id,
+            message: `Hello ${input.data.user.name}, your ID is ${input.data.user.id}`,
+          },
+        }),
+      );
 
       const wrapped = wrapBamlFunction(mockFn, { config: defaultConfig });
 
@@ -66,7 +67,7 @@ describe('prompt-identifiers-baml', () => {
         data: {
           user: {
             id: uuid1,
-            name: 'John',
+            name: "John",
           },
         },
       });
@@ -75,8 +76,8 @@ describe('prompt-identifiers-baml', () => {
       expect(mockFn).toHaveBeenCalledWith({
         data: {
           user: {
-            id: '<000>',
-            name: 'John',
+            id: "[000]",
+            name: "John",
           },
         },
       });
@@ -86,7 +87,7 @@ describe('prompt-identifiers-baml', () => {
       expect(result.result.message).toBe(`Hello John, your ID is ${uuid1}`);
     });
 
-    test('handles arrays of objects', async () => {
+    test("handles arrays of objects", async () => {
       interface Input {
         items: Array<{ id: string; name: string }>;
       }
@@ -99,26 +100,29 @@ describe('prompt-identifiers-baml', () => {
 
       const result = await wrapped({
         items: [
-          { id: uuid1, name: 'Item 1' },
-          { id: uuid2, name: 'Item 2' },
+          { id: uuid1, name: "Item 1" },
+          { id: uuid2, name: "Item 2" },
         ],
       });
 
       // Verify encoding
       expect(mockFn).toHaveBeenCalledWith({
         items: [
-          { id: '<000>', name: 'Item 1' },
-          { id: '<001>', name: 'Item 2' },
+          { id: "[000]", name: "Item 1" },
+          { id: "[001]", name: "Item 2" },
         ],
       });
 
       // Verify decoding
-      expect(result.processed).toEqual([`${uuid1}: Item 1`, `${uuid2}: Item 2`]);
+      expect(result.processed).toEqual([
+        `${uuid1}: Item 1`,
+        `${uuid2}: Item 2`,
+      ]);
     });
 
-    test('deduplicates repeated UUIDs', async () => {
+    test("deduplicates repeated UUIDs", async () => {
       const mockFn = jest.fn(async (input: { ids: string[] }) => ({
-        summary: input.ids.join(', '),
+        summary: input.ids.join(", "),
       }));
 
       const wrapped = wrapBamlFunction(mockFn, { config: defaultConfig });
@@ -129,14 +133,14 @@ describe('prompt-identifiers-baml', () => {
 
       // Verify encoding uses same placeholder for duplicate
       expect(mockFn).toHaveBeenCalledWith({
-        ids: ['<000>', '<001>', '<000>'],
+        ids: ["[000]", "[001]", "[000]"],
       });
 
       // Verify decoding
       expect(result.summary).toBe(`${uuid1}, ${uuid2}, ${uuid1}`);
     });
 
-    test('calls onEncode and onDecode callbacks', async () => {
+    test("calls onEncode and onDecode callbacks", async () => {
       const onEncode = jest.fn();
       const onDecode = jest.fn();
 
@@ -153,14 +157,14 @@ describe('prompt-identifiers-baml', () => {
       await wrapped({ id: uuid1 });
 
       expect(onEncode).toHaveBeenCalledWith({
-        mapping: { '<000>': uuid1 },
+        mapping: { "[000]": uuid1 },
         encodedCount: 1,
       });
 
       expect(onDecode).toHaveBeenCalledWith({ decodedCount: 1 });
     });
 
-    test('handles null and undefined values', async () => {
+    test("handles null and undefined values", async () => {
       interface Input {
         id: string;
         optional?: string | null;
@@ -175,12 +179,12 @@ describe('prompt-identifiers-baml', () => {
 
       const result = await wrapped({ id: uuid1, optional: null });
 
-      expect(mockFn).toHaveBeenCalledWith({ id: '<000>', optional: null });
+      expect(mockFn).toHaveBeenCalledWith({ id: "[000]", optional: null });
       expect(result.id).toBe(uuid1);
       expect(result.optional).toBeNull();
     });
 
-    test('preserves non-string primitives', async () => {
+    test("preserves non-string primitives", async () => {
       interface Input {
         id: string;
         count: number;
@@ -202,29 +206,31 @@ describe('prompt-identifiers-baml', () => {
     });
   });
 
-  describe('encodeFields option', () => {
-    test('only encodes specified top-level fields', async () => {
-      const mockFn = jest.fn(async (input: { user_id: string; code: string }) => ({
-        result: `${input.user_id} - ${input.code}`,
-      }));
+  describe("encodeFields option", () => {
+    test("only encodes specified top-level fields", async () => {
+      const mockFn = jest.fn(
+        async (input: { user_id: string; code: string }) => ({
+          result: `${input.user_id} - ${input.code}`,
+        }),
+      );
 
       const wrapped = wrapBamlFunction(mockFn, {
         config: defaultConfig,
-        encodeFields: ['user_id'], // Only encode user_id, not code
+        encodeFields: ["user_id"], // Only encode user_id, not code
       });
 
       // code looks like a UUID but shouldn't be encoded
-      const codeUuid = '11111111-1111-4111-8111-111111111111';
+      const codeUuid = "11111111-1111-4111-8111-111111111111";
 
       await wrapped({ user_id: uuid1, code: codeUuid });
 
       expect(mockFn).toHaveBeenCalledWith({
-        user_id: '<000>',
+        user_id: "[000]",
         code: codeUuid, // Not encoded
       });
     });
 
-    test('encodes nested fields with dot notation', async () => {
+    test("encodes nested fields with dot notation", async () => {
       interface Input {
         data: {
           user_id: string;
@@ -238,7 +244,7 @@ describe('prompt-identifiers-baml', () => {
 
       const wrapped = wrapBamlFunction(mockFn, {
         config: defaultConfig,
-        encodeFields: ['data.user_id'],
+        encodeFields: ["data.user_id"],
       });
 
       await wrapped({
@@ -250,13 +256,13 @@ describe('prompt-identifiers-baml', () => {
 
       expect(mockFn).toHaveBeenCalledWith({
         data: {
-          user_id: '<000>',
+          user_id: "[000]",
           other_id: uuid2, // Not encoded
         },
       });
     });
 
-    test('encodes array fields with [] wildcard', async () => {
+    test("encodes array fields with [] wildcard", async () => {
       interface Input {
         items: Array<{ id: string; code: string }>;
       }
@@ -267,25 +273,25 @@ describe('prompt-identifiers-baml', () => {
 
       const wrapped = wrapBamlFunction(mockFn, {
         config: defaultConfig,
-        encodeFields: ['items[].id'],
+        encodeFields: ["items[].id"],
       });
 
       await wrapped({
         items: [
-          { id: uuid1, code: 'ABC123' },
-          { id: uuid2, code: 'DEF456' },
+          { id: uuid1, code: "ABC123" },
+          { id: uuid2, code: "DEF456" },
         ],
       });
 
       expect(mockFn).toHaveBeenCalledWith({
         items: [
-          { id: '<000>', code: 'ABC123' },
-          { id: '<001>', code: 'DEF456' },
+          { id: "[000]", code: "ABC123" },
+          { id: "[001]", code: "DEF456" },
         ],
       });
     });
 
-    test('encodes deeply nested array fields', async () => {
+    test("encodes deeply nested array fields", async () => {
       interface Input {
         data: {
           users: Array<{
@@ -300,7 +306,7 @@ describe('prompt-identifiers-baml', () => {
 
       const wrapped = wrapBamlFunction(mockFn, {
         config: defaultConfig,
-        encodeFields: ['data.users[].profile.id'],
+        encodeFields: ["data.users[].profile.id"],
       });
 
       await wrapped({
@@ -311,14 +317,14 @@ describe('prompt-identifiers-baml', () => {
 
       expect(mockFn).toHaveBeenCalledWith({
         data: {
-          users: [{ profile: { id: '<000>' } }, { profile: { id: '<001>' } }],
+          users: [{ profile: { id: "[000]" } }, { profile: { id: "[001]" } }],
         },
       });
     });
   });
 
-  describe('wrapBamlStreamingFunction', () => {
-    test('encodes input and decodes streaming output', async () => {
+  describe("wrapBamlStreamingFunction", () => {
+    test("encodes input and decodes streaming output", async () => {
       // Mock streaming BAML function
       async function* mockStreamFn(input: { id: string }) {
         yield { partial: `Processing ${input.id}...` };
@@ -352,7 +358,7 @@ describe('prompt-identifiers-baml', () => {
       expect(finalResult.final).toBe(`Completed for ${uuid1}`);
     });
 
-    test('calls callbacks for streaming function', async () => {
+    test("calls callbacks for streaming function", async () => {
       const onEncode = jest.fn();
       const onDecode = jest.fn();
 
@@ -373,7 +379,7 @@ describe('prompt-identifiers-baml', () => {
       while (!(await generator.next()).done) {}
 
       expect(onEncode).toHaveBeenCalledWith({
-        mapping: { '<000>': uuid1 },
+        mapping: { "[000]": uuid1 },
         encodedCount: 1,
       });
 
@@ -381,52 +387,52 @@ describe('prompt-identifiers-baml', () => {
     });
   });
 
-  describe('encodeObject utility', () => {
-    test('encodes object and returns mapping', () => {
+  describe("encodeObject utility", () => {
+    test("encodes object and returns mapping", () => {
       const { encoded, mapping } = encodeObject(
         {
           user_id: uuid1,
           data: { owner: uuid2 },
         },
-        defaultConfig
+        defaultConfig,
       );
 
       expect(encoded).toEqual({
-        user_id: '<000>',
-        data: { owner: '<001>' },
+        user_id: "[000]",
+        data: { owner: "[001]" },
       });
 
       expect(mapping).toEqual({
-        '<000>': uuid1,
-        '<001>': uuid2,
+        "[000]": uuid1,
+        "[001]": uuid2,
       });
     });
 
-    test('respects encodeFields option', () => {
+    test("respects encodeFields option", () => {
       const { encoded } = encodeObject(
         {
           user_id: uuid1,
           code: uuid2,
         },
         defaultConfig,
-        ['user_id']
+        ["user_id"],
       );
 
       expect(encoded).toEqual({
-        user_id: '<000>',
+        user_id: "[000]",
         code: uuid2, // Not encoded
       });
     });
   });
 
-  describe('decodeObject utility', () => {
-    test('decodes object with mapping', () => {
+  describe("decodeObject utility", () => {
+    test("decodes object with mapping", () => {
       const decoded = decodeObject(
         {
-          user_id: '<000>',
-          summary: 'User <000> is active',
+          user_id: "[000]",
+          summary: "User [000] is active",
         },
-        { '<000>': uuid1 }
+        { "[000]": uuid1 },
       );
 
       expect(decoded).toEqual({
@@ -435,14 +441,14 @@ describe('prompt-identifiers-baml', () => {
       });
     });
 
-    test('handles nested structures', () => {
+    test("handles nested structures", () => {
       const decoded = decodeObject(
         {
           data: {
-            items: [{ id: '<000>' }, { id: '<001>' }],
+            items: [{ id: "[000]" }, { id: "[001]" }],
           },
         },
-        { '<000>': uuid1, '<001>': uuid2 }
+        { "[000]": uuid1, "[001]": uuid2 },
       );
 
       expect(decoded).toEqual({
@@ -453,87 +459,87 @@ describe('prompt-identifiers-baml', () => {
     });
   });
 
-  describe('Different output formats', () => {
-    test('works with Numeric format', async () => {
+  describe("Different output formats", () => {
+    test("works with Numeric format", async () => {
       const mockFn = jest.fn(async (input: { id: string }) => ({
         result: input.id,
       }));
 
       const wrapped = wrapBamlFunction(mockFn, {
-        config: { inputFormat: 'UUID', outputFormat: 'Numeric' },
+        config: { inputFormat: "UUID", outputFormat: "Numeric" },
       });
 
       await wrapped({ id: uuid1 });
 
-      expect(mockFn).toHaveBeenCalledWith({ id: '000' });
+      expect(mockFn).toHaveBeenCalledWith({ id: "000" });
     });
 
-    test('works with custom template format', async () => {
+    test("works with custom template format", async () => {
       const mockFn = jest.fn(async (input: { id: string }) => ({
         result: input.id,
       }));
 
       const wrapped = wrapBamlFunction(mockFn, {
-        config: { inputFormat: 'UUID', outputFormat: { template: '[ID:{i}]' } },
+        config: { inputFormat: "UUID", outputFormat: { template: "[ID:{i}]" } },
       });
 
       await wrapped({ id: uuid1 });
 
-      expect(mockFn).toHaveBeenCalledWith({ id: '[ID:0]' });
+      expect(mockFn).toHaveBeenCalledWith({ id: "[ID:0]" });
     });
 
-    test('works with ULID input format', async () => {
-      const ulid = '01ARZ3NDEKTSV4RRFFQ69G5FAV';
+    test("works with ULID input format", async () => {
+      const ulid = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
 
       const mockFn = jest.fn(async (input: { id: string }) => ({
         result: input.id,
       }));
 
       const wrapped = wrapBamlFunction(mockFn, {
-        config: { inputFormat: 'ULID', outputFormat: 'SafeNumeric' },
+        config: { inputFormat: "ULID", outputFormat: "SafeNumeric" },
       });
 
       const result = await wrapped({ id: ulid });
 
-      expect(mockFn).toHaveBeenCalledWith({ id: '<000>' });
+      expect(mockFn).toHaveBeenCalledWith({ id: "[000]" });
       expect(result.result).toBe(ulid.toLowerCase()); // ULIDs are normalized to lowercase
     });
   });
 
-  describe('Edge cases', () => {
-    test('handles empty objects', async () => {
-      const mockFn = jest.fn(async (input: {}) => ({ result: 'ok' }));
+  describe("Edge cases", () => {
+    test("handles empty objects", async () => {
+      const mockFn = jest.fn(async (input: {}) => ({ result: "ok" }));
 
       const wrapped = wrapBamlFunction(mockFn, { config: defaultConfig });
 
       const result = await wrapped({});
 
-      expect(result.result).toBe('ok');
+      expect(result.result).toBe("ok");
     });
 
-    test('handles input with no IDs', async () => {
+    test("handles input with no IDs", async () => {
       const mockFn = jest.fn(async (input: { name: string }) => ({
         greeting: `Hello, ${input.name}`,
       }));
 
       const wrapped = wrapBamlFunction(mockFn, { config: defaultConfig });
 
-      const result = await wrapped({ name: 'Alice' });
+      const result = await wrapped({ name: "Alice" });
 
-      expect(mockFn).toHaveBeenCalledWith({ name: 'Alice' });
-      expect(result.greeting).toBe('Hello, Alice');
+      expect(mockFn).toHaveBeenCalledWith({ name: "Alice" });
+      expect(result.greeting).toBe("Hello, Alice");
     });
 
-    test('handles output with no placeholders', async () => {
+    test("handles output with no placeholders", async () => {
       const mockFn = jest.fn(async (input: { id: string }) => ({
-        message: 'No IDs in response',
+        message: "No IDs in response",
       }));
 
       const wrapped = wrapBamlFunction(mockFn, { config: defaultConfig });
 
       const result = await wrapped({ id: uuid1 });
 
-      expect(result.message).toBe('No IDs in response');
+      expect(result.message).toBe("No IDs in response");
     });
   });
 });

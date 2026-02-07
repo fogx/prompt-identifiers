@@ -5,13 +5,13 @@
  */
 
 import type {
-    LanguageModelV3GenerateResult,
-    LanguageModelV3Middleware,
-    LanguageModelV3Prompt,
-    LanguageModelV3StreamPart,
-    LanguageModelV3StreamResult
-} from '@ai-sdk/provider';
-import { decode, encode, EncodeConfig } from 'prompt-identifiers';
+  LanguageModelV3GenerateResult,
+  LanguageModelV3Middleware,
+  LanguageModelV3Prompt,
+  LanguageModelV3StreamPart,
+  LanguageModelV3StreamResult,
+} from "@ai-sdk/provider";
+import { decode, encode, EncodeConfig } from "prompt-identifiers";
 
 // =============================================================================
 // Types
@@ -49,7 +49,7 @@ export interface PromptIdentifiersMiddlewareOptions {
 function mergeMapping(
   result: { mapping: Record<string, string> },
   idToPlaceholder: Map<string, string>,
-  mapping: Record<string, string>
+  mapping: Record<string, string>,
 ): void {
   for (const [placeholder, id] of Object.entries(result.mapping)) {
     if (!idToPlaceholder.has(id)) {
@@ -67,23 +67,23 @@ function encodeToolResultOutput(
   output: unknown,
   config: EncodeConfig,
   idToPlaceholder: Map<string, string>,
-  mapping: Record<string, string>
+  mapping: Record<string, string>,
 ): unknown {
-  if (typeof output !== 'object' || output === null) {
+  if (typeof output !== "object" || output === null) {
     return output;
   }
 
   const typedOutput = output as { type?: string; value?: unknown };
 
   // For text output, encode the string value directly
-  if (typedOutput.type === 'text' && typeof typedOutput.value === 'string') {
+  if (typedOutput.type === "text" && typeof typedOutput.value === "string") {
     const result = encode(typedOutput.value, config);
     mergeMapping(result, idToPlaceholder, mapping);
     return { ...typedOutput, value: result.encoded };
   }
 
   // For json output, stringify → encode → parse
-  if (typedOutput.type === 'json' && typedOutput.value !== undefined) {
+  if (typedOutput.type === "json" && typedOutput.value !== undefined) {
     const stringified = JSON.stringify(typedOutput.value);
     const result = encode(stringified, config);
     mergeMapping(result, idToPlaceholder, mapping);
@@ -101,9 +101,9 @@ function encodeMessageContent(
   content: unknown,
   config: EncodeConfig,
   idToPlaceholder: Map<string, string>,
-  mapping: Record<string, string>
+  mapping: Record<string, string>,
 ): unknown {
-  if (typeof content === 'string') {
+  if (typeof content === "string") {
     const result = encode(content, config);
     mergeMapping(result, idToPlaceholder, mapping);
     return result.encoded;
@@ -111,25 +111,35 @@ function encodeMessageContent(
 
   if (Array.isArray(content)) {
     return content.map((part) => {
-      if (typeof part !== 'object' || part === null) {
+      if (typeof part !== "object" || part === null) {
         return part;
       }
 
       const typedPart = part as Record<string, unknown>;
 
       // Handle TextPart: { type: 'text', text: string }
-      if ('text' in typedPart && typeof typedPart.text === 'string') {
+      if ("text" in typedPart && typeof typedPart.text === "string") {
         return {
           ...typedPart,
-          text: encodeMessageContent(typedPart.text, config, idToPlaceholder, mapping),
+          text: encodeMessageContent(
+            typedPart.text,
+            config,
+            idToPlaceholder,
+            mapping,
+          ),
         };
       }
 
       // Handle ToolResultPart: { type: 'tool-result', output: { type, value } }
-      if (typedPart.type === 'tool-result' && 'output' in typedPart) {
+      if (typedPart.type === "tool-result" && "output" in typedPart) {
         return {
           ...typedPart,
-          output: encodeToolResultOutput(typedPart.output, config, idToPlaceholder, mapping),
+          output: encodeToolResultOutput(
+            typedPart.output,
+            config,
+            idToPlaceholder,
+            mapping,
+          ),
         };
       }
 
@@ -146,7 +156,7 @@ function encodeMessageContent(
  */
 function encodePromptMessages(
   prompt: LanguageModelV3Prompt,
-  config: EncodeConfig
+  config: EncodeConfig,
 ): { encodedPrompt: LanguageModelV3Prompt; mapping: Record<string, string> } {
   const idToPlaceholder = new Map<string, string>();
   const mapping: Record<string, string> = {};
@@ -157,7 +167,7 @@ function encodePromptMessages(
       message.content,
       config,
       idToPlaceholder,
-      mapping
+      mapping,
     ),
   })) as LanguageModelV3Prompt;
 
@@ -169,14 +179,14 @@ function encodePromptMessages(
  */
 function decodeText(
   text: string,
-  mapping: Record<string, string>
+  mapping: Record<string, string>,
 ): { decoded: string; count: number } {
   const decoded = decode(text, mapping);
   // Count how many placeholders were replaced
   const count = Object.keys(mapping).reduce((acc, placeholder) => {
     const regex = new RegExp(
-      placeholder.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
-      'g'
+      placeholder.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+      "g",
     );
     return acc + (text.match(regex)?.length ?? 0);
   }, 0);
@@ -189,7 +199,7 @@ function decodeText(
  */
 function decodeToolInputString(
   input: string,
-  mapping: Record<string, string>
+  mapping: Record<string, string>,
 ): string {
   return decode(input, mapping);
 }
@@ -216,7 +226,7 @@ function createStreamingDecoder(mapping: Record<string, string>) {
   if (placeholders.length === 0) {
     return {
       process: (text: string) => text,
-      flush: () => '',
+      flush: () => "",
     };
   }
 
@@ -232,7 +242,7 @@ function createStreamingDecoder(mapping: Record<string, string>) {
     // Can't reliably buffer, just decode immediately
     return {
       process: (text: string) => decode(text, mapping),
-      flush: () => '',
+      flush: () => "",
     };
   }
 
@@ -243,38 +253,111 @@ function createStreamingDecoder(mapping: Record<string, string>) {
     // No opening delimiter means we can't detect incomplete placeholders
     return {
       process: (text: string) => decode(text, mapping),
-      flush: () => '',
+      flush: () => "",
     };
   }
 
+  const isSymmetric = OPEN === CLOSE;
+  const MAX_PLACEHOLDER_LEN = 15; // safety: flush if buffer tail exceeds this
+
+  /**
+   * Check if the buffer ends with a partial prefix of a multi-char delimiter.
+   * e.g., buffer "text[" could be the start of "[[" opener.
+   * Returns the length of the partial prefix (0 if none).
+   */
+  function partialDelimiterSuffix(buf: string, delim: string): number {
+    if (delim.length <= 1) return 0;
+    // Check if buffer ends with a prefix of the delimiter (length 1..delim.length-1)
+    for (let len = Math.min(delim.length - 1, buf.length); len >= 1; len--) {
+      if (buf.endsWith(delim.substring(0, len))) {
+        return len;
+      }
+    }
+    return 0;
+  }
+
   // Buffer incomplete placeholders
-  let buffer = '';
+  let buffer = "";
 
   return {
     process: (text: string): string => {
       buffer += text;
 
-      // Find the last opening delimiter that doesn't have a matching close
-      const lastOpen = buffer.lastIndexOf(OPEN);
-      const lastClose = buffer.lastIndexOf(CLOSE);
+      if (!isSymmetric) {
+        // Asymmetric path (e.g., <000>, [[000]]) — original logic
+        const lastOpen = buffer.lastIndexOf(OPEN);
+        const lastClose = buffer.lastIndexOf(CLOSE);
 
-      if (lastOpen > lastClose) {
-        // We have an incomplete placeholder, hold it in buffer
-        const complete = buffer.substring(0, lastOpen);
-        buffer = buffer.substring(lastOpen);
-        return decode(complete, mapping);
+        if (lastOpen > lastClose) {
+          // We have an incomplete placeholder, hold it in buffer
+          const complete = buffer.substring(0, lastOpen);
+          buffer = buffer.substring(lastOpen);
+          return decode(complete, mapping);
+        }
+
+        // Check for partial multi-char opener at end of buffer (e.g., "[" when OPEN="[[")
+        const partialLen = partialDelimiterSuffix(buffer, OPEN);
+        if (partialLen > 0) {
+          const complete = buffer.substring(0, buffer.length - partialLen);
+          buffer = buffer.substring(buffer.length - partialLen);
+          return decode(complete, mapping);
+        }
+
+        // All placeholders are complete, decode everything
+        const result = decode(buffer, mapping);
+        buffer = "";
+        return result;
       }
 
-      // All placeholders are complete, decode everything
+      // Symmetric path (e.g., ~000~) — look-back approach
+      const lastDelim = buffer.lastIndexOf(OPEN);
+      if (lastDelim >= 0) {
+        const afterDelim = buffer.substring(lastDelim + OPEN.length);
+
+        // Case 1: digits after last delimiter (e.g., "~00") → partial placeholder
+        if (
+          /^\d+$/.test(afterDelim) &&
+          afterDelim.length <= MAX_PLACEHOLDER_LEN
+        ) {
+          const complete = buffer.substring(0, lastDelim);
+          buffer = buffer.substring(lastDelim);
+          return decode(complete, mapping);
+        }
+
+        // Case 2: delimiter at very end of buffer (e.g., "text~")
+        if (afterDelim === "") {
+          // Look back: is there OPEN + digits immediately before this delimiter?
+          // If yes → this delimiter is a CLOSER, decode everything
+          const precedingDelim = buffer.lastIndexOf(OPEN, lastDelim - 1);
+          if (precedingDelim >= 0) {
+            const between = buffer.substring(
+              precedingDelim + OPEN.length,
+              lastDelim,
+            );
+            if (/^\d+$/.test(between)) {
+              // Confirmed closer (e.g., "~000~") — decode all
+              const result = decode(buffer, mapping);
+              buffer = "";
+              return result;
+            }
+          }
+          // No valid opener found before → this might be an opener, buffer it
+          const complete = buffer.substring(0, lastDelim);
+          buffer = buffer.substring(lastDelim);
+          return decode(complete, mapping);
+        }
+      }
+
+      // No partial placeholder detected, decode everything
       const result = decode(buffer, mapping);
-      buffer = '';
+      buffer = "";
       return result;
     },
 
     flush: (): string => {
       // Stream ended, decode whatever remains (might be incomplete placeholder)
       const result = decode(buffer, mapping);
-      buffer = '';
+      buffer = "";
       return result;
     },
   };
@@ -292,7 +375,7 @@ function createStreamingDecoder(mapping: Record<string, string>) {
  * ```typescript
  * import { openai } from '@ai-sdk/openai';
  * import { wrapLanguageModel } from 'ai';
- * import { promptIdentifiersMiddleware } from 'prompt-identifiers-ai-sdk';a
+ * import { promptIdentifiersMiddleware } from 'prompt-identifiers-ai-sdk';
  *
  * const model = wrapLanguageModel({
  *   model: openai('gpt-4o'),
@@ -310,22 +393,25 @@ function createStreamingDecoder(mapping: Record<string, string>) {
  * ```
  */
 // Symbol to attach mapping to params object - survives SDK transformations
-const MAPPING_SYMBOL = Symbol('promptIdentifiersMapping');
+const MAPPING_SYMBOL = Symbol("promptIdentifiersMapping");
 
 interface ParamsWithMapping {
   [MAPPING_SYMBOL]?: Record<string, string>;
 }
 
 export function promptIdentifiersMiddleware(
-  options: PromptIdentifiersMiddlewareOptions
+  options: PromptIdentifiersMiddlewareOptions,
 ): LanguageModelV3Middleware {
   const { config, onEncode, onDecode } = options;
 
   return {
-    specificationVersion: 'v3',
+    specificationVersion: "v3",
 
     transformParams: async ({ params }) => {
-      const { encodedPrompt, mapping } = encodePromptMessages(params.prompt, config);
+      const { encodedPrompt, mapping } = encodePromptMessages(
+        params.prompt,
+        config,
+      );
 
       onEncode?.({
         mapping,
@@ -342,7 +428,10 @@ export function promptIdentifiersMiddleware(
       return transformedParams;
     },
 
-    wrapGenerate: async ({ doGenerate, params }): Promise<LanguageModelV3GenerateResult> => {
+    wrapGenerate: async ({
+      doGenerate,
+      params,
+    }): Promise<LanguageModelV3GenerateResult> => {
       const result = await doGenerate();
       const mapping = (params as ParamsWithMapping)[MAPPING_SYMBOL] ?? {};
 
@@ -353,13 +442,17 @@ export function promptIdentifiersMiddleware(
       // Decode text and tool call inputs in content array
       let totalCount = 0;
       const decodedContent = result.content.map((item) => {
-        if (item.type === 'text') {
+        if (item.type === "text") {
           const { decoded, count } = decodeText(item.text, mapping);
           totalCount += count;
           return { ...item, text: decoded };
         }
         // Decode tool call inputs (input is stringified JSON)
-        if (item.type === 'tool-call' && 'input' in item && typeof item.input === 'string') {
+        if (
+          item.type === "tool-call" &&
+          "input" in item &&
+          typeof item.input === "string"
+        ) {
           return { ...item, input: decodeToolInputString(item.input, mapping) };
         }
         return item;
@@ -369,7 +462,10 @@ export function promptIdentifiersMiddleware(
       return { ...result, content: decodedContent };
     },
 
-    wrapStream: async ({ doStream, params }): Promise<LanguageModelV3StreamResult> => {
+    wrapStream: async ({
+      doStream,
+      params,
+    }): Promise<LanguageModelV3StreamResult> => {
       const { stream, ...rest } = await doStream();
       const mapping = (params as ParamsWithMapping)[MAPPING_SYMBOL] ?? {};
 
@@ -386,7 +482,7 @@ export function promptIdentifiersMiddleware(
       >({
         transform(chunk, controller) {
           // Decode text deltas
-          if (chunk.type === 'text-delta' && chunk.delta) {
+          if (chunk.type === "text-delta" && chunk.delta) {
             const decoded = textDecoder.process(chunk.delta);
             if (decoded) {
               controller.enqueue({ ...chunk, delta: decoded });
@@ -395,14 +491,24 @@ export function promptIdentifiersMiddleware(
           }
 
           // Decode complete tool calls (input is stringified JSON)
-          if (chunk.type === 'tool-call' && 'input' in chunk && typeof chunk.input === 'string') {
-            controller.enqueue({ ...chunk, input: decodeToolInputString(chunk.input, mapping) });
+          if (
+            chunk.type === "tool-call" &&
+            "input" in chunk &&
+            typeof chunk.input === "string"
+          ) {
+            controller.enqueue({
+              ...chunk,
+              input: decodeToolInputString(chunk.input, mapping),
+            });
             return;
           }
 
           // Decode tool input deltas (partial JSON strings)
-          if (chunk.type === 'tool-input-delta' && 'delta' in chunk) {
-            const decodedDelta = decode((chunk as { delta: string }).delta, mapping);
+          if (chunk.type === "tool-input-delta" && "delta" in chunk) {
+            const decodedDelta = decode(
+              (chunk as { delta: string }).delta,
+              mapping,
+            );
             controller.enqueue({ ...chunk, delta: decodedDelta });
             return;
           }
@@ -414,8 +520,8 @@ export function promptIdentifiersMiddleware(
           const remaining = textDecoder.flush();
           if (remaining) {
             controller.enqueue({
-              type: 'text-delta',
-              id: '',
+              type: "text-delta",
+              id: "",
               delta: remaining,
             } as LanguageModelV3StreamPart);
           }

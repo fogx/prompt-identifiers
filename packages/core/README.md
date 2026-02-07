@@ -13,12 +13,12 @@ npm install prompt-identifiers
 ## Quick Start
 
 ```typescript
-import { encode, decode } from 'prompt-identifiers';
+import { encode, decode } from "prompt-identifiers";
 
 // Encode UUIDs to short placeholders
 const result = encode(
-  'User 123e4567-e89b-42d3-a456-426655440000 sent message to 987fcdeb-51a2-43f7-8d9c-0123456789ab',
-  { inputFormat: 'UUID', outputFormat: 'Numeric' }
+  "User 123e4567-e89b-42d3-a456-426655440000 sent message to 987fcdeb-51a2-43f7-8d9c-0123456789ab",
+  { inputFormat: "UUID", outputFormat: "Numeric" },
 );
 
 console.log(result.encoded);
@@ -46,10 +46,10 @@ The mapping preserves the original IDs for perfect reconstruction.
 
 ### Built-in Formats
 
-| Format | Pattern | Example |
-|--------|---------|---------|
-| `'UUID'` | RFC 4122 UUID v4 | `123e4567-e89b-42d3-a456-426655440000` |
-| `'ULID'` | Crockford Base32, 26 chars | `01ARZ3NDEKTSV4RRFFQ69G5FAV` |
+| Format   | Pattern                    | Example                                |
+| -------- | -------------------------- | -------------------------------------- |
+| `'UUID'` | RFC 4122 UUID v4           | `123e4567-e89b-42d3-a456-426655440000` |
+| `'ULID'` | Crockford Base32, 26 chars | `01ARZ3NDEKTSV4RRFFQ69G5FAV`           |
 
 ### Custom RegExp
 
@@ -57,16 +57,16 @@ Pass any `RegExp` to match custom ID patterns:
 
 ```typescript
 // Match custom user IDs
-encode('User user-123456 logged in', {
+encode("User user-123456 logged in", {
   inputFormat: /user-\d{6}/gi,
-  outputFormat: 'Numeric'
+  outputFormat: "Numeric",
 });
 // → { encoded: "User 000 logged in", mapping: { "000": "user-123456" } }
 
 // Match order codes
-encode('Order ORD-ABC-123 shipped', {
+encode("Order ORD-ABC-123 shipped", {
   inputFormat: /ORD-[A-Z]{3}-\d{3}/gi,
-  outputFormat: 'Numeric'
+  outputFormat: "Numeric",
 });
 ```
 
@@ -76,16 +76,16 @@ The global flag (`g`) is added automatically if not present.
 
 ### Built-in Formats
 
-| Format | Description | Examples |
-|--------|-------------|----------|
-| `'SafeNumeric'` | **Recommended.** Collision-safe with angle brackets | `<000>`, `<001>`, `<002>` |
-| `'Numeric'` | Smart triplet expansion | `000`, `001`, ..., `999`, `001000` |
-| `'IdToken'` | Base62 compact | `0`, `A`, `z`, `10` |
-| `'Passthrough'` | No replacement | Original text unchanged |
+| Format          | Description                                          | Examples                           |
+| --------------- | ---------------------------------------------------- | ---------------------------------- |
+| `'SafeNumeric'` | **Recommended.** Collision-safe with square brackets | `[000]`, `[001]`, `[002]`          |
+| `'Numeric'`     | Smart triplet expansion                              | `000`, `001`, ..., `999`, `001000` |
+| `'IdToken'`     | Base62 compact                                       | `0`, `A`, `z`, `10`                |
+| `'Passthrough'` | No replacement                                       | Original text unchanged            |
 
 ### SafeNumeric Format (Recommended)
 
-The `SafeNumeric` format wraps placeholders in angle brackets (`<>`) to prevent collision with naturally-occurring numbers in LLM responses:
+The `SafeNumeric` format wraps placeholders in square brackets (`[]`) to prevent collision with naturally-occurring numbers in LLM responses. See the [main documentation](../../README.md#output-formats) for detailed format comparisons and delimiter guidance.
 
 ```typescript
 // Problem with Numeric format:
@@ -94,9 +94,9 @@ encode("User abc-123...", config) → "User 000"
 decode(response, mapping) → Wrong! "001" gets decoded even though it's not a placeholder
 
 // Solution with SafeNumeric:
-encode("User abc-123...", config) → "User <000>"
-// LLM responds: "User <000> reported error code 001"
-decode(response, mapping) → Correct! Only <000> is decoded
+encode("User abc-123...", config) → "User [000]"
+// LLM responds: "User [000] reported error code 001"
+decode(response, mapping) → Correct! Only [000] is decoded
 ```
 
 For custom delimiters, use the template format (see below).
@@ -107,23 +107,30 @@ Use `{ template: string }` with format specifiers:
 
 ```typescript
 // Plain numeric
-encode(text, { inputFormat: 'UUID', outputFormat: { template: '<id:{i}>' } });
+encode(text, { inputFormat: "UUID", outputFormat: { template: "<id:{i}>" } });
 // → <id:0>, <id:1>, <id:2>, ...
 
 // Zero-padded to 4 digits
-encode(text, { inputFormat: 'UUID', outputFormat: { template: 'ID_{i:04}' } });
+encode(text, { inputFormat: "UUID", outputFormat: { template: "ID_{i:04}" } });
 // → ID_0000, ID_0001, ID_0002, ...
 
 // Base62 encoding
-encode(text, { inputFormat: 'UUID', outputFormat: { template: '[{i:base62}]' } });
+encode(text, {
+  inputFormat: "UUID",
+  outputFormat: { template: "[{i:base62}]" },
+});
 // → [0], [A], [z], [10], ...
 
 // Smart triplet expansion (like SafeNumeric but with custom delimiters)
-encode(text, { inputFormat: 'UUID', outputFormat: { template: '[[{i:zeroFilled}]]' } });
+encode(text, {
+  inputFormat: "UUID",
+  outputFormat: { template: "[[{i:zeroFilled}]]" },
+});
 // → [[000]], [[001]], ..., [[999]], [[001000]], ...
 ```
 
 **Format specifiers:**
+
 - `{i}` - plain numeric: 0, 1, 2, ...
 - `{i:02}`, `{i:03}`, `{i:04}` - zero-padded to N digits
 - `{i:zeroFilled}` - smart triplet expansion: 000, 001, ..., 999, 001000, ...
@@ -136,22 +143,22 @@ For full control, pass a formatter function:
 ```typescript
 // Custom prefix
 encode(text, {
-  inputFormat: 'UUID',
-  outputFormat: (i) => `[[ID_${i}]]`
+  inputFormat: "UUID",
+  outputFormat: (i) => `[[ID_${i}]]`,
 });
 // → [[ID_0]], [[ID_1]], ...
 
 // Hex encoding
 encode(text, {
-  inputFormat: 'UUID',
-  outputFormat: (i) => `0x${i.toString(16).toUpperCase()}`
+  inputFormat: "UUID",
+  outputFormat: (i) => `0x${i.toString(16).toUpperCase()}`,
 });
 // → 0x0, 0x1, ..., 0xA, 0xB, ...
 
 // Letter-based
 encode(text, {
-  inputFormat: 'UUID',
-  outputFormat: (i) => String.fromCharCode(65 + i)
+  inputFormat: "UUID",
+  outputFormat: (i) => String.fromCharCode(65 + i),
 });
 // → A, B, C, ...
 ```
@@ -189,7 +196,7 @@ Restore original IDs from placeholders using the mapping from `encode()`.
 Native JavaScript implementation - **1.5-2.7x faster** than Rust FFI for this workload.
 
 | UUIDs | Roundtrip (μs) |
-|-------|----------------|
+| ----- | -------------- |
 | 1     | 0.85           |
 | 10    | 5.09           |
 | 50    | 26.66          |

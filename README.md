@@ -29,7 +29,7 @@ UUIDs are 36 characters each but provide no semantic value to the LLM - they're 
 Replace long IDs with short, reversible placeholders:
 
 ```text
-"User <000> requested access to resource <001>"
+"User [000] requested access to resource [001]"
 ```
 
 **Token count:** ~12 tokens
@@ -49,11 +49,11 @@ Replace long IDs with short, reversible placeholders:
 
 ## Packages
 
-| Package | Description | |
-|---------|-------------|---|
-| [`prompt-identifiers`](./packages/core) | Core JS library (zero dependencies) | [![npm](https://img.shields.io/npm/v/prompt-identifiers)](https://www.npmjs.com/package/prompt-identifiers) |
-| [`prompt-identifiers-ai-sdk`](./packages/prompt-identifiers-ai-sdk) | Vercel AI SDK middleware | [![npm](https://img.shields.io/npm/v/prompt-identifiers-ai-sdk)](https://www.npmjs.com/package/prompt-identifiers-ai-sdk) |
-| [`prompt-identifiers-baml`](./packages/prompt-identifiers-baml) | BAML wrapper | [![npm](https://img.shields.io/npm/v/prompt-identifiers-baml)](https://www.npmjs.com/package/prompt-identifiers-baml) |
+| Package                                                             | Description                         |                                                                                                                           |
+| ------------------------------------------------------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| [`prompt-identifiers`](./packages/core)                             | Core JS library (zero dependencies) | [![npm](https://img.shields.io/npm/v/prompt-identifiers)](https://www.npmjs.com/package/prompt-identifiers)               |
+| [`prompt-identifiers-ai-sdk`](./packages/prompt-identifiers-ai-sdk) | Vercel AI SDK middleware            | [![npm](https://img.shields.io/npm/v/prompt-identifiers-ai-sdk)](https://www.npmjs.com/package/prompt-identifiers-ai-sdk) |
+| [`prompt-identifiers-baml`](./packages/prompt-identifiers-baml)     | BAML wrapper                        | [![npm](https://img.shields.io/npm/v/prompt-identifiers-baml)](https://www.npmjs.com/package/prompt-identifiers-baml)     |
 
 ---
 
@@ -61,13 +61,13 @@ Replace long IDs with short, reversible placeholders:
 
 **Token Savings (GPT-4 tokenizer):**
 
-| Format                    | Original                 | Compressed             | Savings    | Use Case         |
-| ------------------------- | ------------------------ | ---------------------- | ---------- | ---------------- |
-| UUID → SafeNumeric        | 36 chars (18 tokens)     | 5 chars (3 tokens)     | **83%**    | Collision-safe   |
-| UUID → Numeric            | 36 chars (18 tokens)     | 3 chars (1 token)      | **94%**    | <1000 IDs        |
-| UUID → Numeric (overflow) | 36 chars (18 tokens)     | 6 chars (2 tokens)     | **89%**    | 1K-1M IDs        |
-| UUID → IdToken            | 36 chars (18 tokens)     | 2-4 chars (1-2 tokens) | **89-94%** | Variable density |
-| ULID → Numeric            | 26 chars (10-20 tokens)  | 3 chars (1 token)      | **90-95%** | <1000 IDs        |
+| Format                    | Original                | Compressed             | Savings    | Use Case         |
+| ------------------------- | ----------------------- | ---------------------- | ---------- | ---------------- |
+| UUID → SafeNumeric        | 36 chars (18 tokens)    | 5 chars (3 tokens)     | **83%**    | Collision-safe   |
+| UUID → Numeric            | 36 chars (18 tokens)    | 3 chars (1 token)      | **94%**    | <1000 IDs        |
+| UUID → Numeric (overflow) | 36 chars (18 tokens)    | 6 chars (2 tokens)     | **89%**    | 1K-1M IDs        |
+| UUID → IdToken            | 36 chars (18 tokens)    | 2-4 chars (1-2 tokens) | **89-94%** | Variable density |
+| ULID → Numeric            | 26 chars (10-20 tokens) | 3 chars (1 token)      | **90-95%** | <1000 IDs        |
 
 **Real-world example (10K requests with 10 UUIDs each):**
 assuming we input 10 uuids and the LLM generates any ID 10x as well:
@@ -98,18 +98,18 @@ npm install prompt-identifiers
 ### Basic Usage
 
 ```typescript
-import { encode, decode } from 'prompt-identifiers';
+import { encode, decode } from "prompt-identifiers";
 
 // 1. Encode: Replace IDs with placeholders
 const prompt = "User 123e4567-e89b-42d3-a456-426655440000 requested access.";
 const { encoded, mapping } = encode(prompt, {
-  inputFormat: 'UUID',
-  outputFormat: 'SafeNumeric'
+  inputFormat: "UUID",
+  outputFormat: "SafeNumeric",
 });
-// → "User <000> requested access."
+// → "User [000] requested access."
 
 // 2. Send compressed prompt to LLM...
-const llmResponse = callLLM(encoded); // "User <000> was granted access."
+const llmResponse = callLLM(encoded); // "User [000] was granted access."
 
 // 3. Decode: Restore original IDs
 const restored = decode(llmResponse, mapping);
@@ -123,7 +123,7 @@ const restored = decode(llmResponse, mapping);
 ### Scenario: Database Query Results
 
 ```typescript
-import { encode, decode } from 'prompt-identifiers';
+import { encode, decode } from "prompt-identifiers";
 
 // Original prompt with database IDs
 const prompt = `
@@ -137,18 +137,18 @@ const prompt = `
 
 // Encode: Compress IDs
 const { encoded, mapping } = encode(prompt, {
-  inputFormat: 'UUID',
-  outputFormat: 'SafeNumeric'
+  inputFormat: "UUID",
+  outputFormat: "SafeNumeric",
 });
 console.log(encoded);
 // Output:
 // Analyze these user actions:
-// - User <000> logged in
-// - User <001> made purchase
-// - User <000> logged out
+// - User [000] logged in
+// - User [001] made purchase
+// - User [000] logged out
 
 // Send to LLM (simulated)
-const llmResponse = "User <000> had 2 sessions, User <001> made 1 purchase.";
+const llmResponse = "User [000] had 2 sessions, User [001] made 1 purchase.";
 
 // Decode: Restore original IDs
 const restored = decode(llmResponse, mapping);
@@ -164,22 +164,22 @@ console.log(restored);
 Automatic encoding/decoding as Vercel AI SDK middleware:
 
 ```typescript
-import { openai } from '@ai-sdk/openai';
-import { wrapLanguageModel, generateText } from 'ai';
-import { promptIdentifiersMiddleware } from 'prompt-identifiers-ai-sdk';
+import { openai } from "@ai-sdk/openai";
+import { wrapLanguageModel, generateText } from "ai";
+import { promptIdentifiersMiddleware } from "prompt-identifiers-ai-sdk";
 
 const model = wrapLanguageModel({
-  model: openai('gpt-4o'),
+  model: openai("gpt-4o"),
   middleware: promptIdentifiersMiddleware({
-    config: { inputFormat: 'UUID', outputFormat: 'SafeNumeric' },
+    config: { inputFormat: "UUID", outputFormat: "SafeNumeric" },
     onEncode: (result) => console.log(`Encoded ${result.encodedCount} IDs`),
-  })
+  }),
 });
 
 // Use normally - IDs are auto-encoded/decoded
 const result = await generateText({
   model,
-  prompt: 'Summarize activity for user 123e4567-e89b-42d3-a456-426655440000'
+  prompt: "Summarize activity for user 123e4567-e89b-42d3-a456-426655440000",
 });
 ```
 
@@ -189,7 +189,18 @@ See [`prompt-identifiers-ai-sdk`](./packages/prompt-identifiers-ai-sdk) for full
 
 ## Output Formats
 
-### Numeric (Recommended)
+### SafeNumeric (Recommended)
+
+Collision-safe square bracket-wrapped numeric:
+
+- **0-999:** `"[000]"` (3 tokens)
+- **1K-1M:** `"[001000]"` (3 tokens)
+
+```typescript
+encode(text, { inputFormat: "UUID", outputFormat: "SafeNumeric" });
+```
+
+### Numeric
 
 Smart triplet expansion for optimal tokenization:
 
@@ -198,18 +209,7 @@ Smart triplet expansion for optimal tokenization:
 - **1M+:** `"001000000"` (3 tokens)
 
 ```typescript
-encode(text, { inputFormat: 'UUID', outputFormat: 'Numeric' });
-```
-
-### SafeNumeric
-
-Collision-safe angle bracket-wrapped numeric:
-
-- **0-999:** `"<000>"` (2 tokens)
-- **1K-1M:** `"<001000>"` (2 tokens)
-
-```typescript
-encode(text, { inputFormat: 'UUID', outputFormat: 'SafeNumeric' });
+encode(text, { inputFormat: "UUID", outputFormat: "Numeric" });
 ```
 
 ### IdToken (Base62)
@@ -221,7 +221,7 @@ Compact variable-length format:
 - **3844+:** `"100"` (3+ chars)
 
 ```typescript
-encode(text, { inputFormat: 'UUID', outputFormat: 'IdToken' });
+encode(text, { inputFormat: "UUID", outputFormat: "IdToken" });
 ```
 
 ### Template
@@ -231,22 +231,22 @@ Template string with `{i}` placeholder and optional format specifier:
 ```typescript
 // Custom delimiters with zero-filled index
 encode(text, {
-  inputFormat: 'UUID',
-  outputFormat: { template: '[[{i:zeroFilled}]]' }
+  inputFormat: "UUID",
+  outputFormat: { template: "[[{i:zeroFilled}]]" },
 });
 // Result: "[[000]]", "[[001]]", ...
 
 // Plain index with prefix
 encode(text, {
-  inputFormat: 'UUID',
-  outputFormat: { template: '<id:{i}>' }
+  inputFormat: "UUID",
+  outputFormat: { template: "<id:{i}>" },
 });
 // Result: "<id:0>", "<id:1>", ...
 
 // Zero-padded to fixed width
 encode(text, {
-  inputFormat: 'UUID',
-  outputFormat: { template: 'ID_{i:04}' }
+  inputFormat: "UUID",
+  outputFormat: { template: "ID_{i:04}" },
 });
 // Result: "ID_0000", "ID_0001", ...
 ```
@@ -257,11 +257,19 @@ Full control with a formatter function:
 
 ```typescript
 encode(text, {
-  inputFormat: 'UUID',
-  outputFormat: (i) => `[[ID_${i}]]`
+  inputFormat: "UUID",
+  outputFormat: (i) => `[[ID_${i}]]`,
 });
 // Result: "[[ID_0]]", "[[ID_1]]", ...
 ```
+
+### NOTES
+
+Depending on the tech stack used, some patterns and delimiters may work better than others. Here are some learnings to consider:
+
+- if using streaming outputs, delimiters can break up. Example with delimiter `[[id]]` -> chunk1: `text [` chunk 2: `[id]]`
+- some delimiters may be stripped or ignored by various systems. Example: delimiter: `<id>` -> will be stripped in URLs
+- Pick delimiters that are not frequently used in your text. e.g. don't use delimiter: `~id~` if you have natural occurences of `~number` in your inputs/outputs as they may cause collisions.
 
 ---
 
@@ -270,14 +278,14 @@ encode(text, {
 ### UUID v4
 
 ```typescript
-encode(text, { inputFormat: 'UUID', outputFormat });
+encode(text, { inputFormat: "UUID", outputFormat });
 // Matches: 123e4567-e89b-42d3-a456-426655440000
 ```
 
 ### ULID
 
 ```typescript
-encode(text, { inputFormat: 'ULID', outputFormat });
+encode(text, { inputFormat: "ULID", outputFormat });
 // Matches: 01ARZ3NDEKTSV4RRFFQ69G5FAV
 ```
 
@@ -286,7 +294,7 @@ encode(text, { inputFormat: 'ULID', outputFormat });
 ```typescript
 encode(text, {
   inputFormat: /user-\d{6}/gi,
-  outputFormat
+  outputFormat,
 });
 // Matches: user-123456, user-789012, ...
 ```
@@ -310,8 +318,8 @@ Replace IDs in prompt with placeholders.
 
 ```typescript
 const { encoded, mapping } = encode("User abc-123 logged in", {
-  inputFormat: 'UUID',
-  outputFormat: 'SafeNumeric'
+  inputFormat: "UUID",
+  outputFormat: "SafeNumeric",
 });
 ```
 
@@ -324,7 +332,7 @@ Restore original IDs from LLM output.
 **Example:**
 
 ```typescript
-const restored = decode("User <000> was granted access", mapping);
+const restored = decode("User [000] was granted access", mapping);
 ```
 
 ---
@@ -353,7 +361,7 @@ interface EncodeConfig {
 #### `OutputFormat`
 
 - `'Numeric'` - Smart triplet expansion (000, 001, ..., 001000, ...)
-- `'SafeNumeric'` - Collision-safe angle bracket-wrapped (\<000\>, \<001\>, ...)
+- `'SafeNumeric'` - Collision-safe square bracket-wrapped ([000], [001], ...)
 - `'IdToken'` - Base62 compact format
 - `'Passthrough'` - No replacement (for testing)
 - `{ template: string }` - Template with `{i}` placeholder
@@ -379,28 +387,35 @@ interface EncodeResult {
 Compress document IDs in retrieval results, decode when the LLM references them:
 
 ```typescript
-import { encode, decode } from 'prompt-identifiers';
+import { encode, decode } from "prompt-identifiers";
 
 // Documents retrieved from vector search
 const docs = [
-  { id: "123e4567-e89b-42d3-a456-426655440000", text: "Machine learning basics..." },
-  { id: "987fcdeb-51a2-43f7-8d9c-0123456789ab", text: "Neural networks intro..." },
+  {
+    id: "123e4567-e89b-42d3-a456-426655440000",
+    text: "Machine learning basics...",
+  },
+  {
+    id: "987fcdeb-51a2-43f7-8d9c-0123456789ab",
+    text: "Neural networks intro...",
+  },
 ];
 
 // Build prompt with document IDs
-const prompt = docs.map(d => `[${d.id}]: ${d.text}`).join("\n")
-  + "\n\nAnswer the question using the documents above. Cite sources by their ID.";
+const prompt =
+  docs.map((d) => `[${d.id}]: ${d.text}`).join("\n") +
+  "\n\nAnswer the question using the documents above. Cite sources by their ID.";
 
 // Encode: compress IDs before sending to LLM
 const { encoded, mapping } = encode(prompt, {
-  inputFormat: 'UUID',
-  outputFormat: 'SafeNumeric'
+  inputFormat: "UUID",
+  outputFormat: "SafeNumeric",
 });
-// [<000>]: Machine learning basics...
-// [<001>]: Neural networks intro...
+// [000]: Machine learning basics...
+// [001]: Neural networks intro...
 
 // LLM responds with a tool call referencing encoded IDs
-const llmResponse = '{"answer": "ML is...", "sources": ["<000>", "<001>"]}';
+const llmResponse = '{"answer": "ML is...", "sources": ["[000]", "[001]"]}';
 
 // Decode: restore real IDs for downstream use
 const decoded = decode(llmResponse, mapping);
@@ -416,10 +431,10 @@ const prompt = `Agent 01ARZ3NDEKTSV4RRFFQ69G5FAV suggests X,
               Agent 01ARZ3NDEKTSV4RRFFQ69G5FAW suggests Y.`;
 
 const { encoded, mapping } = encode(prompt, {
-  inputFormat: 'ULID',
-  outputFormat: 'SafeNumeric'
+  inputFormat: "ULID",
+  outputFormat: "SafeNumeric",
 });
-// "Agent <000> suggests X, Agent <001> suggests Y."
+// "Agent [000] suggests X, Agent [001] suggests Y."
 ```
 
 ### 3. Database Query Results
@@ -431,8 +446,8 @@ const results = await db.query("SELECT id, name FROM users");
 const prompt = `Summarize: ${JSON.stringify(results)}`;
 
 const { encoded, mapping } = encode(prompt, {
-  inputFormat: 'UUID',
-  outputFormat: 'SafeNumeric'
+  inputFormat: "UUID",
+  outputFormat: "SafeNumeric",
 });
 ```
 
