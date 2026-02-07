@@ -15,7 +15,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [0.1.0] - Unreleased
+## [0.1.1] - 2026-02-07
+
+### prompt-identifiers (core)
+
+#### Fixed
+
+- Change SafeNumeric output from angle brackets (`<000>`) to square brackets (`[000]`) to prevent stripping by LLMs and HTML/markdown parsers
+
+#### Changed
+
+- Apply prettier formatting across codebase
+
+### prompt-identifiers-ai-sdk
+
+#### Fixed
+
+- Rewrite streaming decoder to support symmetric delimiters (e.g., `~000~`) and partial multi-char delimiter buffering
+- Fix typo in docstring
+
+#### Added
+
+- Add dedicated streaming decoder test suite (4 output formats × ~15 cases, symmetric delimiter edge cases)
+
+#### Changed
+
+- Apply prettier formatting
+
+### prompt-identifiers-baml
+
+#### Fixed
+
+- Change SafeNumeric output from angle brackets (`<000>`) to square brackets (`[000]`) in `formatPlaceholder`
+
+#### Changed
+
+- Apply prettier formatting
+
+---
+
+## [0.1.0] - 2026-02-05
 
 Initial release of all packages.
 

@@ -1,6 +1,6 @@
 {
   "name": "prompt-identifiers-baml",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "BAML integration for prompt-identifiers. Efficient ID compression for token optimization.",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
