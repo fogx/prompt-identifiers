@@ -34,7 +34,6 @@ const result = await analyzeUser({
 ## How It Works
 
 1. **Before BAML call**: Deep traverses input object and encodes all ID fields
-
    - `123e4567-e89b-42d3-a456-426655440000` → `[000]`
 
 2. **After BAML call**: Deep traverses output object and decodes all placeholders
@@ -124,7 +123,7 @@ import { encodeObject } from "prompt-identifiers-baml";
 
 const { encoded, mapping } = encodeObject(
   { user_id: "uuid-here", data: { owner: "other-uuid" } },
-  { inputFormat: "UUID", outputFormat: "SafeNumeric" },
+  { inputFormat: "UUID", outputFormat: "SafeNumeric" }
 );
 
 // encoded: { user_id: '[000]', data: { owner: '[001]' } }
@@ -140,7 +139,7 @@ import { decodeObject } from "prompt-identifiers-baml";
 
 const decoded = decodeObject(
   { user_id: "[000]", summary: "User [000] is active" },
-  { "[000]": "uuid-here" },
+  { "[000]": "uuid-here" }
 );
 
 // decoded: { user_id: 'uuid-here', summary: 'User uuid-here is active' }

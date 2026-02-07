@@ -5,12 +5,12 @@
  */
 
 // Dynamic import to avoid hard dependency
-let Anthropic: typeof import('@anthropic-ai/sdk').default | undefined;
+let Anthropic: typeof import("@anthropic-ai/sdk").default | undefined;
 
 /**
  * Supported Claude models for the benchmark
  */
-export const CLAUDE_MODELS = ['claude-sonnet-4-20250514', 'claude-haiku-4-5-20251001'] as const;
+export const CLAUDE_MODELS = ["claude-sonnet-4-20250514", "claude-haiku-4-5-20251001"] as const;
 export type ClaudeModel = (typeof CLAUDE_MODELS)[number];
 
 /**
@@ -18,7 +18,7 @@ export type ClaudeModel = (typeof CLAUDE_MODELS)[number];
  */
 export async function isAnthropicAvailable(): Promise<boolean> {
   try {
-    const module = await import('@anthropic-ai/sdk');
+    const module = await import("@anthropic-ai/sdk");
     Anthropic = module.default;
     return !!process.env.ANTHROPIC_API_KEY;
   } catch {
@@ -36,13 +36,13 @@ export async function isAnthropicAvailable(): Promise<boolean> {
  */
 export async function callClaude(prompt: string, model: ClaudeModel): Promise<string> {
   if (!Anthropic) {
-    const module = await import('@anthropic-ai/sdk');
+    const module = await import("@anthropic-ai/sdk");
     Anthropic = module.default;
   }
 
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
-    throw new Error('ANTHROPIC_API_KEY environment variable is required');
+    throw new Error("ANTHROPIC_API_KEY environment variable is required");
   }
 
   const client = new Anthropic({ apiKey });
@@ -51,42 +51,42 @@ export async function callClaude(prompt: string, model: ClaudeModel): Promise<st
   const response = await client.beta.messages.create({
     model,
     max_tokens: 8192,
-    betas: ['structured-outputs-2025-11-13'],
+    betas: ["structured-outputs-2025-11-13"],
     messages: [
       {
-        role: 'user',
+        role: "user",
         content: prompt,
       },
     ],
     output_format: {
-      type: 'json_schema',
+      type: "json_schema",
       schema: {
-        type: 'object',
+        type: "object",
         properties: {
           aggregations: {
-            type: 'array',
+            type: "array",
             items: {
-              type: 'object',
+              type: "object",
               properties: {
-                class_id: { type: 'string' },
-                count: { type: 'integer' },
-                names: { type: 'array', items: { type: 'string' } },
+                class_id: { type: "string" },
+                count: { type: "integer" },
+                names: { type: "array", items: { type: "string" } },
               },
-              required: ['class_id', 'count', 'names'],
+              required: ["class_id", "count", "names"],
               additionalProperties: false,
             },
           },
         },
-        required: ['aggregations'],
+        required: ["aggregations"],
         additionalProperties: false,
       },
     },
   });
 
   // Extract text from response
-  const textContent = response.content.find((c) => c.type === 'text');
-  if (!textContent || textContent.type !== 'text') {
-    throw new Error('No text content in response');
+  const textContent = response.content.find((c) => c.type === "text");
+  if (!textContent || textContent.type !== "text") {
+    throw new Error("No text content in response");
   }
 
   return textContent.text;
@@ -97,8 +97,8 @@ export async function callClaude(prompt: string, model: ClaudeModel): Promise<st
  */
 export function getModelDisplayName(model: ClaudeModel): string {
   const names: Record<ClaudeModel, string> = {
-    'claude-sonnet-4-20250514': 'Claude Sonnet 4',
-    'claude-haiku-4-5-20251001': 'Claude Haiku 4.5',
+    "claude-sonnet-4-20250514": "Claude Sonnet 4",
+    "claude-haiku-4-5-20251001": "Claude Haiku 4.5",
   };
   return names[model] || model;
 }

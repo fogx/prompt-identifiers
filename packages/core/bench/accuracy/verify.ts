@@ -4,13 +4,13 @@
  * Parses LLM responses and counts errors in the aggregation task.
  */
 
-import { ExpectedResult } from './prompts';
+import { ExpectedResult } from "./prompts";
 
 /**
  * Details of a specific error
  */
 export interface ErrorDetail {
-  type: 'misspelled' | 'dropped' | 'incorrect_count' | 'incorrect_names' | 'parse_error';
+  type: "misspelled" | "dropped" | "incorrect_count" | "incorrect_names" | "parse_error";
   message: string;
   expected?: unknown;
   actual?: unknown;
@@ -121,8 +121,8 @@ export function verify(
   const parsed = parseResponse(response);
   if (!parsed) {
     result.details.push({
-      type: 'parse_error',
-      message: 'Failed to parse JSON response',
+      type: "parse_error",
+      message: "Failed to parse JSON response",
       actual: response.slice(0, 500),
     });
     result.totalErrors = expected.aggregations.size; // Count all as dropped
@@ -153,7 +153,7 @@ export function verify(
           isMisspelling = true;
           result.misspelledIds++;
           result.details.push({
-            type: 'misspelled',
+            type: "misspelled",
             message: `ID "${classId}" appears to be misspelled`,
             expected: expectedId,
             actual: classId,
@@ -167,7 +167,7 @@ export function verify(
         // Completely unknown ID - count as misspelled
         result.misspelledIds++;
         result.details.push({
-          type: 'misspelled',
+          type: "misspelled",
           message: `ID "${classId}" not found in input`,
           actual: classId,
         });
@@ -183,7 +183,7 @@ export function verify(
     if (agg.count !== expectedAgg.count) {
       result.incorrectCounts++;
       result.details.push({
-        type: 'incorrect_count',
+        type: "incorrect_count",
         message: `Incorrect count for class "${classId}"`,
         expected: expectedAgg.count,
         actual: agg.count,
@@ -197,7 +197,7 @@ export function verify(
     if (!arraysEqual(expectedNames, actualNames)) {
       result.incorrectNames++;
       result.details.push({
-        type: 'incorrect_names',
+        type: "incorrect_names",
         message: `Incorrect names for class "${classId}"`,
         expected: expectedNames,
         actual: actualNames,
@@ -210,7 +210,7 @@ export function verify(
     if (!seenIds.has(expectedId)) {
       result.droppedIds++;
       result.details.push({
-        type: 'dropped',
+        type: "dropped",
         message: `Class ID "${expectedId}" missing from response`,
         expected: expectedId,
       });

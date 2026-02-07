@@ -102,7 +102,7 @@ const uuid5 = "facefeed-dead-4bee-af00-aabbccddeeff";
 async function streamAndCollect(
   config: EncodeConfig,
   uuids: string[],
-  chunks: string[],
+  chunks: string[]
 ): Promise<string> {
   // Build a prompt that contains all UUIDs so they get encoded
   const promptText = uuids.map((u, i) => `id${i}=${u}`).join(" ");
@@ -142,60 +142,36 @@ describe.each(formats)("Streaming decoder: $label", (fmt) => {
 
   // ─── Basic ──────────────────────────────────────────────────────
   test("single placeholder in one chunk", async () => {
-    const text = await streamAndCollect(
-      config,
-      [uuid1],
-      [`Found ${p0} in DB.`],
-    );
+    const text = await streamAndCollect(config, [uuid1], [`Found ${p0} in DB.`]);
     expect(text).toBe(`Found ${uuid1} in DB.`);
   });
 
   test("multiple placeholders in one chunk", async () => {
-    const text = await streamAndCollect(
-      config,
-      [uuid1, uuid2],
-      [`User ${p0} and ${p1}.`],
-    );
+    const text = await streamAndCollect(config, [uuid1, uuid2], [`User ${p0} and ${p1}.`]);
     expect(text).toBe(`User ${uuid1} and ${uuid2}.`);
   });
 
   test("no placeholders", async () => {
-    const text = await streamAndCollect(
-      config,
-      [uuid1],
-      ["Hello world, no IDs here."],
-    );
+    const text = await streamAndCollect(config, [uuid1], ["Hello world, no IDs here."]);
     expect(text).toBe("Hello world, no IDs here.");
   });
 
   // ─── Split at every point of a placeholder ──────────────────────
   test("split at opener", async () => {
     // e.g., "User " + "[000]" or "User " + "~000~"
-    const text = await streamAndCollect(
-      config,
-      [uuid1],
-      ["User ", `${p0} found.`],
-    );
+    const text = await streamAndCollect(config, [uuid1], ["User ", `${p0} found.`]);
     expect(text).toBe(`User ${uuid1} found.`);
   });
 
   test("split mid-digits", async () => {
     // e.g., "User [0" + "00]" or "User ~0" + "00~"
-    const text = await streamAndCollect(
-      config,
-      [uuid1],
-      [`User ${open}0`, `00${close} found.`],
-    );
+    const text = await streamAndCollect(config, [uuid1], [`User ${open}0`, `00${close} found.`]);
     expect(text).toBe(`User ${uuid1} found.`);
   });
 
   test("split at closer", async () => {
     // e.g., "User [000" + "]" or "User ~000" + "~"
-    const text = await streamAndCollect(
-      config,
-      [uuid1],
-      [`User ${open}000`, `${close} found.`],
-    );
+    const text = await streamAndCollect(config, [uuid1], [`User ${open}000`, `${close} found.`]);
     expect(text).toBe(`User ${uuid1} found.`);
   });
 
@@ -203,7 +179,7 @@ describe.each(formats)("Streaming decoder: $label", (fmt) => {
     const text = await streamAndCollect(
       config,
       [uuid1],
-      [`User ${open}`, "000", `${close} found.`],
+      [`User ${open}`, "000", `${close} found.`]
     );
     expect(text).toBe(`User ${uuid1} found.`);
   });
@@ -213,7 +189,7 @@ describe.each(formats)("Streaming decoder: $label", (fmt) => {
     const text = await streamAndCollect(
       config,
       [uuid1, uuid2],
-      [`A=${open}00`, `0${close} B=${open}0`, `01${close} done.`],
+      [`A=${open}00`, `0${close} B=${open}0`, `01${close} done.`]
     );
     expect(text).toBe(`A=${uuid1} B=${uuid2} done.`);
   });
@@ -233,11 +209,7 @@ describe.each(formats)("Streaming decoder: $label", (fmt) => {
 
   // ─── URL patterns ──────────────────────────────────────────────
   test("URL with placeholder", async () => {
-    const text = await streamAndCollect(
-      config,
-      [uuid1],
-      [`campaign://${p0}/edit`],
-    );
+    const text = await streamAndCollect(config, [uuid1], [`campaign://${p0}/edit`]);
     expect(text).toBe(`campaign://${uuid1}/edit`);
   });
 
@@ -245,7 +217,7 @@ describe.each(formats)("Streaming decoder: $label", (fmt) => {
     const text = await streamAndCollect(
       config,
       [uuid1],
-      [`campaign://${open}00`, `0${close}/edit`],
+      [`campaign://${open}00`, `0${close}/edit`]
     );
     expect(text).toBe(`campaign://${uuid1}/edit`);
   });
@@ -262,10 +234,7 @@ describe.each(formats)("Streaming decoder: $label", (fmt) => {
   // ─── Round-trip: 5 UUIDs ───────────────────────────────────────
   test("round-trip with 5 UUIDs", async () => {
     const uuids = [uuid1, uuid2, uuid3, uuid4, uuid5];
-    const { encoded, mapping } = encode(
-      uuids.map((u, i) => `item${i}=${u}`).join(", "),
-      config,
-    );
+    const { encoded, mapping } = encode(uuids.map((u, i) => `item${i}=${u}`).join(", "), config);
 
     // Stream the encoded text in 3-character chunks
     const chunks: string[] = [];
@@ -293,89 +262,53 @@ describe("Streaming decoder: symmetric delimiter edge cases", () => {
   };
 
   test("hello ~000~ → decode all (last ~ is closer)", async () => {
-    const text = await streamAndCollect(
-      tildeConfig,
-      [uuid1],
-      ["hello ", "~000~"],
-    );
+    const text = await streamAndCollect(tildeConfig, [uuid1], ["hello ", "~000~"]);
     expect(text).toBe(`hello ${uuid1}`);
   });
 
   test("hello ~00 → partial → buffer ~00", async () => {
     // Two chunks: "hello ~00" then "0~ end"
-    const text = await streamAndCollect(
-      tildeConfig,
-      [uuid1],
-      ["hello ~00", "0~ end"],
-    );
+    const text = await streamAndCollect(tildeConfig, [uuid1], ["hello ~00", "0~ end"]);
     expect(text).toBe(`hello ${uuid1} end`);
   });
 
   test("text~~000~ → look-back finds ~000 → closer → decode all", async () => {
     // The ~ at position after "text" is a natural tilde in text
-    const text = await streamAndCollect(
-      tildeConfig,
-      [uuid1],
-      ["text~", "~000~"],
-    );
+    const text = await streamAndCollect(tildeConfig, [uuid1], ["text~", "~000~"]);
     expect(text).toBe(`text~${uuid1}`);
   });
 
   test("hello~world ~ → no valid opener before → buffer ~", async () => {
     // "hello~world " then "~" — the ~ at end might be an opener
     // Then "000~ done" completes it
-    const text = await streamAndCollect(
-      tildeConfig,
-      [uuid1],
-      ["hello~world ", "~", "000~ done"],
-    );
+    const text = await streamAndCollect(tildeConfig, [uuid1], ["hello~world ", "~", "000~ done"]);
     expect(text).toBe(`hello~world ${uuid1} done`);
   });
 
   test("~000~text~00 → buffer ~00, decode ~000~text", async () => {
     // Stream "~000~text~00" then "1~ end"
-    const text = await streamAndCollect(
-      tildeConfig,
-      [uuid1, uuid2],
-      ["~000~text~00", "1~ end"],
-    );
+    const text = await streamAndCollect(tildeConfig, [uuid1, uuid2], ["~000~text~00", "1~ end"]);
     expect(text).toBe(`${uuid1}text${uuid2} end`);
   });
 
   test("multiple symmetric placeholders fully in one chunk", async () => {
-    const text = await streamAndCollect(
-      tildeConfig,
-      [uuid1, uuid2],
-      [`~000~ and ~001~`],
-    );
+    const text = await streamAndCollect(tildeConfig, [uuid1, uuid2], [`~000~ and ~001~`]);
     expect(text).toBe(`${uuid1} and ${uuid2}`);
   });
 
   test("symmetric placeholder split at every position", async () => {
     // ~000~ split as: "~" "0" "0" "0" "~"
-    const text = await streamAndCollect(
-      tildeConfig,
-      [uuid1],
-      ["User ~", "0", "0", "0", "~ end"],
-    );
+    const text = await streamAndCollect(tildeConfig, [uuid1], ["User ~", "0", "0", "0", "~ end"]);
     expect(text).toBe(`User ${uuid1} end`);
   });
 
   test("back-to-back symmetric placeholders", async () => {
-    const text = await streamAndCollect(
-      tildeConfig,
-      [uuid1, uuid2],
-      ["~000~~001~"],
-    );
+    const text = await streamAndCollect(tildeConfig, [uuid1, uuid2], ["~000~~001~"]);
     expect(text).toBe(`${uuid1}${uuid2}`);
   });
 
   test("back-to-back symmetric placeholders split between them", async () => {
-    const text = await streamAndCollect(
-      tildeConfig,
-      [uuid1, uuid2],
-      ["~000~", "~001~"],
-    );
+    const text = await streamAndCollect(tildeConfig, [uuid1, uuid2], ["~000~", "~001~"]);
     expect(text).toBe(`${uuid1}${uuid2}`);
   });
 
@@ -383,7 +316,7 @@ describe("Streaming decoder: symmetric delimiter edge cases", () => {
     const text = await streamAndCollect(
       tildeConfig,
       [uuid1],
-      ["https://example.com/~000", "~/path"],
+      ["https://example.com/~000", "~/path"]
     );
     expect(text).toBe(`https://example.com/${uuid1}/path`);
   });
@@ -419,11 +352,11 @@ describe("Streaming decoder: wrapLanguageModel integration", () => {
     const text = parts
       .filter(
         (
-          p,
+          p
         ): p is LanguageModelV3StreamPart & {
           type: "text-delta";
           delta: string;
-        } => p.type === "text-delta",
+        } => p.type === "text-delta"
       )
       .map((p) => p.delta)
       .join("");
@@ -456,11 +389,11 @@ describe("Streaming decoder: wrapLanguageModel integration", () => {
     const text = parts
       .filter(
         (
-          p,
+          p
         ): p is LanguageModelV3StreamPart & {
           type: "text-delta";
           delta: string;
-        } => p.type === "text-delta",
+        } => p.type === "text-delta"
       )
       .map((p) => p.delta)
       .join("");

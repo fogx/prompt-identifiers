@@ -4,8 +4,8 @@
  * Generates items with UUIDs for class-based aggregation tasks.
  */
 
-import { v4 as uuidv4 } from 'uuid';
-import { faker } from '@faker-js/faker';
+import { v4 as uuidv4 } from "uuid";
+import { faker } from "@faker-js/faker";
 
 /**
  * Represents an item in the benchmark dataset
@@ -56,7 +56,9 @@ export function generateDataset(itemCount: number, classCount: number): Item[] {
  * @param items - The generated dataset
  * @returns Map of class_id to { count, names }
  */
-export function getExpectedAggregation(items: Item[]): Map<string, { count: number; names: string[] }> {
+export function getExpectedAggregation(
+  items: Item[]
+): Map<string, { count: number; names: string[] }> {
   const result = new Map<string, { count: number; names: string[] }>();
 
   for (const item of items) {

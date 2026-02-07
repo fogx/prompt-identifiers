@@ -34,10 +34,7 @@ export interface WrapBamlFunctionOptions {
   /**
    * Optional callback fired after encoding IDs in the input.
    */
-  onEncode?: (result: {
-    mapping: Record<string, string>;
-    encodedCount: number;
-  }) => void;
+  onEncode?: (result: { mapping: Record<string, string>; encodedCount: number }) => void;
 
   /**
    * Optional callback fired after decoding IDs in the output.
@@ -50,7 +47,7 @@ export type BamlFunction<TInput, TOutput> = (input: TInput) => Promise<TOutput>;
 
 /** A BAML streaming function type */
 export type BamlStreamingFunction<TInput, TPartial, TFinal> = (
-  input: TInput,
+  input: TInput
 ) => AsyncGenerator<TPartial, TFinal, unknown>;
 
 // =============================================================================
@@ -95,10 +92,7 @@ function parseFieldPath(path: string): string[] {
 /**
  * Check if a value at the given path should be encoded.
  */
-function matchesFieldPath(
-  currentPath: string[],
-  targetSegments: string[],
-): boolean {
+function matchesFieldPath(currentPath: string[], targetSegments: string[]): boolean {
   if (currentPath.length !== targetSegments.length) {
     return false;
   }
@@ -140,9 +134,7 @@ interface EncodeContext {
  */
 function getInputPattern(inputFormat: EncodeConfig["inputFormat"]): RegExp {
   if (inputFormat instanceof RegExp) {
-    const flags = inputFormat.flags.includes("g")
-      ? inputFormat.flags
-      : inputFormat.flags + "g";
+    const flags = inputFormat.flags.includes("g") ? inputFormat.flags : inputFormat.flags + "g";
     return new RegExp(inputFormat.source, flags);
   }
   if (inputFormat === "UUID") {
@@ -155,10 +147,7 @@ function getInputPattern(inputFormat: EncodeConfig["inputFormat"]): RegExp {
 /**
  * Format a placeholder based on output format and index.
  */
-function formatPlaceholder(
-  outputFormat: EncodeConfig["outputFormat"],
-  index: number,
-): string {
+function formatPlaceholder(outputFormat: EncodeConfig["outputFormat"], index: number): string {
   if (outputFormat === "SafeNumeric") {
     const s = index.toString();
     const width = Math.max(3, Math.ceil(s.length / 3) * 3);
@@ -170,8 +159,7 @@ function formatPlaceholder(
     return s.padStart(width, "0");
   }
   if (outputFormat === "IdToken") {
-    const BASE62 =
-      "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+    const BASE62 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
     if (index < 62) return BASE62[index];
     let result = "";
     let n = index;
@@ -197,8 +185,7 @@ function formatPlaceholder(
   if (!specifier) {
     formatted = index.toString();
   } else if (specifier === "base62") {
-    const BASE62 =
-      "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+    const BASE62 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
     if (index < 62) formatted = BASE62[index];
     else {
       formatted = "";
@@ -243,10 +230,7 @@ function encodeStringWithContext(text: string, ctx: EncodeContext): string {
     }
 
     // New ID - assign next placeholder
-    const placeholder = formatPlaceholder(
-      ctx.config.outputFormat,
-      ctx.nextIndex,
-    );
+    const placeholder = formatPlaceholder(ctx.config.outputFormat, ctx.nextIndex);
     ctx.nextIndex++;
     ctx.idToPlaceholder.set(id, placeholder);
     ctx.mapping[placeholder] = id;
@@ -268,8 +252,7 @@ function deepEncode<T>(value: T, ctx: EncodeContext, path: string[] = []): T {
   if (typeof value === "string") {
     // Check if this field should be encoded
     const shouldEncode =
-      ctx.fieldPaths === null ||
-      ctx.fieldPaths.some((fp) => matchesFieldPath(path, fp));
+      ctx.fieldPaths === null || ctx.fieldPaths.some((fp) => matchesFieldPath(path, fp));
 
     if (!shouldEncode) {
       return value;
@@ -281,9 +264,7 @@ function deepEncode<T>(value: T, ctx: EncodeContext, path: string[] = []): T {
 
   // Handle arrays
   if (Array.isArray(value)) {
-    return value.map((item, index) =>
-      deepEncode(item, ctx, [...path, String(index)]),
-    ) as T;
+    return value.map((item, index) => deepEncode(item, ctx, [...path, String(index)])) as T;
   }
 
   // Handle objects
@@ -305,11 +286,7 @@ function deepEncode<T>(value: T, ctx: EncodeContext, path: string[] = []): T {
  * Deep traverse and decode placeholders in an object.
  * Returns a new object with placeholders replaced by original IDs.
  */
-function deepDecode<T>(
-  value: T,
-  mapping: Record<string, string>,
-  countRef: { count: number },
-): T {
+function deepDecode<T>(value: T, mapping: Record<string, string>, countRef: { count: number }): T {
   // Handle null/undefined
   if (value === null || value === undefined) {
     return value;
@@ -371,7 +348,7 @@ function deepDecode<T>(
  */
 export function wrapBamlFunction<TInput, TOutput>(
   fn: BamlFunction<TInput, TOutput>,
-  options: WrapBamlFunctionOptions,
+  options: WrapBamlFunctionOptions
 ): BamlFunction<TInput, TOutput> {
   const { config, encodeFields, onEncode, onDecode } = options;
 
@@ -428,16 +405,14 @@ export function wrapBamlFunction<TInput, TOutput>(
  */
 export function wrapBamlStreamingFunction<TInput, TPartial, TFinal>(
   fn: BamlStreamingFunction<TInput, TPartial, TFinal>,
-  options: WrapBamlFunctionOptions,
+  options: WrapBamlFunctionOptions
 ): BamlStreamingFunction<TInput, TPartial, TFinal> {
   const { config, encodeFields, onEncode, onDecode } = options;
 
   // Pre-parse field paths if provided
   const fieldPaths = encodeFields ? encodeFields.map(parseFieldPath) : null;
 
-  return async function* (
-    input: TInput,
-  ): AsyncGenerator<TPartial, TFinal, unknown> {
+  return async function* (input: TInput): AsyncGenerator<TPartial, TFinal, unknown> {
     // Encode input
     const ctx: EncodeContext = {
       config,
@@ -493,7 +468,7 @@ export function wrapBamlStreamingFunction<TInput, TPartial, TFinal>(
 export function encodeObject<T>(
   obj: T,
   config: EncodeConfig,
-  encodeFields?: string[],
+  encodeFields?: string[]
 ): { encoded: T; mapping: Record<string, string> } {
   const fieldPaths = encodeFields ? encodeFields.map(parseFieldPath) : null;
 

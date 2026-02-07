@@ -5,10 +5,7 @@
  * with our middleware, then call `doGenerate`/`doStream` on the wrapped model.
  */
 
-import type {
-  LanguageModelV3Message,
-  LanguageModelV3StreamPart,
-} from "@ai-sdk/provider";
+import type { LanguageModelV3Message, LanguageModelV3StreamPart } from "@ai-sdk/provider";
 import { wrapLanguageModel } from "ai";
 import type { EncodeConfig } from "prompt-identifiers";
 import { promptIdentifiersMiddleware } from "../src/index";
@@ -120,9 +117,7 @@ describe("AI SDK Integration", () => {
         ],
       });
 
-      const output = getToolResultOutput<{ id: string; name: string }>(
-        receivedPrompt[0],
-      );
+      const output = getToolResultOutput<{ id: string; name: string }>(receivedPrompt[0]);
       expect(output?.type).toBe("json");
       expect(output?.value.id).toBe("[000]");
       expect(output?.value.name).toBe("Alice");
@@ -189,13 +184,9 @@ describe("AI SDK Integration", () => {
       });
 
       // Same UUIDs should get same placeholders across messages
-      expect(getUserMessageText(receivedPrompt[0])).toBe(
-        "User [000] and [001]",
-      );
+      expect(getUserMessageText(receivedPrompt[0])).toBe("User [000] and [001]");
 
-      const output = getToolResultOutput<{ a: string; b: string }>(
-        receivedPrompt[1],
-      );
+      const output = getToolResultOutput<{ a: string; b: string }>(receivedPrompt[1]);
       expect(output?.value.a).toBe("[000]");
       expect(output?.value.b).toBe("[001]");
 
@@ -225,11 +216,11 @@ describe("AI SDK Integration", () => {
       const text = parts
         .filter(
           (
-            p,
+            p
           ): p is LanguageModelV3StreamPart & {
             type: "text-delta";
             delta: string;
-          } => p.type === "text-delta",
+          } => p.type === "text-delta"
         )
         .map((p) => p.delta)
         .join("");
@@ -256,11 +247,11 @@ describe("AI SDK Integration", () => {
       const text = parts
         .filter(
           (
-            p,
+            p
           ): p is LanguageModelV3StreamPart & {
             type: "text-delta";
             delta: string;
-          } => p.type === "text-delta",
+          } => p.type === "text-delta"
         )
         .map((p) => p.delta)
         .join("");
@@ -289,9 +280,7 @@ describe("AI SDK Integration", () => {
       });
 
       const parts = await collectStreamParts(stream);
-      const toolCall = parts.find((p) => p.type === "tool-call") as
-        | { input: string }
-        | undefined;
+      const toolCall = parts.find((p) => p.type === "tool-call") as { input: string } | undefined;
 
       expect(toolCall).toBeDefined();
       expect(toolCall?.input).toBe(`{"id":"${uuid1}"}`);
@@ -403,10 +392,7 @@ describe("AI SDK Integration", () => {
 
       type NestedValue = { level1: { level2: { level3: { ids: string[] } } } };
       const output = getToolResultOutput<NestedValue>(receivedPrompt[0]);
-      expect(output?.value.level1.level2.level3.ids).toEqual([
-        "[000]",
-        "[001]",
-      ]);
+      expect(output?.value.level1.level2.level3.ids).toEqual(["[000]", "[001]"]);
     });
 
     test("handles JSON arrays at root level", async () => {

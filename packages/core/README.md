@@ -18,7 +18,7 @@ import { encode, decode } from "prompt-identifiers";
 // Encode UUIDs to short placeholders
 const result = encode(
   "User 123e4567-e89b-42d3-a456-426655440000 sent message to 987fcdeb-51a2-43f7-8d9c-0123456789ab",
-  { inputFormat: "UUID", outputFormat: "Numeric" },
+  { inputFormat: "UUID", outputFormat: "Numeric" }
 );
 
 console.log(result.encoded);

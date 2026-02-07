@@ -58,7 +58,7 @@ describe("prompt-identifiers-baml", () => {
             user_id: input.data.user.id,
             message: `Hello ${input.data.user.name}, your ID is ${input.data.user.id}`,
           },
-        }),
+        })
       );
 
       const wrapped = wrapBamlFunction(mockFn, { config: defaultConfig });
@@ -114,10 +114,7 @@ describe("prompt-identifiers-baml", () => {
       });
 
       // Verify decoding
-      expect(result.processed).toEqual([
-        `${uuid1}: Item 1`,
-        `${uuid2}: Item 2`,
-      ]);
+      expect(result.processed).toEqual([`${uuid1}: Item 1`, `${uuid2}: Item 2`]);
     });
 
     test("deduplicates repeated UUIDs", async () => {
@@ -208,11 +205,9 @@ describe("prompt-identifiers-baml", () => {
 
   describe("encodeFields option", () => {
     test("only encodes specified top-level fields", async () => {
-      const mockFn = jest.fn(
-        async (input: { user_id: string; code: string }) => ({
-          result: `${input.user_id} - ${input.code}`,
-        }),
-      );
+      const mockFn = jest.fn(async (input: { user_id: string; code: string }) => ({
+        result: `${input.user_id} - ${input.code}`,
+      }));
 
       const wrapped = wrapBamlFunction(mockFn, {
         config: defaultConfig,
@@ -394,7 +389,7 @@ describe("prompt-identifiers-baml", () => {
           user_id: uuid1,
           data: { owner: uuid2 },
         },
-        defaultConfig,
+        defaultConfig
       );
 
       expect(encoded).toEqual({
@@ -415,7 +410,7 @@ describe("prompt-identifiers-baml", () => {
           code: uuid2,
         },
         defaultConfig,
-        ["user_id"],
+        ["user_id"]
       );
 
       expect(encoded).toEqual({
@@ -432,7 +427,7 @@ describe("prompt-identifiers-baml", () => {
           user_id: "[000]",
           summary: "User [000] is active",
         },
-        { "[000]": uuid1 },
+        { "[000]": uuid1 }
       );
 
       expect(decoded).toEqual({
@@ -448,7 +443,7 @@ describe("prompt-identifiers-baml", () => {
             items: [{ id: "[000]" }, { id: "[001]" }],
           },
         },
-        { "[000]": uuid1, "[001]": uuid2 },
+        { "[000]": uuid1, "[001]": uuid2 }
       );
 
       expect(decoded).toEqual({

@@ -4,13 +4,13 @@
  * Creates prompts for the item aggregation task with different encoding formats.
  */
 
-import { encode, OutputFormat } from '../../src/index';
-import { Item, getExpectedAggregation } from './generate-data';
+import { encode, OutputFormat } from "../../src/index";
+import { Item, getExpectedAggregation } from "./generate-data";
 
 /**
  * Format type for the benchmark
  */
-export type BenchmarkFormat = 'raw' | 'SafeNumeric' | 'Numeric';
+export type BenchmarkFormat = "raw" | "SafeNumeric" | "Numeric";
 
 /**
  * Expected result for verification
@@ -47,9 +47,11 @@ export function createPrompt(items: Item[], format: BenchmarkFormat): PromptResu
   const expectedRaw = getExpectedAggregation(items);
   const originalClassIds = new Set(items.map((i) => i.class_id));
 
-  if (format === 'raw') {
+  if (format === "raw") {
     // Send raw UUIDs - no encoding
-    const itemList = items.map((item) => `- Item "${item.name}": class_id = ${item.class_id}`).join('\n');
+    const itemList = items
+      .map((item) => `- Item "${item.name}": class_id = ${item.class_id}`)
+      .join("\n");
 
     const prompt = `Here are items with their class IDs:
 ${itemList}
@@ -82,12 +84,12 @@ CRITICAL REQUIREMENTS:
   }
 
   // Encode class_ids using prompt-identifiers
-  const outputFormat: OutputFormat = format === 'SafeNumeric' ? 'SafeNumeric' : 'Numeric';
+  const outputFormat: OutputFormat = format === "SafeNumeric" ? "SafeNumeric" : "Numeric";
 
   // Build a text with all class_ids to encode
-  const classIdText = items.map((item) => `CLASSID:${item.class_id}`).join('\n');
+  const classIdText = items.map((item) => `CLASSID:${item.class_id}`).join("\n");
   const { encoded: encodedClassIdText, mapping } = encode(classIdText, {
-    inputFormat: 'UUID',
+    inputFormat: "UUID",
     outputFormat,
   });
 
@@ -103,7 +105,7 @@ CRITICAL REQUIREMENTS:
       const encodedClassId = uuidToPlaceholder.get(item.class_id.toLowerCase());
       return `- Item "${item.name}": class_id = ${encodedClassId}`;
     })
-    .join('\n');
+    .join("\n");
 
   // Build expected result with encoded placeholders
   const encodedAggregations = new Map<string, { count: number; names: string[] }>();

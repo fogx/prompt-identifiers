@@ -51,6 +51,7 @@ Two main functions: `encode(text, config)` and `decode(text, mapping)`.
 ### AI SDK Middleware (`packages/prompt-identifiers-ai-sdk/src/index.ts`)
 
 `promptIdentifiersMiddleware(options)` returns a `LanguageModelV3Middleware` with three hooks:
+
 - `transformParams` — encodes IDs in all prompt messages before LLM call
 - `wrapGenerate` — decodes IDs in response content
 - `wrapStream` — buffers incomplete placeholders split across stream chunks, then decodes
@@ -60,6 +61,7 @@ Handles TextPart, ToolResultPart (text + JSON), and tool call inputs.
 ### BAML Wrapper (`packages/prompt-identifiers-baml/src/index.ts`)
 
 `wrapBamlFunction()` / `wrapBamlStreamingFunction()` — wraps BAML-generated functions.
+
 - Field path selectors for targeted encoding: `'user_id'`, `'data.users[].profile.id'`
 - Deep recursive traversal through objects/arrays with global mapping consistency
 

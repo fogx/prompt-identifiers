@@ -81,6 +81,7 @@ pnpm --filter prompt-identifiers build
 ## Making Changes
 
 1. **Create a feature branch**
+
    ```bash
    git checkout -b feature/your-feature-name
    ```
@@ -92,6 +93,7 @@ pnpm --filter prompt-identifiers build
 4. **Update changelog** - Add entry under `## [Unreleased]` in root `CHANGELOG.md`
 
 5. **Run tests** - Ensure all tests pass
+
    ```bash
    pnpm test
    ```

@@ -23,26 +23,26 @@
  *   --verbose      Show detailed output including prompts and responses
  */
 
-import 'dotenv/config';
-import * as fs from 'fs';
-import * as path from 'path';
-import { generateDataset, Item } from './generate-data';
-import { createPrompt, BenchmarkFormat } from './prompts';
-import { verify, VerificationResult } from './verify';
+import "dotenv/config";
+import * as fs from "fs";
+import * as path from "path";
+import { generateDataset, Item } from "./generate-data";
+import { BenchmarkFormat, createPrompt } from "./prompts";
 import {
   callClaude,
-  isAnthropicAvailable,
   CLAUDE_MODELS,
   ClaudeModel,
   getModelDisplayName as getClaudeDisplayName,
-} from './providers/anthropic';
+  isAnthropicAvailable,
+} from "./providers/anthropic";
 import {
   callOpenAI,
+  getModelDisplayName as getOpenAIDisplayName,
   isOpenAIAvailable,
   OPENAI_MODELS,
   OpenAIModel,
-  getModelDisplayName as getOpenAIDisplayName,
-} from './providers/openai';
+} from "./providers/openai";
+import { VerificationResult, verify } from "./verify";
 
 // =============================================================================
 // Types
@@ -96,33 +96,33 @@ function parseArgs(): BenchmarkConfig {
     classCount: 100,
     runs: 3,
     models: [],
-    formats: ['raw', 'SafeNumeric', 'Numeric'],
+    formats: ["raw", "SafeNumeric", "Numeric"],
     verbose: false,
-    outputFile: '',
+    outputFile: "",
   };
 
-  let provider = 'anthropic';
+  let provider = "anthropic";
   let specificModel: string | null = null;
   let specificFormat: string | null = null;
 
   for (const arg of args) {
-    if (arg.startsWith('--items=')) {
-      config.itemCount = parseInt(arg.split('=')[1], 10);
-    } else if (arg.startsWith('--classes=')) {
-      config.classCount = parseInt(arg.split('=')[1], 10);
-    } else if (arg.startsWith('--runs=')) {
-      config.runs = parseInt(arg.split('=')[1], 10);
-    } else if (arg.startsWith('--provider=')) {
-      provider = arg.split('=')[1];
-    } else if (arg.startsWith('--model=')) {
-      specificModel = arg.split('=')[1];
-    } else if (arg.startsWith('--format=')) {
-      specificFormat = arg.split('=')[1];
-    } else if (arg.startsWith('--output=')) {
-      config.outputFile = arg.split('=')[1];
-    } else if (arg === '--verbose') {
+    if (arg.startsWith("--items=")) {
+      config.itemCount = parseInt(arg.split("=")[1], 10);
+    } else if (arg.startsWith("--classes=")) {
+      config.classCount = parseInt(arg.split("=")[1], 10);
+    } else if (arg.startsWith("--runs=")) {
+      config.runs = parseInt(arg.split("=")[1], 10);
+    } else if (arg.startsWith("--provider=")) {
+      provider = arg.split("=")[1];
+    } else if (arg.startsWith("--model=")) {
+      specificModel = arg.split("=")[1];
+    } else if (arg.startsWith("--format=")) {
+      specificFormat = arg.split("=")[1];
+    } else if (arg.startsWith("--output=")) {
+      config.outputFile = arg.split("=")[1];
+    } else if (arg === "--verbose") {
       config.verbose = true;
-    } else if (arg === '--help' || arg === '-h') {
+    } else if (arg === "--help" || arg === "-h") {
       printHelp();
       process.exit(0);
     }
@@ -131,23 +131,23 @@ function parseArgs(): BenchmarkConfig {
   // Set models based on provider
   if (specificModel) {
     config.models = [specificModel];
-  } else if (provider === 'all') {
+  } else if (provider === "all") {
     config.models = [...CLAUDE_MODELS, ...OPENAI_MODELS];
-  } else if (provider === 'openai') {
+  } else if (provider === "openai") {
     config.models = [...OPENAI_MODELS];
   } else {
     config.models = [...CLAUDE_MODELS];
   }
 
   // Set formats
-  if (specificFormat && specificFormat !== 'all') {
+  if (specificFormat && specificFormat !== "all") {
     config.formats = [specificFormat as BenchmarkFormat];
   }
 
   // Set default output file
   if (!config.outputFile) {
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    config.outputFile = path.join(__dirname, 'results', `benchmark-${timestamp}.json`);
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+    config.outputFile = path.join(__dirname, "results", `benchmark-${timestamp}.json`);
   }
 
   return config;
@@ -226,7 +226,7 @@ async function runSingleTest(
 
   if (verbose) {
     console.log(`\n--- Prompt (${format}) ---`);
-    console.log(prompt.slice(0, 1000) + (prompt.length > 1000 ? '...' : ''));
+    console.log(prompt.slice(0, 1000) + (prompt.length > 1000 ? "..." : ""));
   }
 
   const startTime = Date.now();
@@ -235,7 +235,7 @@ async function runSingleTest(
 
   if (verbose) {
     console.log(`\n--- Response ---`);
-    console.log(response.slice(0, 1000) + (response.length > 1000 ? '...' : ''));
+    console.log(response.slice(0, 1000) + (response.length > 1000 ? "..." : ""));
   }
 
   const verification = verify(response, expected, mapping);
@@ -250,14 +250,14 @@ async function runSingleTest(
 }
 
 async function runBenchmark(config: BenchmarkConfig): Promise<BenchmarkResults> {
-  console.log('# LLM Accuracy Benchmark\n');
+  console.log("# LLM Accuracy Benchmark\n");
   console.log(`Configuration:`);
   console.log(`  Items: ${config.itemCount}`);
   console.log(`  Classes: ${config.classCount}`);
   console.log(`  Runs per config: ${config.runs}`);
-  console.log(`  Models: ${config.models.join(', ')}`);
-  console.log(`  Formats: ${config.formats.join(', ')}`);
-  console.log('');
+  console.log(`  Models: ${config.models.join(", ")}`);
+  console.log(`  Formats: ${config.formats.join(", ")}`);
+  console.log("");
 
   // Check provider availability
   const anthropicAvailable = await isAnthropicAvailable();
@@ -283,12 +283,12 @@ async function runBenchmark(config: BenchmarkConfig): Promise<BenchmarkResults> 
   });
 
   if (availableModels.length === 0) {
-    console.error('\n❌ No models available. Please set API keys and install SDKs.');
-    console.error('   Run: pnpm add -D @anthropic-ai/sdk openai');
+    console.error("\n❌ No models available. Please set API keys and install SDKs.");
+    console.error("   Run: pnpm add -D @anthropic-ai/sdk openai");
     process.exit(1);
   }
 
-  console.log('');
+  console.log("");
 
   const results: BenchmarkResults = {
     config: {
@@ -301,9 +301,11 @@ async function runBenchmark(config: BenchmarkConfig): Promise<BenchmarkResults> 
   };
 
   // Generate dataset once (same data for all tests to ensure fair comparison)
-  console.log('Generating dataset...');
+  console.log("Generating dataset...");
   const items = generateDataset(config.itemCount, config.classCount);
-  console.log(`Generated ${items.length} items across ${new Set(items.map((i) => i.class_id)).size} classes\n`);
+  console.log(
+    `Generated ${items.length} items across ${new Set(items.map((i) => i.class_id)).size} classes\n`
+  );
 
   // Run benchmarks for each model
   for (const model of availableModels) {
@@ -335,11 +337,15 @@ async function runBenchmark(config: BenchmarkConfig): Promise<BenchmarkResults> 
 
           const v = result.verification;
           console.log(
-            `✓ ${v.totalErrors} errors (misspelled: ${v.misspelledIds}, dropped: ${v.droppedIds}, counts: ${v.incorrectCounts}, names: ${v.incorrectNames}) [${(result.latencyMs / 1000).toFixed(1)}s]`
+            `✓ ${v.totalErrors} errors (misspelled: ${v.misspelledIds}, dropped: ${
+              v.droppedIds
+            }, counts: ${v.incorrectCounts}, names: ${v.incorrectNames}) [${(
+              result.latencyMs / 1000
+            ).toFixed(1)}s]`
           );
 
           if (config.verbose && v.details.length > 0) {
-            console.log('    Details:');
+            console.log("    Details:");
             for (const detail of v.details.slice(0, 5)) {
               console.log(`      - ${detail.type}: ${detail.message}`);
             }
@@ -374,8 +380,8 @@ async function runBenchmark(config: BenchmarkConfig): Promise<BenchmarkResults> 
 // =============================================================================
 
 function printSummary(results: BenchmarkResults): void {
-  console.log('\n' + '='.repeat(60));
-  console.log('# Summary\n');
+  console.log("\n" + "=".repeat(60));
+  console.log("# Summary\n");
 
   const { config } = results;
   console.log(`Items: ${config.itemCount}, Classes: ${config.classCount}, Runs: ${config.runs}\n`);
@@ -387,29 +393,33 @@ function printSummary(results: BenchmarkResults): void {
     const formats = Object.keys(modelResult.averageErrors) as BenchmarkFormat[];
     const runNumbers = [...new Set(modelResult.results.map((r) => r.run))];
 
-    console.log('| Format | ' + runNumbers.map((r) => `Run ${r}`).join(' | ') + ' | Average |');
-    console.log('|--------|' + runNumbers.map(() => '-------').join('|') + '|---------|');
+    console.log("| Format | " + runNumbers.map((r) => `Run ${r}`).join(" | ") + " | Average |");
+    console.log("|--------|" + runNumbers.map(() => "-------").join("|") + "|---------|");
 
     for (const format of formats) {
       const runs = modelResult.results.filter((r) => r.format === format);
       const runErrors = runNumbers.map((n) => {
         const run = runs.find((r) => r.run === n);
-        return run ? run.verification.totalErrors.toString() : '-';
+        return run ? run.verification.totalErrors.toString() : "-";
       });
       const avg = modelResult.averageErrors[format].toFixed(1);
-      console.log(`| ${format.padEnd(12)} | ${runErrors.map((e) => e.padStart(5)).join(' | ')} | ${avg.padStart(7)} |`);
+      console.log(
+        `| ${format.padEnd(12)} | ${runErrors
+          .map((e) => e.padStart(5))
+          .join(" | ")} | ${avg.padStart(7)} |`
+      );
     }
 
     // Calculate improvement
-    const rawAvg = modelResult.averageErrors['raw'] || 0;
-    const safeAvg = modelResult.averageErrors['SafeNumeric'] || 0;
+    const rawAvg = modelResult.averageErrors["raw"] || 0;
+    const safeAvg = modelResult.averageErrors["SafeNumeric"] || 0;
 
     if (rawAvg > 0 && safeAvg >= 0) {
       const improvement = ((rawAvg - safeAvg) / rawAvg) * 100;
       console.log(`\nSafeNumeric reduces errors by ${improvement.toFixed(0)}% vs raw UUIDs.`);
     }
 
-    console.log('');
+    console.log("");
   }
 }
 
@@ -436,7 +446,7 @@ async function main(): Promise<void> {
     printSummary(results);
     saveResults(results, config.outputFile);
   } catch (error) {
-    console.error('Benchmark failed:', error);
+    console.error("Benchmark failed:", error);
     process.exit(1);
   }
 }

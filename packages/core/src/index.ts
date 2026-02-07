@@ -12,8 +12,7 @@
  * UUID pattern - RFC 4122 compliant
  * Matches: 123e4567-e89b-42d3-a456-426655440000
  */
-const UUID_V4_REGEX =
-  /\b[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi;
+const UUID_V4_REGEX = /\b[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi;
 
 /**
  * ULID pattern - Crockford Base32, 26 characters
@@ -92,8 +91,7 @@ export interface EncodeResult {
 // Placeholder Generation
 // =============================================================================
 
-const BASE62_ALPHABET =
-  "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+const BASE62_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 
 // Pre-computed base62 values for 0-61 (single character lookups)
 const BASE62_CACHE = BASE62_ALPHABET.split("");
@@ -148,10 +146,7 @@ function zeroFilled(n: number): string {
  * Parse and apply a format specifier to an index.
  * Supports: {i}, {i:02}, {i:03}, {i:base62}, {i:zeroFilled}, etc.
  */
-function applyFormatSpecifier(
-  index: number,
-  specifier: string | undefined,
-): string {
+function applyFormatSpecifier(index: number, specifier: string | undefined): string {
   if (!specifier) {
     return index.toString();
   }
@@ -184,9 +179,7 @@ function parseTemplate(template: string): FormatterFn {
   // Match {i} or {i:specifier}
   const match = template.match(/\{i(?::([^}]+))?\}/);
   if (!match) {
-    throw new Error(
-      `Invalid template "${template}": must contain {i} or {i:specifier}`,
-    );
+    throw new Error(`Invalid template "${template}": must contain {i} or {i:specifier}`);
   }
 
   const specifier = match[1]; // undefined if just {i}
@@ -232,9 +225,7 @@ function getPattern(inputFormat: InputFormat): RegExp {
   // Custom RegExp
   if (inputFormat instanceof RegExp) {
     // Ensure global flag is set, preserve other flags
-    const flags = inputFormat.flags.includes("g")
-      ? inputFormat.flags
-      : inputFormat.flags + "g";
+    const flags = inputFormat.flags.includes("g") ? inputFormat.flags : inputFormat.flags + "g";
     return new RegExp(inputFormat.source, flags);
   }
 
@@ -344,10 +335,8 @@ export function decode(text: string, mapping: Record<string, string>): string {
 
     // Build a single regex matching all placeholders - O(n) single pass
     pattern = new RegExp(
-      placeholders
-        .map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
-        .join("|"),
-      "g",
+      placeholders.map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"),
+      "g"
     );
 
     decodeRegexCache.set(mapping, pattern);

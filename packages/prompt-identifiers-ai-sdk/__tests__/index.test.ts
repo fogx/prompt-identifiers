@@ -49,10 +49,7 @@ describe("prompt-identifiers-ai-sdk", () => {
     }
 
     // Helper to extract system message content
-    function getSystemContent(
-      prompt: LanguageModelV3Message[],
-      index = 0,
-    ): string {
+    function getSystemContent(prompt: LanguageModelV3Message[], index = 0): string {
       const msg = prompt[index];
       if (msg.role === "system") {
         return typeof msg.content === "string" ? msg.content : "";
@@ -64,9 +61,7 @@ describe("prompt-identifiers-ai-sdk", () => {
       const middleware = createMiddleware({ config: defaultConfig });
 
       const params = createParams([
-        userMessage(
-          "Find user 123e4567-e89b-42d3-a456-426655440000 in the database",
-        ),
+        userMessage("Find user 123e4567-e89b-42d3-a456-426655440000 in the database"),
       ]);
 
       const result = await middleware.transformParams({
@@ -75,9 +70,7 @@ describe("prompt-identifiers-ai-sdk", () => {
         model: mockModel,
       });
 
-      expect(getUserText(result.prompt)).toBe(
-        "Find user [000] in the database",
-      );
+      expect(getUserText(result.prompt)).toBe("Find user [000] in the database");
     });
 
     test("encodes UUIDs in system message content", async () => {
@@ -113,9 +106,7 @@ describe("prompt-identifiers-ai-sdk", () => {
         model: mockModel,
       });
 
-      expect(getSystemContent(result.prompt, 0)).toBe(
-        "User [000] is an admin.",
-      );
+      expect(getSystemContent(result.prompt, 0)).toBe("User [000] is an admin.");
       expect(getUserText(result.prompt, 1)).toBe("Compare [000] with [001].");
     });
 
@@ -128,7 +119,7 @@ describe("prompt-identifiers-ai-sdk", () => {
 
       const params = createParams([
         userMessage(
-          "Find 123e4567-e89b-42d3-a456-426655440000 and 987fcdeb-51a2-43f7-8d9c-0123456789ab",
+          "Find 123e4567-e89b-42d3-a456-426655440000 and 987fcdeb-51a2-43f7-8d9c-0123456789ab"
         ),
       ]);
 
@@ -161,9 +152,7 @@ describe("prompt-identifiers-ai-sdk", () => {
 
   describe("wrapGenerate", () => {
     // Helper to create a mock generate result with proper V3 types
-    function createMockGenerateResult(
-      text: string,
-    ): LanguageModelV3GenerateResult {
+    function createMockGenerateResult(text: string): LanguageModelV3GenerateResult {
       return {
         content: [{ type: "text", text }],
         finishReason: mockFinishReason(),
@@ -175,9 +164,7 @@ describe("prompt-identifiers-ai-sdk", () => {
     test("decodes placeholders in response content", async () => {
       const middleware = createMiddleware({ config: defaultConfig });
 
-      const params = createParams([
-        userMessage("Find user 123e4567-e89b-42d3-a456-426655440000"),
-      ]);
+      const params = createParams([userMessage("Find user 123e4567-e89b-42d3-a456-426655440000")]);
 
       // transformParams returns params with mapping attached
       const transformedParams = await middleware.transformParams({
@@ -186,9 +173,7 @@ describe("prompt-identifiers-ai-sdk", () => {
         model: mockModel,
       });
 
-      const mockResult = createMockGenerateResult(
-        "The user [000] was found in the database.",
-      );
+      const mockResult = createMockGenerateResult("The user [000] was found in the database.");
 
       const doGenerate = jest.fn().mockResolvedValue(mockResult);
       const doStream = jest.fn();
@@ -201,7 +186,7 @@ describe("prompt-identifiers-ai-sdk", () => {
       });
 
       expect(getTextFromContent(result.content)).toBe(
-        "The user 123e4567-e89b-42d3-a456-426655440000 was found in the database.",
+        "The user 123e4567-e89b-42d3-a456-426655440000 was found in the database."
       );
     });
 
@@ -212,9 +197,7 @@ describe("prompt-identifiers-ai-sdk", () => {
         onDecode,
       });
 
-      const params = createParams([
-        userMessage("Find user 123e4567-e89b-42d3-a456-426655440000"),
-      ]);
+      const params = createParams([userMessage("Find user 123e4567-e89b-42d3-a456-426655440000")]);
 
       const transformedParams = await middleware.transformParams({
         params,
@@ -237,9 +220,7 @@ describe("prompt-identifiers-ai-sdk", () => {
     test("handles response with no placeholders", async () => {
       const middleware = createMiddleware({ config: defaultConfig });
 
-      const params = createParams([
-        userMessage("Find user 123e4567-e89b-42d3-a456-426655440000"),
-      ]);
+      const params = createParams([userMessage("Find user 123e4567-e89b-42d3-a456-426655440000")]);
 
       const transformedParams = await middleware.transformParams({
         params,
@@ -263,7 +244,7 @@ describe("prompt-identifiers-ai-sdk", () => {
   describe("wrapStream", () => {
     // Helper to create stream result with proper V3 types
     function createMockStreamResult(
-      parts: LanguageModelV3StreamPart[],
+      parts: LanguageModelV3StreamPart[]
     ): LanguageModelV3StreamResult {
       return { stream: createMockStream(parts) };
     }
@@ -271,9 +252,7 @@ describe("prompt-identifiers-ai-sdk", () => {
     test("decodes placeholders in streamed text", async () => {
       const middleware = createMiddleware({ config: defaultConfig });
 
-      const params = createParams([
-        userMessage("Find user 123e4567-e89b-42d3-a456-426655440000"),
-      ]);
+      const params = createParams([userMessage("Find user 123e4567-e89b-42d3-a456-426655440000")]);
 
       const transformedParams = await middleware.transformParams({
         params,
@@ -297,17 +276,13 @@ describe("prompt-identifiers-ai-sdk", () => {
       });
 
       const text = await collectStreamText(result.stream);
-      expect(text).toBe(
-        "Found user 123e4567-e89b-42d3-a456-426655440000 in database.",
-      );
+      expect(text).toBe("Found user 123e4567-e89b-42d3-a456-426655440000 in database.");
     });
 
     test("handles split placeholders across chunks", async () => {
       const middleware = createMiddleware({ config: defaultConfig });
 
-      const params = createParams([
-        userMessage("Find user 123e4567-e89b-42d3-a456-426655440000"),
-      ]);
+      const params = createParams([userMessage("Find user 123e4567-e89b-42d3-a456-426655440000")]);
 
       const transformedParams = await middleware.transformParams({
         params,
@@ -337,9 +312,7 @@ describe("prompt-identifiers-ai-sdk", () => {
     test("preserves non-text-delta stream parts", async () => {
       const middleware = createMiddleware({ config: defaultConfig });
 
-      const params = createParams([
-        userMessage("Find user 123e4567-e89b-42d3-a456-426655440000"),
-      ]);
+      const params = createParams([userMessage("Find user 123e4567-e89b-42d3-a456-426655440000")]);
 
       await middleware.transformParams({
         params,
@@ -382,9 +355,7 @@ describe("prompt-identifiers-ai-sdk", () => {
       const uuid1 = "123e4567-e89b-42d3-a456-426655440000";
       const uuid2 = "987fcdeb-51a2-43f7-8d9c-0123456789ab";
 
-      const params = createParams([
-        userMessage(`Compare user ${uuid1} with user ${uuid2}`),
-      ]);
+      const params = createParams([userMessage(`Compare user ${uuid1} with user ${uuid2}`)]);
 
       // Transform params (encode)
       const encoded = await middleware.transformParams({
@@ -399,7 +370,7 @@ describe("prompt-identifiers-ai-sdk", () => {
       if (encodedMsg.role === "user") {
         const textPart = encodedMsg.content.find((p) => p.type === "text");
         expect(textPart?.type === "text" && textPart.text).toBe(
-          "Compare user [000] with user [001]",
+          "Compare user [000] with user [001]"
         );
       }
 
@@ -425,17 +396,14 @@ describe("prompt-identifiers-ai-sdk", () => {
       });
 
       expect(getTextFromContent(result.content)).toBe(
-        `User ${uuid1} has more activity than ${uuid2}. Recommending ${uuid1}.`,
+        `User ${uuid1} has more activity than ${uuid2}. Recommending ${uuid1}.`
       );
     });
   });
 
   describe("Tool result encoding", () => {
     // Helper to extract tool result output from encoded prompt
-    function getToolResultOutput(
-      prompt: LanguageModelV3Message[],
-      index = 0,
-    ): unknown {
+    function getToolResultOutput(prompt: LanguageModelV3Message[], index = 0): unknown {
       const msg = prompt[index];
       if (msg.role === "tool") {
         const toolResult = msg.content.find((p) => p.type === "tool-result");
@@ -620,9 +588,7 @@ describe("prompt-identifiers-ai-sdk", () => {
       const middleware = createMiddleware({ config: defaultConfig });
 
       const uuid = "123e4567-e89b-42d3-a456-426655440000";
-      const params = createParams([
-        userMessage(`Create campaign for user ${uuid}`),
-      ]);
+      const params = createParams([userMessage(`Create campaign for user ${uuid}`)]);
 
       // First encode the prompt
       const transformedParams = await middleware.transformParams({
@@ -657,7 +623,7 @@ describe("prompt-identifiers-ai-sdk", () => {
       const toolCall = result.content.find((c) => c.type === "tool-call");
       expect(toolCall).toBeDefined();
       expect((toolCall as { input: string }).input).toBe(
-        `{"user_id":"${uuid}","name":"Test Campaign"}`,
+        `{"user_id":"${uuid}","name":"Test Campaign"}`
       );
     });
 
@@ -716,9 +682,7 @@ describe("prompt-identifiers-ai-sdk", () => {
         config: { inputFormat: "UUID", outputFormat: "Numeric" },
       });
 
-      const params = createParams([
-        userMessage("Find 123e4567-e89b-42d3-a456-426655440000"),
-      ]);
+      const params = createParams([userMessage("Find 123e4567-e89b-42d3-a456-426655440000")]);
 
       const encoded = await middleware.transformParams({
         params,
@@ -734,9 +698,7 @@ describe("prompt-identifiers-ai-sdk", () => {
         config: { inputFormat: "UUID", outputFormat: { template: "[ID:{i}]" } },
       });
 
-      const params = createParams([
-        userMessage("Find 123e4567-e89b-42d3-a456-426655440000"),
-      ]);
+      const params = createParams([userMessage("Find 123e4567-e89b-42d3-a456-426655440000")]);
 
       const encoded = await middleware.transformParams({
         params,
@@ -752,9 +714,7 @@ describe("prompt-identifiers-ai-sdk", () => {
         config: { inputFormat: "ULID", outputFormat: "SafeNumeric" },
       });
 
-      const params = createParams([
-        userMessage("Find 01ARZ3NDEKTSV4RRFFQ69G5FAV"),
-      ]);
+      const params = createParams([userMessage("Find 01ARZ3NDEKTSV4RRFFQ69G5FAV")]);
 
       const encoded = await middleware.transformParams({
         params,

@@ -22,6 +22,7 @@ Initial release of all packages.
 ### prompt-identifiers (core)
 
 #### Added
+
 - `encode()` and `decode()` functions
 - Input formats: UUID, ULID, custom RegExp
 - Output formats: SafeNumeric, Numeric, IdToken, custom templates
@@ -30,6 +31,7 @@ Initial release of all packages.
 ### prompt-identifiers-ai-sdk
 
 #### Added
+
 - Vercel AI SDK v3 middleware
 - Support for `generateText` and `streamText`
 - Streaming buffer for split placeholders
@@ -39,6 +41,7 @@ Initial release of all packages.
 ### prompt-identifiers-baml
 
 #### Added
+
 - `wrapBamlFunction` for BAML-generated functions
 - `wrapBamlStreamingFunction` for streaming
 - `encodeObject` and `decodeObject` utilities

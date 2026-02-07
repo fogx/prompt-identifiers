@@ -5,12 +5,12 @@
  */
 
 // Dynamic import to avoid hard dependency
-let OpenAI: typeof import('openai').default | undefined;
+let OpenAI: typeof import("openai").default | undefined;
 
 /**
  * Supported OpenAI models for the benchmark
  */
-export const OPENAI_MODELS = ['gpt-4o', 'gpt-4o-mini'] as const;
+export const OPENAI_MODELS = ["gpt-4o", "gpt-4o-mini"] as const;
 export type OpenAIModel = (typeof OPENAI_MODELS)[number];
 
 /**
@@ -18,7 +18,7 @@ export type OpenAIModel = (typeof OPENAI_MODELS)[number];
  */
 export async function isOpenAIAvailable(): Promise<boolean> {
   try {
-    const module = await import('openai');
+    const module = await import("openai");
     OpenAI = module.default;
     return !!process.env.OPENAI_API_KEY;
   } catch {
@@ -36,13 +36,13 @@ export async function isOpenAIAvailable(): Promise<boolean> {
  */
 export async function callOpenAI(prompt: string, model: OpenAIModel): Promise<string> {
   if (!OpenAI) {
-    const module = await import('openai');
+    const module = await import("openai");
     OpenAI = module.default;
   }
 
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
-    throw new Error('OPENAI_API_KEY environment variable is required');
+    throw new Error("OPENAI_API_KEY environment variable is required");
   }
 
   const client = new OpenAI({ apiKey });
@@ -52,7 +52,7 @@ export async function callOpenAI(prompt: string, model: OpenAIModel): Promise<st
     max_tokens: 16384,
     messages: [
       {
-        role: 'user',
+        role: "user",
         content: prompt,
       },
     ],
@@ -60,7 +60,7 @@ export async function callOpenAI(prompt: string, model: OpenAIModel): Promise<st
 
   const content = response.choices[0]?.message?.content;
   if (!content) {
-    throw new Error('No content in response');
+    throw new Error("No content in response");
   }
 
   return content;
@@ -71,8 +71,8 @@ export async function callOpenAI(prompt: string, model: OpenAIModel): Promise<st
  */
 export function getModelDisplayName(model: OpenAIModel): string {
   const names: Record<OpenAIModel, string> = {
-    'gpt-4o': 'GPT-4o',
-    'gpt-4o-mini': 'GPT-4o Mini',
+    "gpt-4o": "GPT-4o",
+    "gpt-4o-mini": "GPT-4o Mini",
   };
   return names[model] || model;
 }

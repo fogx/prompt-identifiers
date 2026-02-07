@@ -12,8 +12,8 @@ import type {
   LanguageModelV3StreamPart,
   LanguageModelV3StreamResult,
   LanguageModelV3Usage,
-} from '@ai-sdk/provider';
-import { promptIdentifiersMiddleware, PromptIdentifiersMiddlewareOptions } from '../src/index';
+} from "@ai-sdk/provider";
+import { promptIdentifiersMiddleware, PromptIdentifiersMiddlewareOptions } from "../src/index";
 
 // =============================================================================
 // Mock Data Factories
@@ -36,7 +36,7 @@ export function mockUsage(input = 10, output = 5): LanguageModelV3Usage {
 }
 
 export function mockFinishReason(): LanguageModelV3FinishReason {
-  return { unified: 'stop', raw: 'stop' };
+  return { unified: "stop", raw: "stop" };
 }
 
 // =============================================================================
@@ -44,15 +44,15 @@ export function mockFinishReason(): LanguageModelV3FinishReason {
 // =============================================================================
 
 export const mockModel: LanguageModelV3 = {
-  specificationVersion: 'v3',
-  provider: 'test',
-  modelId: 'test-model',
+  specificationVersion: "v3",
+  provider: "test",
+  modelId: "test-model",
   supportedUrls: {},
   doGenerate: async () => {
-    throw new Error('Not implemented');
+    throw new Error("Not implemented");
   },
   doStream: async () => {
-    throw new Error('Not implemented');
+    throw new Error("Not implemented");
   },
 };
 
@@ -92,12 +92,12 @@ export async function collectStreamText(
   stream: ReadableStream<LanguageModelV3StreamPart>
 ): Promise<string> {
   const reader = stream.getReader();
-  let text = '';
+  let text = "";
 
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
-    if (value.type === 'text-delta' && value.delta) {
+    if (value.type === "text-delta" && value.delta) {
       text += value.delta;
     }
   }
@@ -110,11 +110,11 @@ export async function collectStreamText(
 // =============================================================================
 
 export function userMessage(text: string): LanguageModelV3Message {
-  return { role: 'user', content: [{ type: 'text', text }] };
+  return { role: "user", content: [{ type: "text", text }] };
 }
 
 export function systemMessage(content: string): LanguageModelV3Message {
-  return { role: 'system', content };
+  return { role: "system", content };
 }
 
 export function toolMessage(
@@ -123,10 +123,10 @@ export function toolMessage(
   output: { type: string; value: unknown }
 ): LanguageModelV3Message {
   return {
-    role: 'tool',
+    role: "tool",
     content: [
       {
-        type: 'tool-result',
+        type: "tool-result",
         toolCallId,
         toolName,
         output,
@@ -149,47 +149,51 @@ export function createParams(messages: LanguageModelV3Message[]): LanguageModelV
 // Content Extractors
 // =============================================================================
 
-export function getTextFromContent(
-  content: LanguageModelV3GenerateResult['content']
-): string {
-  const textItem = content.find((item) => item.type === 'text');
-  return textItem?.type === 'text' ? textItem.text : '';
+export function getTextFromContent(content: LanguageModelV3GenerateResult["content"]): string {
+  const textItem = content.find((item) => item.type === "text");
+  return textItem?.type === "text" ? textItem.text : "";
 }
 
 // Type for our custom tool result output shape (text or json)
 interface ToolResultOutput<T = unknown> {
-  type: 'text' | 'json';
+  type: "text" | "json";
   value: T;
 }
 
-export function getToolResultOutput<T>(msg: LanguageModelV3Message): ToolResultOutput<T> | undefined {
-  if (msg.role !== 'tool') return undefined;
-  const toolResult = msg.content.find((p) => p.type === 'tool-result');
-  if (!toolResult || !('output' in toolResult)) return undefined;
+export function getToolResultOutput<T>(
+  msg: LanguageModelV3Message
+): ToolResultOutput<T> | undefined {
+  if (msg.role !== "tool") return undefined;
+  const toolResult = msg.content.find((p) => p.type === "tool-result");
+  if (!toolResult || !("output" in toolResult)) return undefined;
   return toolResult.output as ToolResultOutput<T>;
 }
 
 export function getUserMessageText(msg: LanguageModelV3Message): string | undefined {
-  if (msg.role !== 'user') return undefined;
-  const textPart = msg.content.find((p) => p.type === 'text');
-  return textPart?.type === 'text' ? textPart.text : undefined;
+  if (msg.role !== "user") return undefined;
+  const textPart = msg.content.find((p) => p.type === "text");
+  return textPart?.type === "text" ? textPart.text : undefined;
 }
 
 export function getResultText(result: LanguageModelV3GenerateResult): string | undefined {
-  const textContent = result.content.find((c) => c.type === 'text');
-  return textContent?.type === 'text' ? textContent.text : undefined;
+  const textContent = result.content.find((c) => c.type === "text");
+  return textContent?.type === "text" ? textContent.text : undefined;
 }
 
 export function getToolCall(result: LanguageModelV3GenerateResult, index = 0) {
-  const toolCalls = result.content.filter((c) => c.type === 'tool-call');
-  return toolCalls[index] as { type: 'tool-call'; toolCallId: string; toolName: string; input: string } | undefined;
+  const toolCalls = result.content.filter((c) => c.type === "tool-call");
+  return toolCalls[index] as
+    | { type: "tool-call"; toolCallId: string; toolName: string; input: string }
+    | undefined;
 }
 
 // =============================================================================
 // Middleware Helper
 // =============================================================================
 
-type RequiredMiddleware = Required<Pick<LanguageModelV3Middleware, 'transformParams' | 'wrapGenerate' | 'wrapStream'>>;
+type RequiredMiddleware = Required<
+  Pick<LanguageModelV3Middleware, "transformParams" | "wrapGenerate" | "wrapStream">
+>;
 
 /**
  * Creates middleware and asserts all hooks are defined.
@@ -198,7 +202,7 @@ type RequiredMiddleware = Required<Pick<LanguageModelV3Middleware, 'transformPar
 export function createMiddleware(options: PromptIdentifiersMiddlewareOptions): RequiredMiddleware {
   const middleware = promptIdentifiersMiddleware(options);
   if (!middleware.transformParams || !middleware.wrapGenerate || !middleware.wrapStream) {
-    throw new Error('Middleware hooks are required but not defined');
+    throw new Error("Middleware hooks are required but not defined");
   }
   return {
     transformParams: middleware.transformParams,
@@ -218,17 +222,19 @@ interface MockModelConfig {
 
 export function createMockModel(config: MockModelConfig = {}): LanguageModelV3 {
   return {
-    specificationVersion: 'v3',
-    provider: 'test',
-    modelId: 'test-model',
+    specificationVersion: "v3",
+    provider: "test",
+    modelId: "test-model",
     supportedUrls: {},
 
-    doGenerate: async (options: LanguageModelV3CallOptions): Promise<LanguageModelV3GenerateResult> => {
+    doGenerate: async (
+      options: LanguageModelV3CallOptions
+    ): Promise<LanguageModelV3GenerateResult> => {
       if (config.onGenerate) {
         return config.onGenerate(options.prompt);
       }
       return {
-        content: [{ type: 'text', text: 'Default response' }],
+        content: [{ type: "text", text: "Default response" }],
         finishReason: mockFinishReason(),
         usage: mockUsage(),
         warnings: [],
@@ -240,9 +246,7 @@ export function createMockModel(config: MockModelConfig = {}): LanguageModelV3 {
         return { stream: createMockStream(config.onStream(options.prompt)) };
       }
       return {
-        stream: createMockStream([
-          { type: 'text-delta', id: '1', delta: 'Default response' },
-        ]),
+        stream: createMockStream([{ type: "text-delta", id: "1", delta: "Default response" }]),
       };
     },
   };

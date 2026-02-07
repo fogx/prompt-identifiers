@@ -15,22 +15,18 @@ describe("prompt-identifiers", () => {
 
   describe("Basic encode/decode", () => {
     test("encode() with UUID and Numeric format", () => {
-      const prompt =
-        "User 123e4567-e89b-42d3-a456-426655440000 requested access";
+      const prompt = "User 123e4567-e89b-42d3-a456-426655440000 requested access";
 
       const result = encode(prompt, UUID_NUMERIC_CONFIG);
 
       expect(result).toBeDefined();
       expect(result.encoded).toBe("User 000 requested access");
       expect(typeof result.mapping).toBe("object");
-      expect(result.mapping["000"]).toBe(
-        "123e4567-e89b-42d3-a456-426655440000",
-      );
+      expect(result.mapping["000"]).toBe("123e4567-e89b-42d3-a456-426655440000");
     });
 
     test("decode() restores original IDs", () => {
-      const prompt =
-        "User 123e4567-e89b-42d3-a456-426655440000 requested access";
+      const prompt = "User 123e4567-e89b-42d3-a456-426655440000 requested access";
 
       const { encoded, mapping } = encode(prompt, UUID_NUMERIC_CONFIG);
       const decoded = decode(encoded, mapping);
@@ -185,9 +181,7 @@ describe("prompt-identifiers", () => {
       expect(Object.keys(result.mapping)[0]).toBe("000");
 
       // 10 IDs -> "000" through "009"
-      const tenUuids = Array.from({ length: 10 }, (_, i) => makeUuid(i)).join(
-        " ",
-      );
+      const tenUuids = Array.from({ length: 10 }, (_, i) => makeUuid(i)).join(" ");
       result = encode(tenUuids, {
         inputFormat: "UUID",
         outputFormat: "Numeric",
@@ -208,9 +202,7 @@ describe("prompt-identifiers", () => {
 
     test("base62 IdToken format", () => {
       // Generate 63 UUIDs to test base62 rollover
-      const manyUuids = Array.from({ length: 63 }, (_, i) => makeUuid(i)).join(
-        " ",
-      );
+      const manyUuids = Array.from({ length: 63 }, (_, i) => makeUuid(i)).join(" ");
       const result = encode(manyUuids, {
         inputFormat: "UUID",
         outputFormat: "IdToken",
@@ -232,7 +224,7 @@ describe("prompt-identifiers", () => {
     test("decode with valid mapping works", () => {
       const { encoded, mapping } = encode(
         "User 123e4567-e89b-42d3-a456-426655440000",
-        UUID_NUMERIC_CONFIG,
+        UUID_NUMERIC_CONFIG
       );
       const decoded = decode(encoded, mapping);
       expect(decoded).toBe("User 123e4567-e89b-42d3-a456-426655440000");
@@ -292,9 +284,7 @@ describe("prompt-identifiers", () => {
 
       const decoded = decode(encoded, mapping);
       // IDs are lowercased, surrounding text preserved
-      expect(decoded).toBe(
-        "Order ord-abc-123 shipped to customer cust-xyz-789",
-      );
+      expect(decoded).toBe("Order ord-abc-123 shipped to customer cust-xyz-789");
     });
 
     test("custom regex without global flag gets global added", () => {
@@ -358,7 +348,7 @@ describe("prompt-identifiers", () => {
       expect(encoded).toBe("User [[id:0]] and [[id:1]]");
       const decoded = decode(encoded, mapping);
       expect(decoded).toBe(
-        "User 123e4567-e89b-42d3-a456-426655440000 and 987fcdeb-51a2-43f7-8d9c-0123456789ab",
+        "User 123e4567-e89b-42d3-a456-426655440000 and 987fcdeb-51a2-43f7-8d9c-0123456789ab"
       );
     });
 
@@ -367,7 +357,7 @@ describe("prompt-identifiers", () => {
         encode("test 123e4567-e89b-42d3-a456-426655440000", {
           inputFormat: "UUID",
           outputFormat: { template: "no_placeholder" },
-        }),
+        })
       ).toThrow("must contain {i}");
     });
   });
@@ -403,7 +393,7 @@ describe("prompt-identifiers", () => {
       expect(encoded).toBe("User {0} and {1}");
       const decoded = decode(encoded, mapping);
       expect(decoded).toBe(
-        "User 123e4567-e89b-42d3-a456-426655440000 and 987fcdeb-51a2-43f7-8d9c-0123456789ab",
+        "User 123e4567-e89b-42d3-a456-426655440000 and 987fcdeb-51a2-43f7-8d9c-0123456789ab"
       );
     });
   });
@@ -455,9 +445,7 @@ describe("prompt-identifiers", () => {
       // LLM response contains natural "000" - should NOT be decoded
       const response = "Error code 000 for user [000]";
       const decoded = decode(response, mapping);
-      expect(decoded).toBe(
-        "Error code 000 for user 123e4567-e89b-42d3-a456-426655440000",
-      );
+      expect(decoded).toBe("Error code 000 for user 123e4567-e89b-42d3-a456-426655440000");
     });
 
     test("multiple UUIDs with SafeNumeric", () => {

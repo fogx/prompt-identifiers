@@ -38,23 +38,25 @@ Complete technical reference for `prompt-identifiers`.
 ### encode
 
 ```typescript
-function encode(text: string, config: EncodeConfig): EncodeResult
+function encode(text: string, config: EncodeConfig): EncodeResult;
 ```
 
 Replace identifiers in text with short placeholders.
 
 **Parameters:**
+
 - `text` - Input text containing identifiers
 - `config` - Configuration object specifying input and output formats
 
 **Returns:** `EncodeResult` with encoded text and mapping
 
 **Example:**
+
 ```typescript
-const result = encode(
-  'User 123e4567-e89b-42d3-a456-426655440000 logged in',
-  { inputFormat: 'UUID', outputFormat: 'Numeric' }
-);
+const result = encode("User 123e4567-e89b-42d3-a456-426655440000 logged in", {
+  inputFormat: "UUID",
+  outputFormat: "Numeric",
+});
 // result.encoded: "User 000 logged in"
 // result.mapping: { "000": "123e4567-e89b-42d3-a456-426655440000" }
 ```
@@ -64,23 +66,24 @@ const result = encode(
 ### decode
 
 ```typescript
-function decode(text: string, mapping: Record<string, string>): string
+function decode(text: string, mapping: Record<string, string>): string;
 ```
 
 Restore original identifiers from placeholders.
 
 **Parameters:**
+
 - `text` - Text containing placeholders
 - `mapping` - Mapping from `encode()` result
 
 **Returns:** Text with original identifiers restored
 
 **Example:**
+
 ```typescript
-const decoded = decode(
-  'User 000 logged in',
-  { '000': '123e4567-e89b-42d3-a456-426655440000' }
-);
+const decoded = decode("User 000 logged in", {
+  "000": "123e4567-e89b-42d3-a456-426655440000",
+});
 // decoded: "User 123e4567-e89b-42d3-a456-426655440000 logged in"
 ```
 
@@ -91,15 +94,15 @@ const decoded = decode(
 ### InputFormat
 
 ```typescript
-type InputFormat = 'UUID' | 'ULID' | RegExp
+type InputFormat = "UUID" | "ULID" | RegExp;
 ```
 
 Specifies how to detect identifiers in the input text.
 
-| Value | Description |
-|-------|-------------|
-| `'UUID'` | Match RFC 4122 UUID version 4 |
-| `'ULID'` | Match ULID (26-char Crockford Base32) |
+| Value    | Description                                   |
+| -------- | --------------------------------------------- |
+| `'UUID'` | Match RFC 4122 UUID version 4                 |
+| `'ULID'` | Match ULID (26-char Crockford Base32)         |
 | `RegExp` | Custom pattern (global flag added if missing) |
 
 ---
@@ -107,18 +110,18 @@ Specifies how to detect identifiers in the input text.
 ### OutputFormat
 
 ```typescript
-type OutputFormat = 'Numeric' | 'IdToken' | 'Passthrough' | TemplateFormat | FormatterFn
+type OutputFormat = "Numeric" | "IdToken" | "Passthrough" | TemplateFormat | FormatterFn;
 ```
 
 Specifies how to generate placeholder strings.
 
-| Value | Description |
-|-------|-------------|
-| `'Numeric'` | Smart triplet: `000`, `001`, ..., `999`, `001000` |
-| `'IdToken'` | Base62: `0`, `A`, `z`, `10` |
-| `'Passthrough'` | No replacement (returns original text) |
-| `{ template: string }` | Template with format specifiers |
-| `(index: number) => string` | Custom formatter function |
+| Value                       | Description                                       |
+| --------------------------- | ------------------------------------------------- |
+| `'Numeric'`                 | Smart triplet: `000`, `001`, ..., `999`, `001000` |
+| `'IdToken'`                 | Base62: `0`, `A`, `z`, `10`                       |
+| `'Passthrough'`             | No replacement (returns original text)            |
+| `{ template: string }`      | Template with format specifiers                   |
+| `(index: number) => string` | Custom formatter function                         |
 
 ---
 
@@ -146,9 +149,9 @@ interface EncodeResult {
 
 Result of the `encode` function.
 
-| Property | Description |
-|----------|-------------|
-| `encoded` | Text with identifiers replaced by placeholders |
+| Property  | Description                                         |
+| --------- | --------------------------------------------------- |
+| `encoded` | Text with identifiers replaced by placeholders      |
 | `mapping` | Object mapping placeholders to original identifiers |
 
 ---
@@ -168,7 +171,7 @@ Template-based output format with `{i}` placeholder and optional format specifie
 ### FormatterFn
 
 ```typescript
-type FormatterFn = (index: number) => string
+type FormatterFn = (index: number) => string;
 ```
 
 Custom function that converts an index to a placeholder string.
@@ -182,15 +185,18 @@ Custom function that converts an index to a placeholder string.
 Matches [RFC 4122](https://www.rfc-editor.org/rfc/rfc4122) UUID version 4.
 
 **Pattern:**
+
 ```regex
 \b[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b
 ```
 
 **Validation:**
+
 - Version bit: `4` at position 15
 - Variant bits: `[89ab]` at position 20
 
 **Examples:**
+
 - ✅ `123e4567-e89b-42d3-a456-426655440000`
 - ✅ `123E4567-E89B-42D3-A456-426655440000` (case insensitive)
 - ❌ `123e4567-e89b-72d3-a456-426655440000` (wrong version)
@@ -202,6 +208,7 @@ Matches [RFC 4122](https://www.rfc-editor.org/rfc/rfc4122) UUID version 4.
 Matches [ULID](https://github.com/ulid/spec) - 26 characters in Crockford Base32.
 
 **Pattern:**
+
 ```regex
 \b[0-9A-HJKMNP-TV-Z]{26}\b
 ```
@@ -217,22 +224,24 @@ Matches [ULID](https://github.com/ulid/spec) - 26 characters in Crockford Base32
 Any JavaScript `RegExp` object. The global flag (`g`) is added automatically if not present.
 
 **Best practices:**
+
 - Use word boundaries (`\b`) to avoid partial matches
 - Avoid greedy quantifiers (`.*`) that may over-match
 - Test patterns with expected inputs
 
 **Example:**
+
 ```typescript
 // Match user IDs like "user-123456"
 encode(text, {
   inputFormat: /user-\d{6}/gi,
-  outputFormat: 'Numeric'
+  outputFormat: "Numeric",
 });
 
 // Match custom codes
 encode(text, {
   inputFormat: /[A-Z]{3}-\d{4}-[A-Z]{2}/g,
-  outputFormat: 'Numeric'
+  outputFormat: "Numeric",
 });
 ```
 
@@ -244,11 +253,11 @@ encode(text, {
 
 Smart triplet expansion for optimal tokenization.
 
-| Index Range | Width | Examples |
-|-------------|-------|----------|
-| 0-999 | 3 | `000`, `001`, ..., `999` |
-| 1,000-999,999 | 6 | `001000`, `001001`, ..., `999999` |
-| 1,000,000+ | 9 | `001000000`, ... |
+| Index Range   | Width | Examples                          |
+| ------------- | ----- | --------------------------------- |
+| 0-999         | 3     | `000`, `001`, ..., `999`          |
+| 1,000-999,999 | 6     | `001000`, `001001`, ..., `999999` |
+| 1,000,000+    | 9     | `001000000`, ...                  |
 
 **Why triplets?** LLM tokenizers typically split numbers at 3-digit boundaries. Smart expansion keeps placeholders as 1-2 tokens.
 
@@ -258,12 +267,12 @@ Smart triplet expansion for optimal tokenization.
 
 Base62 encoding using alphabet `0-9A-Za-z`.
 
-| Index | Output |
-|-------|--------|
-| 0-9 | `0`-`9` |
-| 10-35 | `A`-`Z` |
-| 36-61 | `a`-`z` |
-| 62+ | `10`, `11`, ... |
+| Index | Output          |
+| ----- | --------------- |
+| 0-9   | `0`-`9`         |
+| 10-35 | `A`-`Z`         |
+| 36-61 | `a`-`z`         |
+| 62+   | `10`, `11`, ... |
 
 **Compact but less predictable** - use when minimizing character count matters more than consistent tokenization.
 
@@ -275,8 +284,8 @@ Returns original text unchanged with empty mapping. Useful for testing or condit
 
 ```typescript
 const result = encode(text, {
-  inputFormat: 'UUID',
-  outputFormat: 'Passthrough'
+  inputFormat: "UUID",
+  outputFormat: "Passthrough",
 });
 // result.encoded === text
 // result.mapping === {}
@@ -290,24 +299,31 @@ Format: `{ template: string }` where string contains `{i}` or `{i:specifier}`.
 
 **Format specifiers:**
 
-| Specifier | Description | Examples |
-|-----------|-------------|----------|
-| `{i}` | Plain numeric | `0`, `1`, `2`, ... |
-| `{i:02}` | Zero-pad to 2 digits | `00`, `01`, ..., `99`, `100` |
-| `{i:03}` | Zero-pad to 3 digits | `000`, `001`, ... |
-| `{i:04}` | Zero-pad to 4 digits | `0000`, `0001`, ... |
-| `{i:base62}` | Base62 encoding | `0`, `A`, `z`, `10`, ... |
+| Specifier    | Description          | Examples                     |
+| ------------ | -------------------- | ---------------------------- |
+| `{i}`        | Plain numeric        | `0`, `1`, `2`, ...           |
+| `{i:02}`     | Zero-pad to 2 digits | `00`, `01`, ..., `99`, `100` |
+| `{i:03}`     | Zero-pad to 3 digits | `000`, `001`, ...            |
+| `{i:04}`     | Zero-pad to 4 digits | `0000`, `0001`, ...          |
+| `{i:base62}` | Base62 encoding      | `0`, `A`, `z`, `10`, ...     |
 
 **Examples:**
+
 ```typescript
 // XML-style tags
-{ template: '<id>{i}</id>' }        // <id>0</id>, <id>1</id>
+{
+  template: "<id>{i}</id>";
+} // <id>0</id>, <id>1</id>
 
 // Bracketed with padding
-{ template: '[ID:{i:04}]' }         // [ID:0000], [ID:0001]
+{
+  template: "[ID:{i:04}]";
+} // [ID:0000], [ID:0001]
 
 // Base62 in custom format
-{ template: '${i:base62}' }         // $0, $A, $z, $10
+{
+  template: "${i:base62}";
+} // $0, $A, $z, $10
 ```
 
 ---
@@ -317,10 +333,11 @@ Format: `{ template: string }` where string contains `{i}` or `{i:specifier}`.
 Full control over placeholder generation.
 
 ```typescript
-type FormatterFn = (index: number) => string
+type FormatterFn = (index: number) => string;
 ```
 
 **Examples:**
+
 ```typescript
 // Hex encoding
 (i) => `0x${i.toString(16)}`        // 0x0, 0x1, ..., 0xa, 0xb
@@ -345,10 +362,10 @@ type FormatterFn = (index: number) => string
 Duplicate identifiers receive the same placeholder.
 
 ```typescript
-const result = encode(
-  'User ABC logged in. User ABC logged out.',
-  { inputFormat: /ABC/g, outputFormat: 'Numeric' }
-);
+const result = encode("User ABC logged in. User ABC logged out.", {
+  inputFormat: /ABC/g,
+  outputFormat: "Numeric",
+});
 // result.encoded: "User 000 logged in. User 000 logged out."
 // result.mapping: { "000": "abc" }  // Only one entry
 ```
@@ -358,13 +375,14 @@ const result = encode(
 ### Case Normalization
 
 All identifiers are normalized to lowercase in the mapping. This ensures:
+
 - `123E4567-...` and `123e4567-...` map to the same placeholder
 - Decoded text uses lowercase identifiers
 
 ```typescript
-const result = encode('ID: 123E4567-E89B-42D3-A456-426655440000', {
-  inputFormat: 'UUID',
-  outputFormat: 'Numeric'
+const result = encode("ID: 123E4567-E89B-42D3-A456-426655440000", {
+  inputFormat: "UUID",
+  outputFormat: "Numeric",
 });
 // result.mapping: { "000": "123e4567-e89b-42d3-a456-426655440000" }
 ```
@@ -385,13 +403,13 @@ This ensures `001000` is matched before `001` when both exist.
 
 ## Edge Cases
 
-| Input | Behavior |
-|-------|----------|
-| Empty string | Returns `{ encoded: "", mapping: {} }` |
-| No matches | Returns original text with empty mapping |
-| Only whitespace | Returns original text with empty mapping |
-| Unicode text | Works correctly, only IDs are replaced |
-| Overlapping patterns | First match wins (left-to-right) |
+| Input                | Behavior                                 |
+| -------------------- | ---------------------------------------- |
+| Empty string         | Returns `{ encoded: "", mapping: {} }`   |
+| No matches           | Returns original text with empty mapping |
+| Only whitespace      | Returns original text with empty mapping |
+| Unicode text         | Works correctly, only IDs are replaced   |
+| Overlapping patterns | First match wins (left-to-right)         |
 
 ---
 
@@ -403,8 +421,8 @@ Templates must contain `{i}` or `{i:specifier}`.
 
 ```typescript
 encode(text, {
-  inputFormat: 'UUID',
-  outputFormat: { template: 'no_placeholder' }
+  inputFormat: "UUID",
+  outputFormat: { template: "no_placeholder" },
 });
 // Throws: Error: Invalid template "no_placeholder": must contain {i} or {i:specifier}
 ```
@@ -419,8 +437,8 @@ Unknown format specifiers fall back to plain numeric:
 
 ```typescript
 encode(text, {
-  inputFormat: 'UUID',
-  outputFormat: { template: '{i:unknown}' }
+  inputFormat: "UUID",
+  outputFormat: { template: "{i:unknown}" },
 });
 // Uses plain numeric: 0, 1, 2, ...
 ```
