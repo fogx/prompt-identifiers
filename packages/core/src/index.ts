@@ -59,7 +59,7 @@ export type FormatterFn = (index: number) => string;
  * - 'Numeric'     → smart triplet: 000, 001, ..., 999, 001000, ...
  * - 'IdToken'     → base62: 0, 1, ..., 9, A, ..., Z, a, ..., z, 10, ...
  * - 'Passthrough' → no replacement (returns original text)
- * - 'SafeNumeric' → collision-safe: [000], [001], ... (square bracket-wrapped)
+ * - 'SafeNumeric' → collision-safe: ~000~, ~001~, ... (tilde-wrapped, URI-safe)
  *
  * Custom formats:
  * - { template: string } → template with {i} placeholder (use for custom delimiters)
@@ -208,7 +208,7 @@ function createFormatter(format: OutputFormat): FormatterFn {
     case "IdToken":
       return base62;
     case "SafeNumeric":
-      return (n: number) => `[${zeroFilled(n)}]`;
+      return (n: number) => `~${zeroFilled(n)}~`;
     case "Passthrough":
       throw new Error("Passthrough should not create formatter");
   }

@@ -70,7 +70,7 @@ describe("prompt-identifiers-ai-sdk", () => {
         model: mockModel,
       });
 
-      expect(getUserText(result.prompt)).toBe("Find user [000] in the database");
+      expect(getUserText(result.prompt)).toBe("Find user ~000~ in the database");
     });
 
     test("encodes UUIDs in system message content", async () => {
@@ -86,7 +86,7 @@ describe("prompt-identifiers-ai-sdk", () => {
         model: mockModel,
       });
 
-      expect(getSystemContent(result.prompt)).toBe("User [000] is an admin.");
+      expect(getSystemContent(result.prompt)).toBe("User ~000~ is an admin.");
     });
 
     test("encodes multiple UUIDs with deduplication", async () => {
@@ -106,11 +106,11 @@ describe("prompt-identifiers-ai-sdk", () => {
         model: mockModel,
       });
 
-      expect(getSystemContent(result.prompt, 0)).toBe("User [000] is an admin.");
-      expect(getUserText(result.prompt, 1)).toBe("Compare [000] with [001].");
+      expect(getSystemContent(result.prompt, 0)).toBe("User ~000~ is an admin.");
+      expect(getUserText(result.prompt, 1)).toBe("Compare ~000~ with ~001~.");
     });
 
-    test("calls onEncode callback with mapping info", async () => {
+    test("calls onEncode callback with mapping", async () => {
       const onEncode = jest.fn();
       const middleware = createMiddleware({
         config: defaultConfig,
@@ -131,8 +131,8 @@ describe("prompt-identifiers-ai-sdk", () => {
 
       expect(onEncode).toHaveBeenCalledWith({
         mapping: expect.any(Object),
-        encodedCount: 2,
       });
+      expect(onEncode.mock.calls[0][0].debugData).toBeUndefined();
     });
 
     test("handles content with no IDs", async () => {
@@ -173,7 +173,7 @@ describe("prompt-identifiers-ai-sdk", () => {
         model: mockModel,
       });
 
-      const mockResult = createMockGenerateResult("The user [000] was found in the database.");
+      const mockResult = createMockGenerateResult("The user ~000~ was found in the database.");
 
       const doGenerate = jest.fn().mockResolvedValue(mockResult);
       const doStream = jest.fn();
@@ -205,7 +205,7 @@ describe("prompt-identifiers-ai-sdk", () => {
         model: mockModel,
       });
 
-      const mockResult = createMockGenerateResult("Found [000] in the system.");
+      const mockResult = createMockGenerateResult("Found ~000~ in the system.");
 
       await middleware.wrapGenerate({
         doGenerate: jest.fn().mockResolvedValue(mockResult),
@@ -214,7 +214,8 @@ describe("prompt-identifiers-ai-sdk", () => {
         model: mockModel,
       });
 
-      expect(onDecode).toHaveBeenCalledWith({ decodedCount: 1 });
+      expect(onDecode).toHaveBeenCalledWith({});
+      expect(onDecode.mock.calls[0][0].debugData).toBeUndefined();
     });
 
     test("handles response with no placeholders", async () => {
@@ -262,7 +263,7 @@ describe("prompt-identifiers-ai-sdk", () => {
 
       const mockStreamResult = createMockStreamResult([
         { type: "text-delta", id: "1", delta: "Found user " },
-        { type: "text-delta", id: "2", delta: "[000]" },
+        { type: "text-delta", id: "2", delta: "~000~" },
         { type: "text-delta", id: "3", delta: " in database." },
       ]);
       const doStream = jest.fn().mockResolvedValue(mockStreamResult);
@@ -290,10 +291,10 @@ describe("prompt-identifiers-ai-sdk", () => {
         model: mockModel,
       });
 
-      // Simulate placeholder split across chunks: [0 | 00]
+      // Simulate placeholder split across chunks: ~0 | 00~
       const mockStreamResult = createMockStreamResult([
-        { type: "text-delta", id: "1", delta: "User [0" },
-        { type: "text-delta", id: "2", delta: "00] found." },
+        { type: "text-delta", id: "1", delta: "User ~0" },
+        { type: "text-delta", id: "2", delta: "00~ found." },
       ]);
       const doStream = jest.fn().mockResolvedValue(mockStreamResult);
       const doGenerate = jest.fn();
@@ -321,7 +322,7 @@ describe("prompt-identifiers-ai-sdk", () => {
       });
 
       const mockStreamResult = createMockStreamResult([
-        { type: "text-delta", id: "1", delta: "[000]" },
+        { type: "text-delta", id: "1", delta: "~000~" },
         { type: "text-end", id: "2" },
       ]);
       const doStream = jest.fn().mockResolvedValue(mockStreamResult);
@@ -370,7 +371,7 @@ describe("prompt-identifiers-ai-sdk", () => {
       if (encodedMsg.role === "user") {
         const textPart = encodedMsg.content.find((p) => p.type === "text");
         expect(textPart?.type === "text" && textPart.text).toBe(
-          "Compare user [000] with user [001]"
+          "Compare user ~000~ with user ~001~"
         );
       }
 
@@ -379,7 +380,7 @@ describe("prompt-identifiers-ai-sdk", () => {
         content: [
           {
             type: "text",
-            text: "User [000] has more activity than [001]. Recommending [000].",
+            text: "User ~000~ has more activity than ~001~. Recommending ~000~.",
           },
         ],
         finishReason: mockFinishReason(),
@@ -436,7 +437,7 @@ describe("prompt-identifiers-ai-sdk", () => {
         value: string;
       };
       expect(output.type).toBe("text");
-      expect(output.value).toBe("User [000] found in database");
+      expect(output.value).toBe("User ~000~ found in database");
     });
 
     test("encodes UUIDs in tool result with json output", async () => {
@@ -467,9 +468,9 @@ describe("prompt-identifiers-ai-sdk", () => {
         value: { users: Array<{ id: string; name: string }> };
       };
       expect(output.type).toBe("json");
-      expect(output.value.users[0].id).toBe("[000]");
+      expect(output.value.users[0].id).toBe("~000~");
       expect(output.value.users[0].name).toBe("Alice");
-      expect(output.value.users[1].id).toBe("[001]");
+      expect(output.value.users[1].id).toBe("~001~");
       expect(output.value.users[1].name).toBe("Bob");
     });
 
@@ -500,7 +501,7 @@ describe("prompt-identifiers-ai-sdk", () => {
         type: string;
         value: { level1: { level2: { id: string } } };
       };
-      expect(output.value.level1.level2.id).toBe("[000]");
+      expect(output.value.level1.level2.id).toBe("~000~");
     });
 
     test("handles tool result with no UUIDs", async () => {
@@ -548,11 +549,11 @@ describe("prompt-identifiers-ai-sdk", () => {
         model: mockModel,
       });
 
-      // Should only count as 1 unique UUID
+      // Should only have 1 unique UUID in mapping
       expect(onEncode).toHaveBeenCalledWith({
         mapping: expect.any(Object),
-        encodedCount: 1,
       });
+      expect(Object.keys(onEncode.mock.calls[0][0].mapping)).toHaveLength(1);
     });
 
     test("preserves non-tool-result parts in tool messages", async () => {
@@ -604,7 +605,7 @@ describe("prompt-identifiers-ai-sdk", () => {
             type: "tool-call",
             toolCallId: "call-1",
             toolName: "create_campaign",
-            input: '{"user_id":"[000]","name":"Test Campaign"}',
+            input: '{"user_id":"~000~","name":"Test Campaign"}',
           },
         ],
         finishReason: mockFinishReason(),
@@ -646,7 +647,7 @@ describe("prompt-identifiers-ai-sdk", () => {
             type: "tool-call",
             toolCallId: "call-1",
             toolName: "get_user",
-            input: '{"id":"[000]"}',
+            input: '{"id":"~000~"}',
           } as LanguageModelV3StreamPart,
         ]),
       };
@@ -722,7 +723,158 @@ describe("prompt-identifiers-ai-sdk", () => {
         model: mockModel,
       });
 
-      expect(getUserMessageText(encoded.prompt)).toBe("Find [000]");
+      expect(getUserMessageText(encoded.prompt)).toBe("Find ~000~");
+    });
+  });
+
+  describe("debug mode", () => {
+    test("onEncode receives debugData when debug is true", async () => {
+      const onEncode = jest.fn();
+      const middleware = createMiddleware({
+        config: defaultConfig,
+        debug: true,
+        onEncode,
+      });
+
+      const uuid = "123e4567-e89b-42d3-a456-426655440000";
+      const params = createParams([userMessage(`Find user ${uuid}`)]);
+
+      await middleware.transformParams({
+        params,
+        type: "generate",
+        model: mockModel,
+      });
+
+      expect(onEncode).toHaveBeenCalledTimes(1);
+      const result = onEncode.mock.calls[0][0];
+      expect(result.mapping).toEqual({ "~000~": uuid });
+      expect(result.debugData).toBeDefined();
+      expect(result.debugData.encodedCount).toBe(1);
+      expect(result.debugData.input).toBe(params.prompt);
+      expect(result.debugData.output).toBeDefined();
+      expect(typeof result.debugData.durationMs).toBe("number");
+      expect(result.debugData.durationMs).toBeGreaterThanOrEqual(0);
+    });
+
+    test("onDecode receives debugData on wrapGenerate when debug is true", async () => {
+      const onDecode = jest.fn();
+      const middleware = createMiddleware({
+        config: defaultConfig,
+        debug: true,
+        onDecode,
+      });
+
+      const uuid = "123e4567-e89b-42d3-a456-426655440000";
+      const params = createParams([userMessage(`Find user ${uuid}`)]);
+
+      const transformedParams = await middleware.transformParams({
+        params,
+        type: "generate",
+        model: mockModel,
+      });
+
+      const mockResult: LanguageModelV3GenerateResult = {
+        content: [{ type: "text", text: "Found ~000~ in the system." }],
+        finishReason: mockFinishReason(),
+        usage: mockUsage(),
+        warnings: [],
+      };
+
+      await middleware.wrapGenerate({
+        doGenerate: jest.fn().mockResolvedValue(mockResult),
+        doStream: jest.fn(),
+        params: transformedParams,
+        model: mockModel,
+      });
+
+      expect(onDecode).toHaveBeenCalledTimes(1);
+      const result = onDecode.mock.calls[0][0];
+      expect(result.debugData).toBeDefined();
+      expect(result.debugData.decodedCount).toBe(1);
+      expect(result.debugData.input).toBe("Found ~000~ in the system.");
+      expect(result.debugData.output).toBe(`Found ${uuid} in the system.`);
+      expect(typeof result.debugData.durationMs).toBe("number");
+    });
+
+    test("onDecode receives debugData on wrapStream when debug is true", async () => {
+      const onDecode = jest.fn();
+      const middleware = createMiddleware({
+        config: defaultConfig,
+        debug: true,
+        onDecode,
+      });
+
+      const uuid = "123e4567-e89b-42d3-a456-426655440000";
+      const params = createParams([userMessage(`Find user ${uuid}`)]);
+
+      const transformedParams = await middleware.transformParams({
+        params,
+        type: "stream",
+        model: mockModel,
+      });
+
+      const mockStreamResult = {
+        stream: createMockStream([
+          { type: "text-delta", id: "1", delta: "Found " },
+          { type: "text-delta", id: "2", delta: "~000~" },
+          { type: "text-delta", id: "3", delta: " in DB." },
+        ]),
+      };
+
+      const result = await middleware.wrapStream({
+        doStream: jest.fn().mockResolvedValue(mockStreamResult),
+        doGenerate: jest.fn(),
+        params: transformedParams,
+        model: mockModel,
+      });
+
+      // Consume the stream to trigger flush
+      await collectStreamText(result.stream);
+
+      expect(onDecode).toHaveBeenCalledTimes(1);
+      const cbResult = onDecode.mock.calls[0][0];
+      expect(cbResult.debugData).toBeDefined();
+      expect(cbResult.debugData.decodedCount).toBe(1);
+      expect(cbResult.debugData.input).toBe("Found ~000~ in DB.");
+      expect(cbResult.debugData.output).toContain(uuid);
+      expect(typeof cbResult.debugData.durationMs).toBe("number");
+    });
+
+    test("debugData is absent when debug is false", async () => {
+      const onEncode = jest.fn();
+      const onDecode = jest.fn();
+      const middleware = createMiddleware({
+        config: defaultConfig,
+        debug: false,
+        onEncode,
+        onDecode,
+      });
+
+      const uuid = "123e4567-e89b-42d3-a456-426655440000";
+      const params = createParams([userMessage(`Find user ${uuid}`)]);
+
+      const transformedParams = await middleware.transformParams({
+        params,
+        type: "generate",
+        model: mockModel,
+      });
+
+      const mockResult: LanguageModelV3GenerateResult = {
+        content: [{ type: "text", text: "Found ~000~." }],
+        finishReason: mockFinishReason(),
+        usage: mockUsage(),
+        warnings: [],
+      };
+
+      await middleware.wrapGenerate({
+        doGenerate: jest.fn().mockResolvedValue(mockResult),
+        doStream: jest.fn(),
+        params: transformedParams,
+        model: mockModel,
+      });
+
+      expect(onEncode.mock.calls[0][0].debugData).toBeUndefined();
+      expect(onDecode.mock.calls[0][0].debugData).toBeUndefined();
     });
   });
 });

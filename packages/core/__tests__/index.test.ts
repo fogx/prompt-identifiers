@@ -401,14 +401,14 @@ describe("prompt-identifiers", () => {
   describe("SafeNumeric format", () => {
     const uuidPrompt = "User 123e4567-e89b-42d3-a456-426655440000";
 
-    test("default delimiters use square brackets", () => {
+    test("default delimiters use tildes", () => {
       const { encoded, mapping } = encode(uuidPrompt, {
         inputFormat: "UUID",
         outputFormat: "SafeNumeric",
       });
 
-      expect(encoded).toBe("User [000]");
-      expect(mapping["[000]"]).toBe("123e4567-e89b-42d3-a456-426655440000");
+      expect(encoded).toBe("User ~000~");
+      expect(mapping["~000~"]).toBe("123e4567-e89b-42d3-a456-426655440000");
     });
 
     test("custom delimiters via template", () => {
@@ -430,7 +430,7 @@ describe("prompt-identifiers", () => {
         outputFormat: "SafeNumeric",
       });
 
-      expect(encoded).toBe("User [000] sent message to [001]");
+      expect(encoded).toBe("User ~000~ sent message to ~001~");
       const decoded = decode(encoded, mapping);
       expect(decoded).toBe(prompt);
     });
@@ -443,7 +443,7 @@ describe("prompt-identifiers", () => {
       });
 
       // LLM response contains natural "000" - should NOT be decoded
-      const response = "Error code 000 for user [000]";
+      const response = "Error code 000 for user ~000~";
       const decoded = decode(response, mapping);
       expect(decoded).toBe("Error code 000 for user 123e4567-e89b-42d3-a456-426655440000");
     });
@@ -457,7 +457,7 @@ describe("prompt-identifiers", () => {
         outputFormat: "SafeNumeric",
       });
 
-      expect(encoded).toBe("A: [000], B: [001], A again: [000]");
+      expect(encoded).toBe("A: ~000~, B: ~001~, A again: ~000~");
       expect(Object.keys(mapping).length).toBe(2);
 
       const decoded = decode(encoded, mapping);
@@ -473,12 +473,12 @@ describe("prompt-identifiers", () => {
         outputFormat: "SafeNumeric",
       });
 
-      // First placeholder should be "[000]"
-      expect(mapping["[000]"]).toBeDefined();
-      // 1000th placeholder should be "[999]"
-      expect(mapping["[999]"]).toBeDefined();
-      // 1001st placeholder should be "[001000]" (6 digits)
-      expect(mapping["[001000]"]).toBeDefined();
+      // First placeholder should be "~000~"
+      expect(mapping["~000~"]).toBeDefined();
+      // 1000th placeholder should be "~999~"
+      expect(mapping["~999~"]).toBeDefined();
+      // 1001st placeholder should be "~001000~" (6 digits)
+      expect(mapping["~001000~"]).toBeDefined();
 
       // Roundtrip should work
       const decoded = decode(encoded, mapping);

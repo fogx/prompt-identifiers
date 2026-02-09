@@ -11,6 +11,30 @@ import { decode, EncodeConfig } from "prompt-identifiers";
 // Types
 // =============================================================================
 
+/** Debug data included in onEncode callback when debug is true */
+export interface EncodeDebugData {
+  /** Number of unique IDs encoded */
+  encodedCount: number;
+  /** Original input object before encoding */
+  input: unknown;
+  /** Encoded input object */
+  output: unknown;
+  /** Time spent encoding in milliseconds */
+  durationMs: number;
+}
+
+/** Debug data included in onDecode callback when debug is true */
+export interface DecodeDebugData {
+  /** Number of fields containing decoded placeholders */
+  decodedCount: number;
+  /** Raw output from LLM (encoded) */
+  input: unknown;
+  /** Decoded output with original IDs restored */
+  output: unknown;
+  /** Time spent decoding in milliseconds */
+  durationMs: number;
+}
+
 /** Configuration options for the BAML wrapper */
 export interface WrapBamlFunctionOptions {
   /** Encoding configuration (inputFormat and outputFormat) */
@@ -32,14 +56,23 @@ export interface WrapBamlFunctionOptions {
   encodeFields?: string[];
 
   /**
-   * Optional callback fired after encoding IDs in the input.
+   * Enable debug mode to populate debugData in callbacks with
+   * input/output snapshots, counts, and timing information.
    */
-  onEncode?: (result: { mapping: Record<string, string>; encodedCount: number }) => void;
+  debug?: boolean;
+
+  /**
+   * Optional callback fired after encoding IDs in the input.
+   * Receives the placeholder→ID mapping. When debug is true,
+   * also receives debugData with input, output, counts, and timing.
+   */
+  onEncode?: (result: { mapping: Record<string, string>; debugData?: EncodeDebugData }) => void;
 
   /**
    * Optional callback fired after decoding IDs in the output.
+   * When debug is true, receives debugData with input, output, counts, and timing.
    */
-  onDecode?: (result: { decodedCount: number }) => void;
+  onDecode?: (result: { debugData?: DecodeDebugData }) => void;
 }
 
 /** A BAML function type (sync or async) */
@@ -151,7 +184,7 @@ function formatPlaceholder(outputFormat: EncodeConfig["outputFormat"], index: nu
   if (outputFormat === "SafeNumeric") {
     const s = index.toString();
     const width = Math.max(3, Math.ceil(s.length / 3) * 3);
-    return `[${s.padStart(width, "0")}]`;
+    return `~${s.padStart(width, "0")}~`;
   }
   if (outputFormat === "Numeric") {
     const s = index.toString();
@@ -350,7 +383,7 @@ export function wrapBamlFunction<TInput, TOutput>(
   fn: BamlFunction<TInput, TOutput>,
   options: WrapBamlFunctionOptions
 ): BamlFunction<TInput, TOutput> {
-  const { config, encodeFields, onEncode, onDecode } = options;
+  const { config, encodeFields, onEncode, onDecode, debug } = options;
 
   // Pre-parse field paths if provided
   const fieldPaths = encodeFields ? encodeFields.map(parseFieldPath) : null;
@@ -365,11 +398,20 @@ export function wrapBamlFunction<TInput, TOutput>(
       nextIndex: 0,
     };
 
+    const startEncode = debug ? performance.now() : 0;
     const encodedInput = deepEncode(input, ctx);
+    const encodeDurationMs = debug ? performance.now() - startEncode : 0;
 
     onEncode?.({
       mapping: ctx.mapping,
-      encodedCount: Object.keys(ctx.mapping).length,
+      ...(debug && {
+        debugData: {
+          encodedCount: Object.keys(ctx.mapping).length,
+          input,
+          output: encodedInput,
+          durationMs: encodeDurationMs,
+        },
+      }),
     });
 
     // Call the original function
@@ -377,9 +419,20 @@ export function wrapBamlFunction<TInput, TOutput>(
 
     // Decode output
     const countRef = { count: 0 };
+    const startDecode = debug ? performance.now() : 0;
     const decodedOutput = deepDecode(output, ctx.mapping, countRef);
+    const decodeDurationMs = debug ? performance.now() - startDecode : 0;
 
-    onDecode?.({ decodedCount: countRef.count });
+    onDecode?.({
+      ...(debug && {
+        debugData: {
+          decodedCount: countRef.count,
+          input: output,
+          output: decodedOutput,
+          durationMs: decodeDurationMs,
+        },
+      }),
+    });
 
     return decodedOutput;
   };
@@ -407,7 +460,7 @@ export function wrapBamlStreamingFunction<TInput, TPartial, TFinal>(
   fn: BamlStreamingFunction<TInput, TPartial, TFinal>,
   options: WrapBamlFunctionOptions
 ): BamlStreamingFunction<TInput, TPartial, TFinal> {
-  const { config, encodeFields, onEncode, onDecode } = options;
+  const { config, encodeFields, onEncode, onDecode, debug } = options;
 
   // Pre-parse field paths if provided
   const fieldPaths = encodeFields ? encodeFields.map(parseFieldPath) : null;
@@ -422,16 +475,26 @@ export function wrapBamlStreamingFunction<TInput, TPartial, TFinal>(
       nextIndex: 0,
     };
 
+    const startEncode = debug ? performance.now() : 0;
     const encodedInput = deepEncode(input, ctx);
+    const encodeDurationMs = debug ? performance.now() - startEncode : 0;
 
     onEncode?.({
       mapping: ctx.mapping,
-      encodedCount: Object.keys(ctx.mapping).length,
+      ...(debug && {
+        debugData: {
+          encodedCount: Object.keys(ctx.mapping).length,
+          input,
+          output: encodedInput,
+          durationMs: encodeDurationMs,
+        },
+      }),
     });
 
     // Call the original streaming function
     const generator = fn(encodedInput);
     let totalDecoded = 0;
+    const startDecode = debug ? performance.now() : 0;
 
     while (true) {
       const { value, done } = await generator.next();
@@ -441,7 +504,18 @@ export function wrapBamlStreamingFunction<TInput, TPartial, TFinal>(
         const countRef = { count: 0 };
         const decodedValue = deepDecode(value, ctx.mapping, countRef);
         totalDecoded += countRef.count;
-        onDecode?.({ decodedCount: totalDecoded });
+        const decodeDurationMs = debug ? performance.now() - startDecode : 0;
+
+        onDecode?.({
+          ...(debug && {
+            debugData: {
+              decodedCount: totalDecoded,
+              input: value,
+              output: decodedValue,
+              durationMs: decodeDurationMs,
+            },
+          }),
+        });
         return decodedValue;
       }
 

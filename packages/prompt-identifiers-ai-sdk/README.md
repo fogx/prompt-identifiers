@@ -29,7 +29,7 @@ const result = await generateText({
   prompt: "Summarize activity for user 123e4567-e89b-42d3-a456-426655440000",
 });
 
-// The LLM sees: "Summarize activity for user [000]"
+// The LLM sees: "Summarize activity for user ~000~"
 // You receive the response with original UUIDs restored
 ```
 
@@ -37,10 +37,10 @@ const result = await generateText({
 
 1. **Before LLM call**: The middleware encodes IDs in your prompt messages
 
-   - `123e4567-e89b-42d3-a456-426655440000` → `[000]`
+   - `123e4567-e89b-42d3-a456-426655440000` → `~000~`
 
 2. **After LLM call**: The middleware decodes IDs in the response
-   - `[000]` → `123e4567-e89b-42d3-a456-426655440000`
+   - `~000~` → `123e4567-e89b-42d3-a456-426655440000`
 
 This is completely transparent - you work with real IDs, the LLM works with compact placeholders.
 
@@ -54,13 +54,23 @@ promptIdentifiersMiddleware({
     outputFormat: "SafeNumeric", // or 'Numeric', 'IdToken', { template: '...' }
   },
 
+  // Optional: enable debug mode for detailed diagnostics
+  debug: true,
+
   // Optional: callbacks for logging/debugging
   onEncode: (result) => {
-    console.log(`Encoded ${result.encodedCount} IDs`);
     console.log("Mapping:", result.mapping);
+    // debugData is only present when debug: true
+    if (result.debugData) {
+      console.log(`Encoded ${result.debugData.encodedCount} IDs in ${result.debugData.durationMs}ms`);
+    }
   },
   onDecode: (result) => {
-    console.log(`Decoded ${result.decodedCount} placeholders`);
+    if (result.debugData) {
+      console.log(`Decoded ${result.debugData.decodedCount} placeholders in ${result.debugData.durationMs}ms`);
+      console.log("Input:", result.debugData.input);
+      console.log("Output:", result.debugData.output);
+    }
   },
 });
 ```
@@ -77,7 +87,7 @@ promptIdentifiersMiddleware({
 
 | Format                | Description                                       | Example                               |
 | --------------------- | ------------------------------------------------- | ------------------------------------- |
-| `'SafeNumeric'`       | Collision-safe with square brackets (recommended) | `[000]`, `[001]`                      |
+| `'SafeNumeric'`       | Collision-safe with tildes (recommended)          | `~000~`, `~001~`                      |
 | `'Numeric'`           | Simple numeric with smart triplet expansion       | `000`, `001`                          |
 | `'IdToken'`           | Base62 encoding                                   | `0`, `A`, `z`, `10`                   |
 | `{ template: '...' }` | Custom template                                   | `{ template: '[ID:{i}]' }` → `[ID:0]` |
@@ -136,9 +146,9 @@ const prompt = `
 `;
 
 // Encoded as:
-// User [000] sent a message.
-// Check if [000] is online.
-// User [001] received it.
+// User ~000~ sent a message.
+// Check if ~000~ is online.
+// User ~001~ received it.
 ```
 
 ## Peer Dependencies

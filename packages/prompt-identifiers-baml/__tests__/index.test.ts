@@ -28,7 +28,7 @@ describe("prompt-identifiers-baml", () => {
       const result = await wrapped({ user_id: uuid1 });
 
       // Verify mock was called with encoded input
-      expect(mockFn).toHaveBeenCalledWith({ user_id: "[000]" });
+      expect(mockFn).toHaveBeenCalledWith({ user_id: "~000~" });
 
       // Verify output is decoded
       expect(result.summary).toBe(`Analysis for user ${uuid1}`);
@@ -76,7 +76,7 @@ describe("prompt-identifiers-baml", () => {
       expect(mockFn).toHaveBeenCalledWith({
         data: {
           user: {
-            id: "[000]",
+            id: "~000~",
             name: "John",
           },
         },
@@ -108,8 +108,8 @@ describe("prompt-identifiers-baml", () => {
       // Verify encoding
       expect(mockFn).toHaveBeenCalledWith({
         items: [
-          { id: "[000]", name: "Item 1" },
-          { id: "[001]", name: "Item 2" },
+          { id: "~000~", name: "Item 1" },
+          { id: "~001~", name: "Item 2" },
         ],
       });
 
@@ -130,7 +130,7 @@ describe("prompt-identifiers-baml", () => {
 
       // Verify encoding uses same placeholder for duplicate
       expect(mockFn).toHaveBeenCalledWith({
-        ids: ["[000]", "[001]", "[000]"],
+        ids: ["~000~", "~001~", "~000~"],
       });
 
       // Verify decoding
@@ -154,11 +154,12 @@ describe("prompt-identifiers-baml", () => {
       await wrapped({ id: uuid1 });
 
       expect(onEncode).toHaveBeenCalledWith({
-        mapping: { "[000]": uuid1 },
-        encodedCount: 1,
+        mapping: { "~000~": uuid1 },
       });
+      expect(onEncode.mock.calls[0][0].debugData).toBeUndefined();
 
-      expect(onDecode).toHaveBeenCalledWith({ decodedCount: 1 });
+      expect(onDecode).toHaveBeenCalledWith({});
+      expect(onDecode.mock.calls[0][0].debugData).toBeUndefined();
     });
 
     test("handles null and undefined values", async () => {
@@ -176,7 +177,7 @@ describe("prompt-identifiers-baml", () => {
 
       const result = await wrapped({ id: uuid1, optional: null });
 
-      expect(mockFn).toHaveBeenCalledWith({ id: "[000]", optional: null });
+      expect(mockFn).toHaveBeenCalledWith({ id: "~000~", optional: null });
       expect(result.id).toBe(uuid1);
       expect(result.optional).toBeNull();
     });
@@ -220,7 +221,7 @@ describe("prompt-identifiers-baml", () => {
       await wrapped({ user_id: uuid1, code: codeUuid });
 
       expect(mockFn).toHaveBeenCalledWith({
-        user_id: "[000]",
+        user_id: "~000~",
         code: codeUuid, // Not encoded
       });
     });
@@ -251,7 +252,7 @@ describe("prompt-identifiers-baml", () => {
 
       expect(mockFn).toHaveBeenCalledWith({
         data: {
-          user_id: "[000]",
+          user_id: "~000~",
           other_id: uuid2, // Not encoded
         },
       });
@@ -280,8 +281,8 @@ describe("prompt-identifiers-baml", () => {
 
       expect(mockFn).toHaveBeenCalledWith({
         items: [
-          { id: "[000]", code: "ABC123" },
-          { id: "[001]", code: "DEF456" },
+          { id: "~000~", code: "ABC123" },
+          { id: "~001~", code: "DEF456" },
         ],
       });
     });
@@ -312,7 +313,7 @@ describe("prompt-identifiers-baml", () => {
 
       expect(mockFn).toHaveBeenCalledWith({
         data: {
-          users: [{ profile: { id: "[000]" } }, { profile: { id: "[001]" } }],
+          users: [{ profile: { id: "~000~" } }, { profile: { id: "~001~" } }],
         },
       });
     });
@@ -374,11 +375,12 @@ describe("prompt-identifiers-baml", () => {
       while (!(await generator.next()).done) {}
 
       expect(onEncode).toHaveBeenCalledWith({
-        mapping: { "[000]": uuid1 },
-        encodedCount: 1,
+        mapping: { "~000~": uuid1 },
       });
+      expect(onEncode.mock.calls[0][0].debugData).toBeUndefined();
 
-      expect(onDecode).toHaveBeenCalled();
+      expect(onDecode).toHaveBeenCalledWith({});
+      expect(onDecode.mock.calls[0][0].debugData).toBeUndefined();
     });
   });
 
@@ -393,13 +395,13 @@ describe("prompt-identifiers-baml", () => {
       );
 
       expect(encoded).toEqual({
-        user_id: "[000]",
-        data: { owner: "[001]" },
+        user_id: "~000~",
+        data: { owner: "~001~" },
       });
 
       expect(mapping).toEqual({
-        "[000]": uuid1,
-        "[001]": uuid2,
+        "~000~": uuid1,
+        "~001~": uuid2,
       });
     });
 
@@ -414,7 +416,7 @@ describe("prompt-identifiers-baml", () => {
       );
 
       expect(encoded).toEqual({
-        user_id: "[000]",
+        user_id: "~000~",
         code: uuid2, // Not encoded
       });
     });
@@ -424,10 +426,10 @@ describe("prompt-identifiers-baml", () => {
     test("decodes object with mapping", () => {
       const decoded = decodeObject(
         {
-          user_id: "[000]",
-          summary: "User [000] is active",
+          user_id: "~000~",
+          summary: "User ~000~ is active",
         },
-        { "[000]": uuid1 }
+        { "~000~": uuid1 }
       );
 
       expect(decoded).toEqual({
@@ -440,10 +442,10 @@ describe("prompt-identifiers-baml", () => {
       const decoded = decodeObject(
         {
           data: {
-            items: [{ id: "[000]" }, { id: "[001]" }],
+            items: [{ id: "~000~" }, { id: "~001~" }],
           },
         },
-        { "[000]": uuid1, "[001]": uuid2 }
+        { "~000~": uuid1, "~001~": uuid2 }
       );
 
       expect(decoded).toEqual({
@@ -496,7 +498,7 @@ describe("prompt-identifiers-baml", () => {
 
       const result = await wrapped({ id: ulid });
 
-      expect(mockFn).toHaveBeenCalledWith({ id: "[000]" });
+      expect(mockFn).toHaveBeenCalledWith({ id: "~000~" });
       expect(result.result).toBe(ulid.toLowerCase()); // ULIDs are normalized to lowercase
     });
   });
@@ -535,6 +537,98 @@ describe("prompt-identifiers-baml", () => {
       const result = await wrapped({ id: uuid1 });
 
       expect(result.message).toBe("No IDs in response");
+    });
+  });
+
+  describe("debug mode", () => {
+    test("wrapBamlFunction populates debugData when debug is true", async () => {
+      const onEncode = jest.fn();
+      const onDecode = jest.fn();
+
+      const mockFn = jest.fn(async (input: { id: string }) => ({
+        result: `Found: ${input.id}`,
+      }));
+
+      const wrapped = wrapBamlFunction(mockFn, {
+        config: defaultConfig,
+        debug: true,
+        onEncode,
+        onDecode,
+      });
+
+      const input = { id: uuid1 };
+      await wrapped(input);
+
+      // onEncode debugData
+      const encodeResult = onEncode.mock.calls[0][0];
+      expect(encodeResult.mapping).toEqual({ "~000~": uuid1 });
+      expect(encodeResult.debugData).toBeDefined();
+      expect(encodeResult.debugData.encodedCount).toBe(1);
+      expect(encodeResult.debugData.input).toEqual({ id: uuid1 });
+      expect(encodeResult.debugData.output).toEqual({ id: "~000~" });
+      expect(typeof encodeResult.debugData.durationMs).toBe("number");
+
+      // onDecode debugData
+      const decodeResult = onDecode.mock.calls[0][0];
+      expect(decodeResult.debugData).toBeDefined();
+      expect(decodeResult.debugData.decodedCount).toBe(1);
+      expect(decodeResult.debugData.input).toEqual({ result: "Found: ~000~" });
+      expect(decodeResult.debugData.output).toEqual({ result: `Found: ${uuid1}` });
+      expect(typeof decodeResult.debugData.durationMs).toBe("number");
+    });
+
+    test("wrapBamlStreamingFunction populates debugData when debug is true", async () => {
+      const onEncode = jest.fn();
+      const onDecode = jest.fn();
+
+      async function* mockStreamFn(input: { id: string }) {
+        yield { partial: `Processing ${input.id}...` };
+        return { final: `Done for ${input.id}` };
+      }
+
+      const wrapped = wrapBamlStreamingFunction(mockStreamFn, {
+        config: defaultConfig,
+        debug: true,
+        onEncode,
+        onDecode,
+      });
+
+      const generator = wrapped({ id: uuid1 });
+      while (!(await generator.next()).done) {}
+
+      // onEncode debugData
+      const encodeResult = onEncode.mock.calls[0][0];
+      expect(encodeResult.debugData).toBeDefined();
+      expect(encodeResult.debugData.encodedCount).toBe(1);
+      expect(encodeResult.debugData.input).toEqual({ id: uuid1 });
+      expect(encodeResult.debugData.output).toEqual({ id: "~000~" });
+
+      // onDecode debugData
+      const decodeResult = onDecode.mock.calls[0][0];
+      expect(decodeResult.debugData).toBeDefined();
+      expect(decodeResult.debugData.decodedCount).toBeGreaterThanOrEqual(1);
+      expect(typeof decodeResult.debugData.durationMs).toBe("number");
+    });
+
+    test("debugData is absent when debug is false", async () => {
+      const onEncode = jest.fn();
+      const onDecode = jest.fn();
+
+      const mockFn = jest.fn(async (input: { id: string }) => ({
+        result: `Found: ${input.id}`,
+      }));
+
+      const wrapped = wrapBamlFunction(mockFn, {
+        config: defaultConfig,
+        debug: false,
+        onEncode,
+        onDecode,
+      });
+
+      await wrapped({ id: uuid1 });
+
+      expect(onEncode.mock.calls[0][0].debugData).toBeUndefined();
+      expect(onDecode.mock.calls[0][0].debugData).toBeUndefined();
     });
   });
 });

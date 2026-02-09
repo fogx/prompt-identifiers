@@ -15,13 +15,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [0.1.1] - 2026-02-07
+## [0.1.1] - 2026-02-09
 
 ### prompt-identifiers (core)
 
 #### Fixed
 
-- Change SafeNumeric output from angle brackets (`<000>`) to square brackets (`[000]`) to prevent stripping by LLMs and HTML/markdown parsers
+- Change SafeNumeric output from angle brackets (`<000>`) to tildes (`~000~`) to prevent stripping by LLMs and HTML/markdown parsers
 
 #### Changed
 
@@ -37,19 +37,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 #### Added
 
 - Add dedicated streaming decoder test suite (4 output formats × ~15 cases, symmetric delimiter edge cases)
+- Add `debug` option; when `true`, `onEncode`/`onDecode` callbacks receive `debugData` with input/output snapshots, counts, and `durationMs` timing
 
 #### Changed
 
+- **Breaking:** Move `encodedCount` and `decodedCount` from top-level callback args into `debugData`
 - Apply prettier formatting
 
 ### prompt-identifiers-baml
 
 #### Fixed
 
-- Change SafeNumeric output from angle brackets (`<000>`) to square brackets (`[000]`) in `formatPlaceholder`
+- Change SafeNumeric output from angle brackets (`<000>`) to tildes (`~000~`) in `formatPlaceholder`
+
+#### Added
+
+- Add `debug` option; when `true`, `onEncode`/`onDecode` callbacks receive `debugData` with input/output snapshots, counts, and `durationMs` timing
 
 #### Changed
 
+- **Breaking:** Move `encodedCount` and `decodedCount` from top-level callback args into `debugData`
 - Apply prettier formatting
 
 ---

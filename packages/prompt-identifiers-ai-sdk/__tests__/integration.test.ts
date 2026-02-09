@@ -39,7 +39,7 @@ describe("AI SDK Integration", () => {
         onGenerate: (prompt) => {
           receivedPrompt = prompt;
           return {
-            content: [{ type: "text", text: "Found user [000] in database." }],
+            content: [{ type: "text", text: "Found user ~000~ in database." }],
             finishReason: mockFinishReason(),
             usage: mockUsage(),
             warnings: [],
@@ -55,7 +55,7 @@ describe("AI SDK Integration", () => {
       });
 
       // Verify prompt was encoded before reaching the model
-      expect(getUserMessageText(receivedPrompt[0])).toBe("Find user [000]");
+      expect(getUserMessageText(receivedPrompt[0])).toBe("Find user ~000~");
 
       // Verify response was decoded
       expect(getResultText(result)).toBe(`Found user ${uuid1} in database.`);
@@ -69,7 +69,7 @@ describe("AI SDK Integration", () => {
               type: "tool-call",
               toolCallId: "call-1",
               toolName: "create_campaign",
-              input: '{"user_id":"[000]","name":"Campaign"}',
+              input: '{"user_id":"~000~","name":"Campaign"}',
             },
           ],
           finishReason: mockFinishReason(),
@@ -97,7 +97,7 @@ describe("AI SDK Integration", () => {
         onGenerate: (prompt) => {
           receivedPrompt = prompt;
           return {
-            content: [{ type: "text", text: "User [000] is active." }],
+            content: [{ type: "text", text: "User ~000~ is active." }],
             finishReason: mockFinishReason(),
             usage: mockUsage(),
             warnings: [],
@@ -119,7 +119,7 @@ describe("AI SDK Integration", () => {
 
       const output = getToolResultOutput<{ id: string; name: string }>(receivedPrompt[0]);
       expect(output?.type).toBe("json");
-      expect(output?.value.id).toBe("[000]");
+      expect(output?.value.id).toBe("~000~");
       expect(output?.value.name).toBe("Alice");
     });
 
@@ -152,7 +152,7 @@ describe("AI SDK Integration", () => {
 
       const output = getToolResultOutput<string>(receivedPrompt[0]);
       expect(output?.type).toBe("text");
-      expect(output?.value).toBe("User [000] found");
+      expect(output?.value).toBe("User ~000~ found");
     });
 
     test("deduplicates UUIDs across messages", async () => {
@@ -162,7 +162,7 @@ describe("AI SDK Integration", () => {
         onGenerate: (prompt) => {
           receivedPrompt = prompt;
           return {
-            content: [{ type: "text", text: "Comparing [000] and [001]." }],
+            content: [{ type: "text", text: "Comparing ~000~ and ~001~." }],
             finishReason: mockFinishReason(),
             usage: mockUsage(),
             warnings: [],
@@ -184,11 +184,11 @@ describe("AI SDK Integration", () => {
       });
 
       // Same UUIDs should get same placeholders across messages
-      expect(getUserMessageText(receivedPrompt[0])).toBe("User [000] and [001]");
+      expect(getUserMessageText(receivedPrompt[0])).toBe("User ~000~ and ~001~");
 
       const output = getToolResultOutput<{ a: string; b: string }>(receivedPrompt[1]);
-      expect(output?.value.a).toBe("[000]");
-      expect(output?.value.b).toBe("[001]");
+      expect(output?.value.a).toBe("~000~");
+      expect(output?.value.b).toBe("~001~");
 
       // Response should decode correctly
       expect(getResultText(result)).toBe(`Comparing ${uuid1} and ${uuid2}.`);
@@ -200,7 +200,7 @@ describe("AI SDK Integration", () => {
       const mockModel = createMockModel({
         onStream: () => [
           { type: "text-delta", id: "1", delta: "Found " },
-          { type: "text-delta", id: "2", delta: "[000]" },
+          { type: "text-delta", id: "2", delta: "~000~" },
           { type: "text-delta", id: "3", delta: " in DB." },
         ],
       });
@@ -231,8 +231,8 @@ describe("AI SDK Integration", () => {
     test("handles split placeholders across stream chunks", async () => {
       const mockModel = createMockModel({
         onStream: () => [
-          { type: "text-delta", id: "1", delta: "User [0" },
-          { type: "text-delta", id: "2", delta: "00] found." },
+          { type: "text-delta", id: "1", delta: "User ~0" },
+          { type: "text-delta", id: "2", delta: "00~ found." },
         ],
       });
 
@@ -267,7 +267,7 @@ describe("AI SDK Integration", () => {
             id: "1",
             toolCallId: "call-1",
             toolName: "get_user",
-            input: '{"id":"[000]"}',
+            input: '{"id":"~000~"}',
           } as LanguageModelV3StreamPart,
         ],
       });
@@ -292,7 +292,7 @@ describe("AI SDK Integration", () => {
           {
             type: "tool-input-delta",
             id: "1",
-            delta: '{"id":"[000]"}',
+            delta: '{"id":"~000~"}',
           } as LanguageModelV3StreamPart,
         ],
       });
@@ -316,7 +316,7 @@ describe("AI SDK Integration", () => {
     test("preserves non-text stream parts", async () => {
       const mockModel = createMockModel({
         onStream: () => [
-          { type: "text-delta", id: "1", delta: "[000]" },
+          { type: "text-delta", id: "1", delta: "~000~" },
           { type: "text-end", id: "2" },
         ],
       });
@@ -392,7 +392,7 @@ describe("AI SDK Integration", () => {
 
       type NestedValue = { level1: { level2: { level3: { ids: string[] } } } };
       const output = getToolResultOutput<NestedValue>(receivedPrompt[0]);
-      expect(output?.value.level1.level2.level3.ids).toEqual(["[000]", "[001]"]);
+      expect(output?.value.level1.level2.level3.ids).toEqual(["~000~", "~001~"]);
     });
 
     test("handles JSON arrays at root level", async () => {
@@ -423,7 +423,7 @@ describe("AI SDK Integration", () => {
       });
 
       const output = getToolResultOutput<string[]>(receivedPrompt[0]);
-      expect(output?.value).toEqual(["[000]", "[001]"]);
+      expect(output?.value).toEqual(["~000~", "~001~"]);
     });
 
     test("handles tool result with undefined value gracefully", async () => {
@@ -467,13 +467,13 @@ describe("AI SDK Integration", () => {
               type: "tool-call",
               toolCallId: "call-1",
               toolName: "get_user",
-              input: '{"id":"[000]"}',
+              input: '{"id":"~000~"}',
             },
             {
               type: "tool-call",
               toolCallId: "call-2",
               toolName: "get_user",
-              input: '{"id":"[001]"}',
+              input: '{"id":"~001~"}',
             },
           ],
           finishReason: mockFinishReason(),
@@ -514,11 +514,11 @@ describe("AI SDK Integration", () => {
 
       expect(onEncode).toHaveBeenCalledWith({
         mapping: expect.objectContaining({
-          "[000]": uuid1,
-          "[001]": uuid2,
+          "~000~": uuid1,
+          "~001~": uuid2,
         }),
-        encodedCount: 2,
       });
+      expect(onEncode.mock.calls[0][0].debugData).toBeUndefined();
     });
 
     test("onDecode is called after decoding", async () => {
@@ -526,7 +526,7 @@ describe("AI SDK Integration", () => {
 
       const mockModel = createMockModel({
         onGenerate: () => ({
-          content: [{ type: "text", text: "[000] and [000] again" }],
+          content: [{ type: "text", text: "~000~ and ~000~ again" }],
           finishReason: mockFinishReason(),
           usage: mockUsage(),
           warnings: [],
@@ -543,7 +543,47 @@ describe("AI SDK Integration", () => {
         prompt: [userMessage(`Find ${uuid1}`)],
       });
 
-      expect(onDecode).toHaveBeenCalledWith({ decodedCount: 2 });
+      expect(onDecode).toHaveBeenCalledWith({});
+      expect(onDecode.mock.calls[0][0].debugData).toBeUndefined();
+    });
+
+    test("debug mode populates debugData in integration", async () => {
+      const onEncode = jest.fn();
+      const onDecode = jest.fn();
+
+      const mockModel = createMockModel({
+        onGenerate: () => ({
+          content: [{ type: "text", text: "Found ~000~ in DB." }],
+          finishReason: mockFinishReason(),
+          usage: mockUsage(),
+          warnings: [],
+        }),
+      });
+
+      const middleware = promptIdentifiersMiddleware({
+        config: defaultConfig,
+        debug: true,
+        onEncode,
+        onDecode,
+      });
+      const wrappedModel = wrapLanguageModel({ model: mockModel, middleware });
+
+      await wrappedModel.doGenerate({
+        prompt: [userMessage(`Find ${uuid1}`)],
+      });
+
+      // onEncode should have debugData
+      const encodeResult = onEncode.mock.calls[0][0];
+      expect(encodeResult.debugData).toBeDefined();
+      expect(encodeResult.debugData.encodedCount).toBe(1);
+      expect(typeof encodeResult.debugData.durationMs).toBe("number");
+
+      // onDecode should have debugData
+      const decodeResult = onDecode.mock.calls[0][0];
+      expect(decodeResult.debugData).toBeDefined();
+      expect(decodeResult.debugData.decodedCount).toBe(1);
+      expect(decodeResult.debugData.input).toBe("Found ~000~ in DB.");
+      expect(decodeResult.debugData.output).toBe(`Found ${uuid1} in DB.`);
     });
   });
 });

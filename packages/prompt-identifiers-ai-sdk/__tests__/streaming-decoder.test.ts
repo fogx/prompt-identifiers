@@ -39,20 +39,8 @@ interface FormatDef {
 
 const formats: FormatDef[] = [
   {
-    label: "SafeNumeric [000]",
+    label: "SafeNumeric ~000~",
     config: { inputFormat: "UUID", outputFormat: "SafeNumeric" },
-    type: "asymmetric",
-    p0: "[000]",
-    p1: "[001]",
-    open: "[",
-    close: "]",
-  },
-  {
-    label: "Tilde ~000~",
-    config: {
-      inputFormat: "UUID",
-      outputFormat: { template: "~{i:zeroFilled}~" },
-    },
     type: "symmetric",
     p0: "~000~",
     p1: "~001~",
@@ -258,7 +246,7 @@ describe.each(formats)("Streaming decoder: $label", (fmt) => {
 describe("Streaming decoder: symmetric delimiter edge cases", () => {
   const tildeConfig: EncodeConfig = {
     inputFormat: "UUID",
-    outputFormat: { template: "~{i:zeroFilled}~" },
+    outputFormat: "SafeNumeric",
   };
 
   test("hello ~000~ → decode all (last ~ is closer)", async () => {
@@ -367,7 +355,7 @@ describe("Streaming decoder: wrapLanguageModel integration", () => {
   test("symmetric tilde format split through full middleware stack", async () => {
     const config: EncodeConfig = {
       inputFormat: "UUID",
-      outputFormat: { template: "~{i:zeroFilled}~" },
+      outputFormat: "SafeNumeric",
     };
 
     const model = createMockModel({

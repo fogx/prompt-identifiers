@@ -26,7 +26,7 @@ const result = await analyzeUser({
 });
 
 // The BAML function receives:
-// { user_id: '[000]', items: [{ id: '[001]', name: 'Order 1' }] }
+// { user_id: '~000~', items: [{ id: '~001~', name: 'Order 1' }] }
 //
 // You receive the response with original UUIDs restored
 ```
@@ -34,10 +34,10 @@ const result = await analyzeUser({
 ## How It Works
 
 1. **Before BAML call**: Deep traverses input object and encodes all ID fields
-   - `123e4567-e89b-42d3-a456-426655440000` → `[000]`
+   - `123e4567-e89b-42d3-a456-426655440000` → `~000~`
 
 2. **After BAML call**: Deep traverses output object and decodes all placeholders
-   - `[000]` → `123e4567-e89b-42d3-a456-426655440000`
+   - `~000~` → `123e4567-e89b-42d3-a456-426655440000`
 
 This is completely transparent - you work with real IDs, the LLM works with compact placeholders.
 
@@ -55,13 +55,21 @@ wrapBamlFunction(fn, {
   // If not provided, all matching strings are encoded
   encodeFields: ["user_id", "items[].id", "metadata.owner_id"],
 
+  // Optional: enable debug mode for detailed diagnostics
+  debug: true,
+
   // Optional: callbacks for logging/debugging
   onEncode: (result) => {
-    console.log(`Encoded ${result.encodedCount} IDs`);
     console.log("Mapping:", result.mapping);
+    // debugData is only present when debug: true
+    if (result.debugData) {
+      console.log(`Encoded ${result.debugData.encodedCount} IDs in ${result.debugData.durationMs}ms`);
+    }
   },
   onDecode: (result) => {
-    console.log(`Decoded ${result.decodedCount} placeholders`);
+    if (result.debugData) {
+      console.log(`Decoded ${result.debugData.decodedCount} placeholders in ${result.debugData.durationMs}ms`);
+    }
   },
 });
 ```
@@ -89,7 +97,7 @@ The `encodeFields` option supports dot notation and array wildcards:
 
 | Format                | Description                                       | Example                               |
 | --------------------- | ------------------------------------------------- | ------------------------------------- |
-| `'SafeNumeric'`       | Collision-safe with square brackets (recommended) | `[000]`, `[001]`                      |
+| `'SafeNumeric'`       | Collision-safe with tildes (recommended)          | `~000~`, `~001~`                      |
 | `'Numeric'`           | Simple numeric with smart triplet expansion       | `000`, `001`                          |
 | `'IdToken'`           | Base62 encoding                                   | `0`, `A`, `z`, `10`                   |
 | `{ template: '...' }` | Custom template                                   | `{ template: '[ID:{i}]' }` → `[ID:0]` |
@@ -126,8 +134,8 @@ const { encoded, mapping } = encodeObject(
   { inputFormat: "UUID", outputFormat: "SafeNumeric" }
 );
 
-// encoded: { user_id: '[000]', data: { owner: '[001]' } }
-// mapping: { '[000]': 'uuid-here', '[001]': 'other-uuid' }
+// encoded: { user_id: '~000~', data: { owner: '~001~' } }
+// mapping: { '~000~': 'uuid-here', '~001~': 'other-uuid' }
 ```
 
 ### decodeObject
@@ -138,8 +146,8 @@ Manually decode an object:
 import { decodeObject } from "prompt-identifiers-baml";
 
 const decoded = decodeObject(
-  { user_id: "[000]", summary: "User [000] is active" },
-  { "[000]": "uuid-here" }
+  { user_id: "~000~", summary: "User ~000~ is active" },
+  { "~000~": "uuid-here" }
 );
 
 // decoded: { user_id: 'uuid-here', summary: 'User uuid-here is active' }

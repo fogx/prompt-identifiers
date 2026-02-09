@@ -17,22 +17,53 @@ import { decode, encode, EncodeConfig } from "prompt-identifiers";
 // Types
 // =============================================================================
 
+/** Debug data included in onEncode callback when debug is true */
+export interface EncodeDebugData {
+  /** Number of unique IDs encoded */
+  encodedCount: number;
+  /** Original prompt messages before encoding */
+  input: LanguageModelV3Prompt;
+  /** Encoded prompt messages */
+  output: LanguageModelV3Prompt;
+  /** Time spent encoding in milliseconds */
+  durationMs: number;
+}
+
+/** Debug data included in onDecode callback when debug is true */
+export interface DecodeDebugData {
+  /** Number of placeholders decoded */
+  decodedCount: number;
+  /** Encoded text from LLM */
+  input: string;
+  /** Decoded text with original IDs restored */
+  output: string;
+  /** Time spent decoding in milliseconds */
+  durationMs: number;
+}
+
 /** Configuration options for the middleware */
 export interface PromptIdentifiersMiddlewareOptions {
   /** Encoding configuration (inputFormat and outputFormat) */
   config: EncodeConfig;
 
   /**
-   * Optional callback fired after encoding IDs in the prompt.
-   * Useful for logging or debugging.
+   * Enable debug mode to populate debugData in callbacks with
+   * input/output snapshots, counts, and timing information.
    */
-  onEncode?: (result: { mapping: Record<string, string>; encodedCount: number }) => void;
+  debug?: boolean;
+
+  /**
+   * Optional callback fired after encoding IDs in the prompt.
+   * Receives the placeholder→ID mapping. When debug is true,
+   * also receives debugData with input, output, counts, and timing.
+   */
+  onEncode?: (result: { mapping: Record<string, string>; debugData?: EncodeDebugData }) => void;
 
   /**
    * Optional callback fired after decoding IDs in the response.
-   * Useful for logging or debugging.
+   * When debug is true, receives debugData with input, output, counts, and timing.
    */
-  onDecode?: (result: { decodedCount: number }) => void;
+  onDecode?: (result: { debugData?: DecodeDebugData }) => void;
 }
 
 // =============================================================================
@@ -372,17 +403,26 @@ interface ParamsWithMapping {
 export function promptIdentifiersMiddleware(
   options: PromptIdentifiersMiddlewareOptions
 ): LanguageModelV3Middleware {
-  const { config, onEncode, onDecode } = options;
+  const { config, onEncode, onDecode, debug } = options;
 
   return {
     specificationVersion: "v3",
 
     transformParams: async ({ params }) => {
+      const startTime = debug ? performance.now() : 0;
       const { encodedPrompt, mapping } = encodePromptMessages(params.prompt, config);
+      const durationMs = debug ? performance.now() - startTime : 0;
 
       onEncode?.({
         mapping,
-        encodedCount: Object.keys(mapping).length,
+        ...(debug && {
+          debugData: {
+            encodedCount: Object.keys(mapping).length,
+            input: params.prompt,
+            output: encodedPrompt,
+            durationMs,
+          },
+        }),
       });
 
       // Attach mapping to params using Symbol - survives spread/clone operations
@@ -403,12 +443,20 @@ export function promptIdentifiersMiddleware(
         return result;
       }
 
+      const startTime = debug ? performance.now() : 0;
+      let encodedText = "";
+      let decodedText = "";
+
       // Decode text and tool call inputs in content array
       let totalCount = 0;
       const decodedContent = result.content.map((item) => {
         if (item.type === "text") {
           const { decoded, count } = decodeText(item.text, mapping);
           totalCount += count;
+          if (debug) {
+            encodedText += item.text;
+            decodedText += decoded;
+          }
           return { ...item, text: decoded };
         }
         // Decode tool call inputs (input is stringified JSON)
@@ -418,7 +466,18 @@ export function promptIdentifiersMiddleware(
         return item;
       });
 
-      onDecode?.({ decodedCount: totalCount });
+      const durationMs = debug ? performance.now() - startTime : 0;
+
+      onDecode?.({
+        ...(debug && {
+          debugData: {
+            decodedCount: totalCount,
+            input: encodedText,
+            output: decodedText,
+            durationMs,
+          },
+        }),
+      });
       return { ...result, content: decodedContent };
     },
 
@@ -432,6 +491,12 @@ export function promptIdentifiersMiddleware(
 
       const textDecoder = createStreamingDecoder(mapping);
 
+      // Debug accumulation state (only used when debug is true)
+      let streamStartTime = 0;
+      let accEncodedText = "";
+      let accDecodedText = "";
+      let streamStarted = false;
+
       // Transform the stream to decode placeholders in text and tool calls
       const transformedStream = new TransformStream<
         LanguageModelV3StreamPart,
@@ -440,8 +505,16 @@ export function promptIdentifiersMiddleware(
         transform(chunk, controller) {
           // Decode text deltas
           if (chunk.type === "text-delta" && chunk.delta) {
+            if (debug) {
+              if (!streamStarted) {
+                streamStartTime = performance.now();
+                streamStarted = true;
+              }
+              accEncodedText += chunk.delta;
+            }
             const decoded = textDecoder.process(chunk.delta);
             if (decoded) {
+              if (debug) accDecodedText += decoded;
               controller.enqueue({ ...chunk, delta: decoded });
             }
             return;
@@ -469,12 +542,26 @@ export function promptIdentifiersMiddleware(
         flush(controller) {
           const remaining = textDecoder.flush();
           if (remaining) {
+            if (debug) accDecodedText += remaining;
             controller.enqueue({
               type: "text-delta",
               id: "",
               delta: remaining,
             } as LanguageModelV3StreamPart);
           }
+
+          const durationMs = debug && streamStarted ? performance.now() - streamStartTime : 0;
+
+          onDecode?.({
+            ...(debug && {
+              debugData: {
+                decodedCount: Object.keys(mapping).length,
+                input: accEncodedText,
+                output: accDecodedText,
+                durationMs,
+              },
+            }),
+          });
         },
       });
 

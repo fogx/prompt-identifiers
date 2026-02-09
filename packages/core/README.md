@@ -78,14 +78,14 @@ The global flag (`g`) is added automatically if not present.
 
 | Format          | Description                                          | Examples                           |
 | --------------- | ---------------------------------------------------- | ---------------------------------- |
-| `'SafeNumeric'` | **Recommended.** Collision-safe with square brackets | `[000]`, `[001]`, `[002]`          |
+| `'SafeNumeric'` | **Recommended.** Collision-safe with tildes           | `~000~`, `~001~`, `~002~`          |
 | `'Numeric'`     | Smart triplet expansion                              | `000`, `001`, ..., `999`, `001000` |
 | `'IdToken'`     | Base62 compact                                       | `0`, `A`, `z`, `10`                |
 | `'Passthrough'` | No replacement                                       | Original text unchanged            |
 
 ### SafeNumeric Format (Recommended)
 
-The `SafeNumeric` format wraps placeholders in square brackets (`[]`) to prevent collision with naturally-occurring numbers in LLM responses. See the [main documentation](../../README.md#output-formats) for detailed format comparisons and delimiter guidance.
+The `SafeNumeric` format wraps placeholders in tildes (`~`) to prevent collision with naturally-occurring numbers in LLM responses. See the [main documentation](../../README.md#output-formats) for detailed format comparisons and delimiter guidance.
 
 ```typescript
 // Problem with Numeric format:
@@ -94,9 +94,9 @@ encode("User abc-123...", config) → "User 000"
 decode(response, mapping) → Wrong! "001" gets decoded even though it's not a placeholder
 
 // Solution with SafeNumeric:
-encode("User abc-123...", config) → "User [000]"
-// LLM responds: "User [000] reported error code 001"
-decode(response, mapping) → Correct! Only [000] is decoded
+encode("User abc-123...", config) → "User ~000~"
+// LLM responds: "User ~000~ reported error code 001"
+decode(response, mapping) → Correct! Only ~000~ is decoded
 ```
 
 For custom delimiters, use the template format (see below).

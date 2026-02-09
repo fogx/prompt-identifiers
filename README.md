@@ -29,7 +29,7 @@ UUIDs are 36 characters each but provide no semantic value to the LLM - they're 
 Replace long IDs with short, reversible placeholders:
 
 ```text
-"User [000] requested access to resource [001]"
+"User ~000~ requested access to resource ~001~"
 ```
 
 **Token count:** ~12 tokens
@@ -106,10 +106,10 @@ const { encoded, mapping } = encode(prompt, {
   inputFormat: "UUID",
   outputFormat: "SafeNumeric",
 });
-// → "User [000] requested access."
+// → "User ~000~ requested access."
 
 // 2. Send compressed prompt to LLM...
-const llmResponse = callLLM(encoded); // "User [000] was granted access."
+const llmResponse = callLLM(encoded); // "User ~000~ was granted access."
 
 // 3. Decode: Restore original IDs
 const restored = decode(llmResponse, mapping);
@@ -143,12 +143,12 @@ const { encoded, mapping } = encode(prompt, {
 console.log(encoded);
 // Output:
 // Analyze these user actions:
-// - User [000] logged in
-// - User [001] made purchase
-// - User [000] logged out
+// - User ~000~ logged in
+// - User ~001~ made purchase
+// - User ~000~ logged out
 
 // Send to LLM (simulated)
-const llmResponse = "User [000] had 2 sessions, User [001] made 1 purchase.";
+const llmResponse = "User ~000~ had 2 sessions, User ~001~ made 1 purchase.";
 
 // Decode: Restore original IDs
 const restored = decode(llmResponse, mapping);
@@ -191,10 +191,10 @@ See [`prompt-identifiers-ai-sdk`](./packages/prompt-identifiers-ai-sdk) for full
 
 ### SafeNumeric (Recommended)
 
-Collision-safe square bracket-wrapped numeric:
+Collision-safe tilde-wrapped numeric:
 
-- **0-999:** `"[000]"` (3 tokens)
-- **1K-1M:** `"[001000]"` (3 tokens)
+- **0-999:** `"~000~"` (3 tokens)
+- **1K-1M:** `"~001000~"` (3 tokens)
 
 ```typescript
 encode(text, { inputFormat: "UUID", outputFormat: "SafeNumeric" });
@@ -332,7 +332,7 @@ Restore original IDs from LLM output.
 **Example:**
 
 ```typescript
-const restored = decode("User [000] was granted access", mapping);
+const restored = decode("User ~000~ was granted access", mapping);
 ```
 
 ---
@@ -361,7 +361,7 @@ interface EncodeConfig {
 #### `OutputFormat`
 
 - `'Numeric'` - Smart triplet expansion (000, 001, ..., 001000, ...)
-- `'SafeNumeric'` - Collision-safe square bracket-wrapped ([000], [001], ...)
+- `'SafeNumeric'` - Collision-safe tilde-wrapped (~000~, ~001~, ...)
 - `'IdToken'` - Base62 compact format
 - `'Passthrough'` - No replacement (for testing)
 - `{ template: string }` - Template with `{i}` placeholder
@@ -411,11 +411,11 @@ const { encoded, mapping } = encode(prompt, {
   inputFormat: "UUID",
   outputFormat: "SafeNumeric",
 });
-// [000]: Machine learning basics...
-// [001]: Neural networks intro...
+// ~000~: Machine learning basics...
+// ~001~: Neural networks intro...
 
 // LLM responds with a tool call referencing encoded IDs
-const llmResponse = '{"answer": "ML is...", "sources": ["[000]", "[001]"]}';
+const llmResponse = '{"answer": "ML is...", "sources": ["~000~", "~001~"]}';
 
 // Decode: restore real IDs for downstream use
 const decoded = decode(llmResponse, mapping);
@@ -434,7 +434,7 @@ const { encoded, mapping } = encode(prompt, {
   inputFormat: "ULID",
   outputFormat: "SafeNumeric",
 });
-// "Agent [000] suggests X, Agent [001] suggests Y."
+// "Agent ~000~ suggests X, Agent ~001~ suggests Y."
 ```
 
 ### 3. Database Query Results
