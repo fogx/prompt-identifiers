@@ -11,7 +11,7 @@ import type {
   LanguageModelV3StreamPart,
   LanguageModelV3StreamResult,
 } from "@ai-sdk/provider";
-import { decode, encode, EncodeConfig } from "prompt-identifiers";
+import { createEncodeState, decode, encode, EncodeConfig, EncodeState } from "prompt-identifiers";
 
 // =============================================================================
 // Types
@@ -61,31 +61,19 @@ export interface PromptIdentifiersMiddlewareOptions {
 
   /**
    * Optional callback fired after decoding IDs in the response.
-   * When debug is true, receives debugData with input, output, counts, and timing.
+   * Always receives the decoded output text and the placeholder→ID mapping.
+   * When debug is true, also receives debugData with input, output, counts, and timing.
    */
-  onDecode?: (result: { debugData?: DecodeDebugData }) => void;
+  onDecode?: (result: {
+    output: string;
+    mapping: Record<string, string>;
+    debugData?: DecodeDebugData;
+  }) => void;
 }
 
 // =============================================================================
 // Internal Helpers
 // =============================================================================
-
-/**
- * Merge encode result mappings into accumulated mapping.
- * Deduplicates by original ID to ensure consistent placeholder assignment.
- */
-function mergeMapping(
-  result: { mapping: Record<string, string> },
-  idToPlaceholder: Map<string, string>,
-  mapping: Record<string, string>
-): void {
-  for (const [placeholder, id] of Object.entries(result.mapping)) {
-    if (!idToPlaceholder.has(id)) {
-      idToPlaceholder.set(id, placeholder);
-      mapping[placeholder] = id;
-    }
-  }
-}
 
 /**
  * Encode IDs in tool result output.
@@ -94,8 +82,7 @@ function mergeMapping(
 function encodeToolResultOutput(
   output: unknown,
   config: EncodeConfig,
-  idToPlaceholder: Map<string, string>,
-  mapping: Record<string, string>
+  state: EncodeState
 ): unknown {
   if (typeof output !== "object" || output === null) {
     return output;
@@ -105,20 +92,34 @@ function encodeToolResultOutput(
 
   // For text output, encode the string value directly
   if (typedOutput.type === "text" && typeof typedOutput.value === "string") {
-    const result = encode(typedOutput.value, config);
-    mergeMapping(result, idToPlaceholder, mapping);
+    const result = encode(typedOutput.value, config, state);
     return { ...typedOutput, value: result.encoded };
   }
 
   // For json output, stringify → encode → parse
   if (typedOutput.type === "json" && typedOutput.value !== undefined) {
     const stringified = JSON.stringify(typedOutput.value);
-    const result = encode(stringified, config);
-    mergeMapping(result, idToPlaceholder, mapping);
+    const result = encode(stringified, config, state);
     return { ...typedOutput, value: JSON.parse(result.encoded) };
   }
 
   return output;
+}
+
+/**
+ * Encode IDs in tool call input (args).
+ * Input is an arbitrary object in prompt messages — stringify → encode → parse.
+ */
+function encodeToolCallInput(
+  input: unknown,
+  config: EncodeConfig,
+  state: EncodeState
+): unknown {
+  if (input == null) return input;
+
+  const stringified = JSON.stringify(input);
+  const result = encode(stringified, config, state);
+  return JSON.parse(result.encoded);
 }
 
 /**
@@ -128,12 +129,10 @@ function encodeToolResultOutput(
 function encodeMessageContent(
   content: unknown,
   config: EncodeConfig,
-  idToPlaceholder: Map<string, string>,
-  mapping: Record<string, string>
+  state: EncodeState
 ): unknown {
   if (typeof content === "string") {
-    const result = encode(content, config);
-    mergeMapping(result, idToPlaceholder, mapping);
+    const result = encode(content, config, state);
     return result.encoded;
   }
 
@@ -149,7 +148,15 @@ function encodeMessageContent(
       if ("text" in typedPart && typeof typedPart.text === "string") {
         return {
           ...typedPart,
-          text: encodeMessageContent(typedPart.text, config, idToPlaceholder, mapping),
+          text: encodeMessageContent(typedPart.text, config, state),
+        };
+      }
+
+      // Handle ToolCallPart: { type: 'tool-call', input: unknown }
+      if (typedPart.type === "tool-call" && "input" in typedPart) {
+        return {
+          ...typedPart,
+          input: encodeToolCallInput(typedPart.input, config, state),
         };
       }
 
@@ -157,7 +164,7 @@ function encodeMessageContent(
       if (typedPart.type === "tool-result" && "output" in typedPart) {
         return {
           ...typedPart,
-          output: encodeToolResultOutput(typedPart.output, config, idToPlaceholder, mapping),
+          output: encodeToolResultOutput(typedPart.output, config, state),
         };
       }
 
@@ -170,21 +177,22 @@ function encodeMessageContent(
 
 /**
  * Encode IDs in all messages of the params.
- * Returns the mapping separately - the caller handles merging with original params.
+ *
+ * Uses a single shared EncodeState across all messages so that the same UUID always gets
+ * the same placeholder, regardless of which message it first appears in.
  */
 function encodePromptMessages(
   prompt: LanguageModelV3Prompt,
   config: EncodeConfig
 ): { encodedPrompt: LanguageModelV3Prompt; mapping: Record<string, string> } {
-  const idToPlaceholder = new Map<string, string>();
-  const mapping: Record<string, string> = {};
+  const state = createEncodeState();
 
   const encodedPrompt = prompt.map((message) => ({
     ...message,
-    content: encodeMessageContent(message.content, config, idToPlaceholder, mapping),
+    content: encodeMessageContent(message.content, config, state),
   })) as LanguageModelV3Prompt;
 
-  return { encodedPrompt, mapping };
+  return { encodedPrompt, mapping: state.mapping };
 }
 
 /**
@@ -291,19 +299,47 @@ function createStreamingDecoder(mapping: Record<string, string>) {
       buffer += text;
 
       if (!isSymmetric) {
-        // Asymmetric path (e.g., <000>, [[000]]) — original logic
-        const lastOpen = buffer.lastIndexOf(OPEN);
-        const lastClose = buffer.lastIndexOf(CLOSE);
+        // Asymmetric path — use regex to find complete placeholders.
+        // The old lastIndexOf approach breaks when delimiters share characters
+        // (e.g., ~ID000~ where CLOSE ~ is a prefix of OPEN ~ID).
+        const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const completeRe = new RegExp(esc(OPEN) + "\\d+" + esc(CLOSE), "g");
 
-        if (lastOpen > lastClose) {
-          // We have an incomplete placeholder, hold it in buffer
-          const complete = buffer.substring(0, lastOpen);
-          buffer = buffer.substring(lastOpen);
+        // Find where the last complete placeholder ends
+        let lastCompleteEnd = 0;
+        let m;
+        while ((m = completeRe.exec(buffer)) !== null) {
+          lastCompleteEnd = m.index + m[0].length;
+        }
+
+        const tail = buffer.substring(lastCompleteEnd);
+
+        // Check for incomplete placeholder: OPEN + digit(s), no complete CLOSE yet
+        const incompleteRe = new RegExp(esc(OPEN) + "\\d");
+        const incMatch = incompleteRe.exec(tail);
+        if (incMatch) {
+          const afterOpen = tail.substring(incMatch.index + OPEN.length);
+          if (afterOpen.indexOf(CLOSE) === -1) {
+            const dm = afterOpen.match(/^(\d+)([\s\S]*)$/);
+            if (dm && (dm[2] === "" || CLOSE.startsWith(dm[2]))) {
+              // OPEN + digits + optional partial CLOSE — buffer it
+              const splitPoint = lastCompleteEnd + incMatch.index;
+              const complete = buffer.substring(0, splitPoint);
+              buffer = buffer.substring(splitPoint);
+              return decode(complete, mapping);
+            }
+          }
+        }
+
+        // Check for bare OPEN at end of buffer (no digits yet)
+        if (tail.endsWith(OPEN)) {
+          const complete = buffer.substring(0, buffer.length - OPEN.length);
+          buffer = buffer.substring(buffer.length - OPEN.length);
           return decode(complete, mapping);
         }
 
-        // Check for partial multi-char opener at end of buffer (e.g., "[" when OPEN="[[")
-        const partialLen = partialDelimiterSuffix(buffer, OPEN);
+        // Check for partial multi-char opener at end (e.g., "[" when OPEN="[[")
+        const partialLen = partialDelimiterSuffix(tail, OPEN);
         if (partialLen > 0) {
           const complete = buffer.substring(0, buffer.length - partialLen);
           buffer = buffer.substring(buffer.length - partialLen);
@@ -453,9 +489,9 @@ export function promptIdentifiersMiddleware(
         if (item.type === "text") {
           const { decoded, count } = decodeText(item.text, mapping);
           totalCount += count;
+          decodedText += decoded;
           if (debug) {
             encodedText += item.text;
-            decodedText += decoded;
           }
           return { ...item, text: decoded };
         }
@@ -469,6 +505,8 @@ export function promptIdentifiersMiddleware(
       const durationMs = debug ? performance.now() - startTime : 0;
 
       onDecode?.({
+        output: decodedText,
+        mapping,
         ...(debug && {
           debugData: {
             decodedCount: totalCount,
@@ -491,10 +529,11 @@ export function promptIdentifiersMiddleware(
 
       const textDecoder = createStreamingDecoder(mapping);
 
-      // Debug accumulation state (only used when debug is true)
+      let accDecodedText = "";
+
+      // Debug-only accumulation state
       let streamStartTime = 0;
       let accEncodedText = "";
-      let accDecodedText = "";
       let streamStarted = false;
 
       // Transform the stream to decode placeholders in text and tool calls
@@ -514,7 +553,7 @@ export function promptIdentifiersMiddleware(
             }
             const decoded = textDecoder.process(chunk.delta);
             if (decoded) {
-              if (debug) accDecodedText += decoded;
+              accDecodedText += decoded;
               controller.enqueue({ ...chunk, delta: decoded });
             }
             return;
@@ -542,7 +581,7 @@ export function promptIdentifiersMiddleware(
         flush(controller) {
           const remaining = textDecoder.flush();
           if (remaining) {
-            if (debug) accDecodedText += remaining;
+            accDecodedText += remaining;
             controller.enqueue({
               type: "text-delta",
               id: "",
@@ -553,6 +592,8 @@ export function promptIdentifiersMiddleware(
           const durationMs = debug && streamStarted ? performance.now() - streamStartTime : 0;
 
           onDecode?.({
+            output: accDecodedText,
+            mapping,
             ...(debug && {
               debugData: {
                 decodedCount: Object.keys(mapping).length,

@@ -110,6 +110,93 @@ describe("prompt-identifiers-ai-sdk", () => {
       expect(getUserText(result.prompt, 1)).toBe("Compare ~000~ with ~001~.");
     });
 
+    test("same UUID gets the same placeholder across all messages", async () => {
+      const middleware = createMiddleware({ config: defaultConfig });
+
+      const uuid1 = "123e4567-e89b-42d3-a456-426655440000";
+      const uuid2 = "987fcdeb-51a2-43f7-8d9c-0123456789ab";
+
+      // uuid2 appears BEFORE uuid1 in the second message
+      const params = createParams([
+        systemMessage(`User ${uuid1} is an admin.`),
+        userMessage(`Found ${uuid2}, also see ${uuid1}.`),
+      ]);
+
+      const result = await middleware.transformParams({
+        params,
+        type: "generate",
+        model: mockModel,
+      });
+
+      // uuid1 got ~000~ in message 1. It must stay ~000~ everywhere.
+      expect(getSystemContent(result.prompt, 0)).toBe("User ~000~ is an admin.");
+      // uuid2 is new, so it should get ~001~ (not ~000~)
+      // uuid1 should still be ~000~ (not ~001~)
+      expect(getUserText(result.prompt, 1)).toBe("Found ~001~, also see ~000~.");
+    });
+
+    test("placeholder collision: decode maps back to correct UUIDs after cross-message encoding", async () => {
+      const onEncode = jest.fn();
+      const middleware = createMiddleware({ config: defaultConfig, onEncode });
+
+      const campaignId = "aaaa4567-e89b-42d3-a456-426655440000";
+      const creatorId = "bbbb4567-e89b-42d3-a456-426655440000";
+      const channelId = "cccc4567-e89b-42d3-a456-426655440000";
+
+      // Simulates agentic flow: system has campaignId,
+      // tool result introduces creatorId and channelId before re-mentioning campaignId
+      const params = createParams([
+        systemMessage(`Campaign ${campaignId} is active.`),
+        userMessage(`Creator ${creatorId} with channel ${channelId} for campaign ${campaignId}.`),
+      ]);
+
+      const encoded = await middleware.transformParams({
+        params,
+        type: "generate",
+        model: mockModel,
+      });
+
+      const mapping = onEncode.mock.calls[0][0].mapping;
+
+      // Each UUID must have exactly one placeholder, and each placeholder one UUID
+      const placeholders = Object.keys(mapping);
+      const uuids = Object.values(mapping);
+      expect(placeholders).toHaveLength(3);
+      expect(new Set(uuids).size).toBe(3); // no UUID mapped twice
+
+      // The model uses the placeholder it saw for channelId in a tool call.
+      // Decode must return the correct channelId, not some other UUID.
+      const channelPlaceholder = placeholders.find((p) => mapping[p] === channelId);
+      expect(channelPlaceholder).toBeDefined();
+
+      // Simulate model response referencing all three
+      const campaignPlaceholder = placeholders.find((p) => mapping[p] === campaignId)!;
+      const creatorPlaceholder = placeholders.find((p) => mapping[p] === creatorId)!;
+
+      const mockResult = {
+        content: [
+          {
+            type: "text" as const,
+            text: `Adding ${creatorPlaceholder} to ${campaignPlaceholder} via ${channelPlaceholder}`,
+          },
+        ],
+        finishReason: mockFinishReason(),
+        usage: mockUsage(),
+        warnings: [] as never[],
+      };
+
+      const result = await middleware.wrapGenerate({
+        doGenerate: jest.fn().mockResolvedValue(mockResult),
+        doStream: jest.fn(),
+        params: encoded,
+        model: mockModel,
+      });
+
+      expect(getTextFromContent(result.content)).toBe(
+        `Adding ${creatorId} to ${campaignId} via ${channelId}`
+      );
+    });
+
     test("calls onEncode callback with mapping", async () => {
       const onEncode = jest.fn();
       const middleware = createMiddleware({
@@ -214,7 +301,13 @@ describe("prompt-identifiers-ai-sdk", () => {
         model: mockModel,
       });
 
-      expect(onDecode).toHaveBeenCalledWith({});
+      expect(onDecode).toHaveBeenCalledWith({
+        output: expect.any(String),
+        mapping: expect.any(Object),
+      });
+      expect(onDecode.mock.calls[0][0].output).toBe(
+        "Found 123e4567-e89b-42d3-a456-426655440000 in the system."
+      );
       expect(onDecode.mock.calls[0][0].debugData).toBeUndefined();
     });
 
@@ -584,6 +677,94 @@ describe("prompt-identifiers-ai-sdk", () => {
     });
   });
 
+  describe("Tool call args encoding in prompt", () => {
+    test("encodes UUIDs in tool-call args within assistant messages", async () => {
+      const middleware = createMiddleware({ config: defaultConfig });
+
+      const creatorId = "123e4567-e89b-42d3-a456-426655440000";
+      const campaignId = "987fcdeb-51a2-43f7-8d9c-0123456789ab";
+
+      const params = createParams([
+        userMessage(`Add creator ${creatorId} to campaign ${campaignId}`),
+        {
+          role: "assistant",
+          content: [
+            { type: "text", text: `Adding creator ${creatorId} to campaign.` },
+            {
+              type: "tool-call",
+              toolCallId: "call-1",
+              toolName: "add_draft_collaboration",
+              input: { creatorIds: [creatorId], campaignId },
+            },
+          ],
+        } as LanguageModelV3Message,
+      ]);
+
+      const result = await middleware.transformParams({
+        params,
+        type: "generate",
+        model: mockModel,
+      });
+
+      const assistantMsg = result.prompt[1];
+      expect(assistantMsg.role).toBe("assistant");
+      if (assistantMsg.role === "assistant") {
+        // Text part should be encoded
+        const textPart = assistantMsg.content.find((p) => p.type === "text");
+        expect(textPart?.type === "text" && textPart.text).toBe(
+          "Adding creator ~000~ to campaign."
+        );
+
+        // Tool-call args should also be encoded
+        const toolCallPart = assistantMsg.content.find((p) => p.type === "tool-call") as {
+          type: "tool-call";
+          input: { creatorIds: string[]; campaignId: string };
+        };
+        expect(toolCallPart).toBeDefined();
+        expect(toolCallPart.input.creatorIds[0]).toBe("~000~");
+        expect(toolCallPart.input.campaignId).toBe("~001~");
+      }
+    });
+
+    test("deduplicates UUIDs across text, tool results, and tool-call args", async () => {
+      const onEncode = jest.fn();
+      const middleware = createMiddleware({ config: defaultConfig, onEncode });
+
+      const creatorId = "123e4567-e89b-42d3-a456-426655440000";
+
+      const params = createParams([
+        userMessage(`Find creator ${creatorId}`),
+        {
+          role: "assistant",
+          content: [
+            { type: "text", text: `Found creator ${creatorId}.` },
+            {
+              type: "tool-call",
+              toolCallId: "call-1",
+              toolName: "get_creator",
+              input: { id: creatorId },
+            },
+          ],
+        } as LanguageModelV3Message,
+        toolMessage("call-1", "get_creator", {
+          type: "json",
+          value: { id: creatorId, name: "Alice" },
+        }),
+      ]);
+
+      await middleware.transformParams({
+        params,
+        type: "generate",
+        model: mockModel,
+      });
+
+      // Same UUID across text, tool-call args, and tool result = 1 mapping entry
+      const mapping = onEncode.mock.calls[0][0].mapping;
+      expect(Object.keys(mapping)).toHaveLength(1);
+      expect(mapping["~000~"]).toBe(creatorId);
+    });
+  });
+
   describe("Tool call input decoding", () => {
     test("decodes UUIDs in tool call input from wrapGenerate", async () => {
       const middleware = createMiddleware({ config: defaultConfig });
@@ -789,6 +970,8 @@ describe("prompt-identifiers-ai-sdk", () => {
 
       expect(onDecode).toHaveBeenCalledTimes(1);
       const result = onDecode.mock.calls[0][0];
+      expect(result.output).toBe(`Found ${uuid} in the system.`);
+      expect(result.mapping).toEqual({ "~000~": uuid });
       expect(result.debugData).toBeDefined();
       expect(result.debugData.decodedCount).toBe(1);
       expect(result.debugData.input).toBe("Found ~000~ in the system.");
@@ -833,6 +1016,8 @@ describe("prompt-identifiers-ai-sdk", () => {
 
       expect(onDecode).toHaveBeenCalledTimes(1);
       const cbResult = onDecode.mock.calls[0][0];
+      expect(cbResult.output).toContain(uuid);
+      expect(cbResult.mapping).toEqual({ "~000~": uuid });
       expect(cbResult.debugData).toBeDefined();
       expect(cbResult.debugData.decodedCount).toBe(1);
       expect(cbResult.debugData.input).toBe("Found ~000~ in DB.");
@@ -874,6 +1059,8 @@ describe("prompt-identifiers-ai-sdk", () => {
       });
 
       expect(onEncode.mock.calls[0][0].debugData).toBeUndefined();
+      expect(onDecode.mock.calls[0][0].output).toBeDefined();
+      expect(onDecode.mock.calls[0][0].mapping).toBeDefined();
       expect(onDecode.mock.calls[0][0].debugData).toBeUndefined();
     });
   });

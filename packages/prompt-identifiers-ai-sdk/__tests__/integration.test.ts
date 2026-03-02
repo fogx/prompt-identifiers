@@ -543,7 +543,10 @@ describe("AI SDK Integration", () => {
         prompt: [userMessage(`Find ${uuid1}`)],
       });
 
-      expect(onDecode).toHaveBeenCalledWith({});
+      expect(onDecode).toHaveBeenCalledWith({
+        output: `${uuid1} and ${uuid1} again`,
+        mapping: { "~000~": uuid1 },
+      });
       expect(onDecode.mock.calls[0][0].debugData).toBeUndefined();
     });
 
