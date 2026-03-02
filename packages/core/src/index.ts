@@ -87,6 +87,31 @@ export interface EncodeResult {
   mapping: Record<string, string>;
 }
 
+/**
+ * Shared encoding state for consistent placeholder assignment across multiple encode() calls.
+ *
+ * Pass the same state object to sequential encode() calls to ensure each unique ID always gets
+ * the same placeholder, regardless of which call encounters it first.
+ *
+ * @example
+ * const state = createEncodeState();
+ * const r1 = encode("User abc-...", config, state);
+ * const r2 = encode("Found def-... and abc-...", config, state);
+ * // abc-... gets ~000~ in both r1 and r2
+ * // def-... gets ~001~ in r2 (counter continues from r1)
+ */
+export interface EncodeState {
+  /** Bidirectional lookup: original ID → placeholder */
+  idToPlaceholder: Map<string, string>;
+  /** Bidirectional lookup: placeholder → original ID */
+  mapping: Record<string, string>;
+}
+
+/** Creates a fresh encoding state for use across multiple encode() calls. */
+export function createEncodeState(): EncodeState {
+  return { idToPlaceholder: new Map(), mapping: {} };
+}
+
 // =============================================================================
 // Placeholder Generation
 // =============================================================================
@@ -248,6 +273,9 @@ function getPattern(inputFormat: InputFormat): RegExp {
  *
  * @param text - Input text containing IDs to replace
  * @param config - Configuration specifying input and output formats
+ * @param state - Optional shared state for consistent placeholders across multiple calls.
+ *               When provided, the same ID always gets the same placeholder and the counter
+ *               continues from previous calls. The state is mutated in place.
  * @returns Object with encoded text and mapping from placeholders to original IDs
  *
  * @example
@@ -257,6 +285,13 @@ function getPattern(inputFormat: InputFormat): RegExp {
  *   outputFormat: 'Numeric'
  * });
  * // → { encoded: "User 000", mapping: { "000": "123e4567-..." } }
+ *
+ * @example
+ * // Shared state across multiple calls
+ * const state = createEncodeState();
+ * const r1 = encode("User 123e4567-...", config, state);  // → ~000~
+ * const r2 = encode("New 987fcdeb-... and 123e4567-...", config, state);
+ * // 987fcdeb gets ~001~ (not ~000~), 123e4567 stays ~000~
  *
  * @example
  * // Custom regex input
@@ -281,7 +316,7 @@ function getPattern(inputFormat: InputFormat): RegExp {
  * });
  * // → { encoded: "User [[ID_0]]", mapping: { "[[ID_0]]": "123e4567-..." } }
  */
-export function encode(text: string, config: EncodeConfig): EncodeResult {
+export function encode(text: string, config: EncodeConfig, state?: EncodeState): EncodeResult {
   // Passthrough mode - return original text with empty mapping
   if (config.outputFormat === "Passthrough") {
     return { encoded: text, mapping: {} };
@@ -289,8 +324,8 @@ export function encode(text: string, config: EncodeConfig): EncodeResult {
 
   const pattern = getPattern(config.inputFormat);
   const formatter = createFormatter(config.outputFormat);
-  const idToPlaceholder = new Map<string, string>();
-  const mapping: Record<string, string> = {};
+  const idToPlaceholder = state?.idToPlaceholder ?? new Map<string, string>();
+  const mapping = state?.mapping ?? {};
 
   const encoded = text.replace(pattern, (match) => {
     // Normalize to lowercase for consistent deduplication
