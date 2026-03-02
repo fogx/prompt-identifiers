@@ -5,7 +5,7 @@
  * in inputs and decode them in outputs.
  */
 
-import { decode, EncodeConfig } from "prompt-identifiers";
+import { createEncodeState, decode, encode, EncodeConfig, EncodeState } from "prompt-identifiers";
 
 // =============================================================================
 // Types
@@ -152,123 +152,13 @@ function matchesFieldPath(currentPath: string[], targetSegments: string[]): bool
 // =============================================================================
 
 /**
- * Context for encoding operations - tracks state across recursive calls
+ * Context for encoding operations - tracks state across recursive calls.
+ * Delegates to core's encode() with shared EncodeState for consistent placeholder assignment.
  */
 interface EncodeContext {
   config: EncodeConfig;
   fieldPaths: string[][] | null; // null means auto-detect mode
-  idToPlaceholder: Map<string, string>;
-  mapping: Record<string, string>;
-  nextIndex: number;
-}
-
-/**
- * Get the pattern regex for the input format.
- */
-function getInputPattern(inputFormat: EncodeConfig["inputFormat"]): RegExp {
-  if (inputFormat instanceof RegExp) {
-    const flags = inputFormat.flags.includes("g") ? inputFormat.flags : inputFormat.flags + "g";
-    return new RegExp(inputFormat.source, flags);
-  }
-  if (inputFormat === "UUID") {
-    return /\b[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi;
-  }
-  // ULID
-  return /\b[0-9A-HJKMNP-TV-Z]{26}\b/gi;
-}
-
-/**
- * Format a placeholder based on output format and index.
- */
-function formatPlaceholder(outputFormat: EncodeConfig["outputFormat"], index: number): string {
-  if (outputFormat === "SafeNumeric") {
-    const s = index.toString();
-    const width = Math.max(3, Math.ceil(s.length / 3) * 3);
-    return `~${s.padStart(width, "0")}~`;
-  }
-  if (outputFormat === "Numeric") {
-    const s = index.toString();
-    const width = Math.max(3, Math.ceil(s.length / 3) * 3);
-    return s.padStart(width, "0");
-  }
-  if (outputFormat === "IdToken") {
-    const BASE62 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
-    if (index < 62) return BASE62[index];
-    let result = "";
-    let n = index;
-    while (n > 0) {
-      result = BASE62[n % 62] + result;
-      n = Math.floor(n / 62);
-    }
-    return result;
-  }
-  if (outputFormat === "Passthrough") {
-    return ""; // Should not be called
-  }
-  if (typeof outputFormat === "function") {
-    return outputFormat(index);
-  }
-  // Template format
-  const template = outputFormat.template;
-  const match = template.match(/\{i(?::([^}]+))?\}/);
-  if (!match) return `${index}`;
-
-  const specifier = match[1];
-  let formatted: string;
-  if (!specifier) {
-    formatted = index.toString();
-  } else if (specifier === "base62") {
-    const BASE62 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
-    if (index < 62) formatted = BASE62[index];
-    else {
-      formatted = "";
-      let n = index;
-      while (n > 0) {
-        formatted = BASE62[n % 62] + formatted;
-        n = Math.floor(n / 62);
-      }
-    }
-  } else if (specifier === "zeroFilled") {
-    const s = index.toString();
-    const width = Math.max(3, Math.ceil(s.length / 3) * 3);
-    formatted = s.padStart(width, "0");
-  } else {
-    const padMatch = specifier.match(/^(\d+)$/);
-    if (padMatch) {
-      formatted = index.toString().padStart(parseInt(padMatch[1], 10), "0");
-    } else {
-      formatted = index.toString();
-    }
-  }
-  return template.replace(match[0], formatted);
-}
-
-/**
- * Encode a string using context's global state for consistent placeholder assignment.
- */
-function encodeStringWithContext(text: string, ctx: EncodeContext): string {
-  if (ctx.config.outputFormat === "Passthrough") {
-    return text;
-  }
-
-  const pattern = getInputPattern(ctx.config.inputFormat);
-  pattern.lastIndex = 0;
-
-  return text.replace(pattern, (match) => {
-    const id = match.toLowerCase();
-
-    // Check if we've seen this ID before
-    if (ctx.idToPlaceholder.has(id)) {
-      return ctx.idToPlaceholder.get(id)!;
-    }
-
-    // New ID - assign next placeholder
-    const placeholder = formatPlaceholder(ctx.config.outputFormat, ctx.nextIndex);
-    ctx.nextIndex++;
-    ctx.idToPlaceholder.set(id, placeholder);
-    ctx.mapping[placeholder] = id;
-    return placeholder;
-  });
+  state: EncodeState;
 }
 
 /**
@@ -291,8 +181,8 @@ function deepEncode<T>(value: T, ctx: EncodeContext, path: string[] = []): T {
       return value;
     }
 
-    // Encode the string using context's global state
-    return encodeStringWithContext(value, ctx) as T;
+    // Encode the string using core's encode() with shared state
+    return encode(value, ctx.config, ctx.state).encoded as T;
   }
 
   // Handle arrays
@@ -393,9 +283,7 @@ export function wrapBamlFunction<TInput, TOutput>(
     const ctx: EncodeContext = {
       config,
       fieldPaths,
-      idToPlaceholder: new Map(),
-      mapping: {},
-      nextIndex: 0,
+      state: createEncodeState(),
     };
 
     const startEncode = debug ? performance.now() : 0;
@@ -403,10 +291,10 @@ export function wrapBamlFunction<TInput, TOutput>(
     const encodeDurationMs = debug ? performance.now() - startEncode : 0;
 
     onEncode?.({
-      mapping: ctx.mapping,
+      mapping: ctx.state.mapping,
       ...(debug && {
         debugData: {
-          encodedCount: Object.keys(ctx.mapping).length,
+          encodedCount: Object.keys(ctx.state.mapping).length,
           input,
           output: encodedInput,
           durationMs: encodeDurationMs,
@@ -420,7 +308,7 @@ export function wrapBamlFunction<TInput, TOutput>(
     // Decode output
     const countRef = { count: 0 };
     const startDecode = debug ? performance.now() : 0;
-    const decodedOutput = deepDecode(output, ctx.mapping, countRef);
+    const decodedOutput = deepDecode(output, ctx.state.mapping, countRef);
     const decodeDurationMs = debug ? performance.now() - startDecode : 0;
 
     onDecode?.({
@@ -470,9 +358,7 @@ export function wrapBamlStreamingFunction<TInput, TPartial, TFinal>(
     const ctx: EncodeContext = {
       config,
       fieldPaths,
-      idToPlaceholder: new Map(),
-      mapping: {},
-      nextIndex: 0,
+      state: createEncodeState(),
     };
 
     const startEncode = debug ? performance.now() : 0;
@@ -480,10 +366,10 @@ export function wrapBamlStreamingFunction<TInput, TPartial, TFinal>(
     const encodeDurationMs = debug ? performance.now() - startEncode : 0;
 
     onEncode?.({
-      mapping: ctx.mapping,
+      mapping: ctx.state.mapping,
       ...(debug && {
         debugData: {
-          encodedCount: Object.keys(ctx.mapping).length,
+          encodedCount: Object.keys(ctx.state.mapping).length,
           input,
           output: encodedInput,
           durationMs: encodeDurationMs,
@@ -502,7 +388,7 @@ export function wrapBamlStreamingFunction<TInput, TPartial, TFinal>(
       if (done) {
         // Final value
         const countRef = { count: 0 };
-        const decodedValue = deepDecode(value, ctx.mapping, countRef);
+        const decodedValue = deepDecode(value, ctx.state.mapping, countRef);
         totalDecoded += countRef.count;
         const decodeDurationMs = debug ? performance.now() - startDecode : 0;
 
@@ -521,7 +407,7 @@ export function wrapBamlStreamingFunction<TInput, TPartial, TFinal>(
 
       // Partial value
       const countRef = { count: 0 };
-      const decodedValue = deepDecode(value, ctx.mapping, countRef);
+      const decodedValue = deepDecode(value, ctx.state.mapping, countRef);
       totalDecoded += countRef.count;
       yield decodedValue;
     }
@@ -549,14 +435,12 @@ export function encodeObject<T>(
   const ctx: EncodeContext = {
     config,
     fieldPaths,
-    idToPlaceholder: new Map(),
-    mapping: {},
-    nextIndex: 0,
+    state: createEncodeState(),
   };
 
   const encoded = deepEncode(obj, ctx);
 
-  return { encoded, mapping: ctx.mapping };
+  return { encoded, mapping: ctx.state.mapping };
 }
 
 /**
