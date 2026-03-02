@@ -66,10 +66,10 @@ promptIdentifiersMiddleware({
     }
   },
   onDecode: (result) => {
+    console.log("Decoded output:", result.output);
+    console.log("Mapping used:", result.mapping);
     if (result.debugData) {
       console.log(`Decoded ${result.debugData.decodedCount} placeholders in ${result.debugData.durationMs}ms`);
-      console.log("Input:", result.debugData.input);
-      console.log("Output:", result.debugData.output);
     }
   },
 });
@@ -150,12 +150,6 @@ const prompt = `
 // Check if ~000~ is online.
 // User ~001~ received it.
 ```
-
-## Peer Dependencies
-
-- `prompt-identifiers` >= 0.1.0
-- `ai` >= 6.0.0
-- `@ai-sdk/provider` >= 3.0.0
 
 ## License
 

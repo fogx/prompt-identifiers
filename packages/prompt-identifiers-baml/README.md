@@ -2,6 +2,8 @@
 
 BAML wrapper for automatic ID encoding/decoding in LLM function calls. Reduces token usage by up to 90% for UUIDs and ULIDs.
 
+> **Experimental:** This package has not been tested in production. The API works and passes tests, but real-world BAML integration may surface edge cases. Please [report issues](https://github.com/fogx/prompt-identifiers/issues) if you encounter any.
+
 ## Installation
 
 ```bash
@@ -194,11 +196,6 @@ const wrapped2 = wrapBamlFunction(fn, {
   encodeFields: ["user_id", "items[].id"],
 });
 ```
-
-## Peer Dependencies
-
-- `prompt-identifiers` >= 0.1.0
-- `@boundaryml/baml` >= 0.70.0 (optional)
 
 ## License
 
