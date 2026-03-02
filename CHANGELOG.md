@@ -15,6 +15,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.1.2] - 2026-03-02
+
+### prompt-identifiers (core)
+
+#### Added
+
+- Add `EncodeState` interface and `createEncodeState()` for shared placeholder assignment across multiple `encode()` calls
+- Add optional `state` parameter to `encode()` for cross-call consistency
+
+### prompt-identifiers-ai-sdk
+
+#### Fixed
+
+- Fix cross-message placeholder consistency — same UUID now always gets the same placeholder across all messages in a prompt
+- Fix streaming decoder for overlapping delimiters (e.g. `~ID000~` where CLOSE `~` is a prefix of OPEN `~ID`)
+- Fix `decodedText` accumulation to work outside debug mode
+
+#### Added
+
+- Encode tool-call args (`ToolCallPart.input`) in prompt messages — prevents LLM from seeing raw UUIDs alongside placeholders in agentic flows
+- Add `output` and `mapping` fields to `onDecode` callback (always available, not just in debug mode)
+- Add overlapping delimiter edge case tests for streaming decoder
+
+#### Changed
+
+- **Breaking:** `onDecode` callback now receives `{ output, mapping, debugData? }` instead of `{ debugData? }`
+- Refactor encoding internals to use core's `EncodeState`, remove `mergeMapping()` helper
+
+### prompt-identifiers-baml
+
+#### Changed
+
+- Refactor to use core's `encode()` + `EncodeState` instead of duplicated internal encoding logic (~100 lines removed)
+
+---
+
 ## [0.1.1] - 2026-02-09
 
 ### prompt-identifiers (core)

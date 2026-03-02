@@ -1,6 +1,6 @@
 {
   "name": "prompt-identifiers-ai-sdk",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Vercel AI SDK middleware for prompt-identifiers. Efficient ID compression for token optimization.",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
@@ -47,7 +47,7 @@
   "peerDependencies": {
     "@ai-sdk/provider": ">=3.0.0",
     "ai": ">=6.0.0",
-    "prompt-identifiers": ">=0.1.0"
+    "prompt-identifiers": ">=0.1.2"
   },
   "devDependencies": {
     "@ai-sdk/provider": "^3.0.0",

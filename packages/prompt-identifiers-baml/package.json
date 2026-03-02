@@ -1,6 +1,6 @@
 {
   "name": "prompt-identifiers-baml",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "BAML integration for prompt-identifiers. Efficient ID compression for token optimization.",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
@@ -44,7 +44,7 @@
     "url": "https://github.com/fogx/prompt-identifiers"
   },
   "peerDependencies": {
-    "prompt-identifiers": ">=0.1.0",
+    "prompt-identifiers": ">=0.1.2",
     "@boundaryml/baml": ">=0.70.0"
   },
   "peerDependenciesMeta": {
