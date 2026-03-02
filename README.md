@@ -53,7 +53,9 @@ Replace long IDs with short, reversible placeholders:
 | ------------------------------------------------------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
 | [`prompt-identifiers`](./packages/core)                             | Core JS library (zero dependencies) | [![npm](https://img.shields.io/npm/v/prompt-identifiers)](https://www.npmjs.com/package/prompt-identifiers)               |
 | [`prompt-identifiers-ai-sdk`](./packages/prompt-identifiers-ai-sdk) | Vercel AI SDK middleware            | [![npm](https://img.shields.io/npm/v/prompt-identifiers-ai-sdk)](https://www.npmjs.com/package/prompt-identifiers-ai-sdk) |
-| [`prompt-identifiers-baml`](./packages/prompt-identifiers-baml)     | BAML wrapper                        | [![npm](https://img.shields.io/npm/v/prompt-identifiers-baml)](https://www.npmjs.com/package/prompt-identifiers-baml)     |
+| [`prompt-identifiers-baml`](./packages/prompt-identifiers-baml)     | BAML wrapper (experimental)         | [![npm](https://img.shields.io/npm/v/prompt-identifiers-baml)](https://www.npmjs.com/package/prompt-identifiers-baml)     |
+
+> **Note:** `prompt-identifiers-baml` has not been tested in production. The API works and passes tests, but real-world BAML integration may surface edge cases. Please report issues if you encounter any.
 
 ---
 
@@ -270,6 +272,60 @@ Depending on the tech stack used, some patterns and delimiters may work better t
 - if using streaming outputs, delimiters can break up. Example with delimiter `[[id]]` -> chunk1: `text [` chunk 2: `[id]]`
 - some delimiters may be stripped or ignored by various systems. Example: delimiter: `<id>` -> will be stripped in URLs
 - Pick delimiters that are not frequently used in your text. e.g. don't use delimiter: `~id~` if you have natural occurences of `~number` in your inputs/outputs as they may cause collisions.
+- if you have prompts specifying ID output formats (e.g. `[Name](creator://id)`), the LLM may treat the template like a placeholder. Update your prompts accordingly
+
+### Troubleshooting
+
+#### Enable debug mode first
+
+When something goes wrong, start by enabling `debug: true` and inspecting the `onEncode`/`onDecode` callbacks. They show the full mapping, encoded/decoded text, counts, and timing:
+
+```typescript
+promptIdentifiersMiddleware({
+  config: { inputFormat: "UUID", outputFormat: "SafeNumeric" },
+  debug: true,
+  onEncode: ({ mapping, debugData }) => {
+    console.log("Mapping:", mapping);           // { "~000~": "123e4567-..." }
+    console.log("Encoded:", debugData?.output);  // the full prompt sent to the LLM
+  },
+  onDecode: ({ output, mapping, debugData }) => {
+    console.log("Decoded output:", output);
+    console.log("Duration:", debugData?.durationMs, "ms");
+  },
+});
+```
+
+#### LLM outputs fabricated/hallucinated IDs
+
+**Symptom:** The response contains UUIDs that don't exist in your data.
+
+**Cause:** The LLM sees raw IDs somewhere in the prompt alongside placeholders. This happens when part of the prompt is encoded but another part isn't — for example, tool-call arguments in agentic conversation history, or IDs injected after encoding.
+
+**Fix:** Check the `onEncode` mapping — if it has fewer entries than expected, some IDs aren't being encoded. Make sure all ID-bearing content passes through encoding. If using the AI SDK middleware (v0.1.2+), tool-call args are encoded automatically.
+
+#### Placeholders appear un-decoded in final output
+
+**Symptom:** The response contains `~005~` or similar placeholders instead of real IDs.
+
+**Cause:** The LLM invented a placeholder that doesn't exist in the mapping (e.g. `~005~` when only `~000~` through `~002~` were assigned). The LLM can "hallucinate" plausible-looking placeholders.
+
+**Fix:** Compare `onDecode`'s output against the mapping keys. If the LLM is inventing placeholders, add a system prompt instruction like _"Only reference the identifiers provided to you. Do not invent new ones."_
+
+#### Wrong ID restored after decoding
+
+**Symptom:** A decoded ID doesn't match what was originally in that position.
+
+**Cause:** Partial-match collisions — a short placeholder is a substring of a longer one (e.g. `00` inside `001`). The library handles this automatically (decode sorts by length), but custom formatter functions that produce variable-width placeholders without delimiters can still collide.
+
+**Fix:** Use `SafeNumeric` (tilde-wrapped) or a delimited template like `[[{i:zeroFilled}]]` to prevent substring matches.
+
+#### Streaming output drops or garbles text
+
+**Symptom:** Streamed responses have missing or corrupted text around IDs.
+
+**Cause:** Placeholders split across stream chunks. The AI SDK middleware handles this with an internal streaming decoder, but if you're using core `encode`/`decode` manually with streaming, you need to buffer across chunks yourself.
+
+**Fix:** Use the AI SDK middleware or BAML wrapper for automatic stream handling. If using core directly with streaming, buffer text until you can confirm a complete placeholder before decoding.
 
 ---
 
