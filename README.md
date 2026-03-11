@@ -18,7 +18,7 @@ LLMs tokenize text inefficiently when dealing with long identifiers:
 ```
 
 **Single UUID:** 36 characters → **~18 tokens** ([GPT-5](https://platform.openai.com/tokenizer))\
-**Full prompt above:** ~50 tokens\
+**Full prompt above:** ~50 tokens
 
 UUIDs are 36 characters each but provide no semantic value to the LLM - they're just opaque identifiers.
 
@@ -43,7 +43,7 @@ Replace long IDs with short, reversible placeholders:
 - ✅ **Token-optimized** - Smart triplet expansion aligns with LLM tokenizers
 - ✅ **Zero dependencies** - Pure TypeScript, no runtime dependencies
 - ✅ **Flexible formats** - Numeric, base62, UUID-shaped, or custom placeholders
-- ✅ **Side-effect-free** - No global state, no persistence, fully local
+- ✅ **Stateless by default** - Optional shared state for multi-call consistency
 
 ---
 
@@ -285,8 +285,8 @@ promptIdentifiersMiddleware({
   config: { inputFormat: "UUID", outputFormat: "SafeNumeric" },
   debug: true,
   onEncode: ({ mapping, debugData }) => {
-    console.log("Mapping:", mapping);           // { "~000~": "123e4567-..." }
-    console.log("Encoded:", debugData?.output);  // the full prompt sent to the LLM
+    console.log("Mapping:", mapping); // { "~000~": "123e4567-..." }
+    console.log("Encoded:", debugData?.output); // the full prompt sent to the LLM
   },
   onDecode: ({ output, mapping, debugData }) => {
     console.log("Decoded output:", output);
@@ -299,9 +299,9 @@ promptIdentifiersMiddleware({
 
 **Symptom:** The response contains UUIDs that don't exist in your data.
 
-**Cause:** The LLM sees raw IDs somewhere in the prompt alongside placeholders. This happens when part of the prompt is encoded but another part isn't — for example, tool-call arguments in agentic conversation history, or IDs injected after encoding.
+**Cause:** The LLM sees raw IDs somewhere in the prompt alongside placeholders. This happens when part of the prompt is encoded but another part isn't, e.g. IDs injected after encoding or content that bypasses the middleware.
 
-**Fix:** Check the `onEncode` mapping — if it has fewer entries than expected, some IDs aren't being encoded. Make sure all ID-bearing content passes through encoding. If using the AI SDK middleware (v0.1.2+), tool-call args are encoded automatically.
+**Fix:** Check the `onEncode` mapping. If it has fewer entries than expected, some IDs aren't being encoded. Make sure all content passes through encoding.
 
 #### Placeholders appear un-decoded in final output
 
@@ -315,7 +315,7 @@ promptIdentifiersMiddleware({
 
 **Symptom:** A decoded ID doesn't match what was originally in that position.
 
-**Cause:** Partial-match collisions — a short placeholder is a substring of a longer one (e.g. `00` inside `001`). The library handles this automatically (decode sorts by length), but custom formatter functions that produce variable-width placeholders without delimiters can still collide.
+**Cause:** Partial-match collisions. A short placeholder is a substring of a longer one (e.g. `00` inside `001`). The library handles this automatically (decode sorts by length), but custom formatter functions that produce variable-width placeholders without delimiters can still collide.
 
 **Fix:** Use `SafeNumeric` (tilde-wrapped) or a delimited template like `[[{i:zeroFilled}]]` to prevent substring matches.
 
@@ -361,9 +361,11 @@ encode(text, {
 
 ### Core Functions
 
-#### `encode(text: string, config: EncodeConfig): EncodeResult`
+#### `encode(text: string, config: EncodeConfig, state?: EncodeState): EncodeResult`
 
 Replace IDs in prompt with placeholders.
+
+Pass an optional `state` object (from `createEncodeState()`) to share placeholder assignments across multiple calls. The same ID always gets the same placeholder, and the counter continues from previous calls.
 
 **Returns:**
 
@@ -377,6 +379,25 @@ const { encoded, mapping } = encode("User abc-123 logged in", {
   inputFormat: "UUID",
   outputFormat: "SafeNumeric",
 });
+```
+
+**Shared state example:**
+
+```typescript
+import { encode, createEncodeState } from "prompt-identifiers";
+
+const state = createEncodeState();
+const config = { inputFormat: "UUID", outputFormat: "SafeNumeric" } as const;
+
+const r1 = encode("User 123e4567-e89b-42d3-a456-426655440000 logged in", config, state);
+// → "User ~000~ logged in"
+
+const r2 = encode(
+  "User 987fcdeb-51a2-43f7-8d9c-0123456789ab and 123e4567-e89b-42d3-a456-426655440000",
+  config,
+  state
+);
+// → "User ~001~ and ~000~"   (123e4567 stays ~000~ from r1, 987fcdeb gets ~001~)
 ```
 
 ---
@@ -422,6 +443,19 @@ interface EncodeConfig {
 - `'Passthrough'` - No replacement (for testing)
 - `{ template: string }` - Template with `{i}` placeholder
 - `(index: number) => string` - Custom formatter function
+
+#### `EncodeState`
+
+Shared state for consistent placeholder assignment across multiple `encode()` calls. Create with `createEncodeState()`.
+
+```typescript
+interface EncodeState {
+  idToPlaceholder: Map<string, string>;
+  mapping: Record<string, string>;
+}
+
+function createEncodeState(): EncodeState;
+```
 
 #### `EncodeResult`
 
