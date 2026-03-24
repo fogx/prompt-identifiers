@@ -54,20 +54,29 @@ promptIdentifiersMiddleware({
     outputFormat: "SafeNumeric", // or 'Numeric', 'IdToken', { template: '...' }
   },
 
+  // Inject a format-preservation instruction into the system message (default: true)
+  // Prevents LLMs from stripping delimiter characters in tool call arguments
+  injectInstruction: true,
+
+  // Custom instruction text ({format} is replaced with example token like ~000~)
+  customInstruction: "IDs use {format} notation. Preserve them exactly.",
+
   // Optional: enable debug mode for detailed diagnostics
   debug: true,
 
   // Optional: callbacks for logging/debugging
   onEncode: (result) => {
     console.log("Mapping:", result.mapping);
-    // debugData is only present when debug: true
     if (result.debugData) {
       console.log(`Encoded ${result.debugData.encodedCount} IDs in ${result.debugData.durationMs}ms`);
     }
   },
   onDecode: (result) => {
     console.log("Decoded output:", result.output);
-    console.log("Mapping used:", result.mapping);
+    // Warnings detect anomalies like stripped delimiters
+    if (result.warnings?.length) {
+      console.warn("Decode warnings:", result.warnings);
+    }
     if (result.debugData) {
       console.log(`Decoded ${result.debugData.decodedCount} placeholders in ${result.debugData.durationMs}ms`);
     }

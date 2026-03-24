@@ -6,12 +6,20 @@
 
 import type {
   LanguageModelV3GenerateResult,
+  LanguageModelV3Message,
   LanguageModelV3Middleware,
   LanguageModelV3Prompt,
   LanguageModelV3StreamPart,
   LanguageModelV3StreamResult,
 } from "@ai-sdk/provider";
-import { createEncodeState, decode, encode, EncodeConfig, EncodeState } from "prompt-identifiers";
+import {
+  createEncodeState,
+  createFormatter,
+  decode,
+  encode,
+  EncodeConfig,
+  EncodeState,
+} from "prompt-identifiers";
 
 // =============================================================================
 // Types
@@ -53,6 +61,26 @@ export interface PromptIdentifiersMiddlewareOptions {
   debug?: boolean;
 
   /**
+   * Inject a short instruction into the system message telling the model
+   * to preserve encoded identifiers exactly as-is.
+   *
+   * - `true` (default): appends the default instruction
+   * - `false`: no injection
+   *
+   * Only injected when at least one ID was encoded.
+   */
+  injectInstruction?: boolean;
+
+  /**
+   * Custom instruction text to inject instead of the default.
+   * Use `{format}` as a placeholder for an example token in the
+   * active output format (e.g. `~000~` for SafeNumeric).
+   *
+   * Only used when `injectInstruction` is true.
+   */
+  customInstruction?: string;
+
+  /**
    * Optional callback fired after encoding IDs in the prompt.
    * Receives the placeholder→ID mapping. When debug is true,
    * also receives debugData with input, output, counts, and timing.
@@ -61,14 +89,141 @@ export interface PromptIdentifiersMiddlewareOptions {
 
   /**
    * Optional callback fired after decoding IDs in the response.
-   * Always receives the decoded output text and the placeholder→ID mapping.
+   * Always receives the decoded output text, the placeholder->ID mapping,
+   * and any warnings about decode anomalies (e.g., stripped delimiters).
    * When debug is true, also receives debugData with input, output, counts, and timing.
    */
   onDecode?: (result: {
     output: string;
     mapping: Record<string, string>;
+    warnings?: DecodeWarning[];
     debugData?: DecodeDebugData;
   }) => void;
+}
+
+/** Warning about a decode anomaly */
+export interface DecodeWarning {
+  type: "surviving_placeholder" | "stripped_delimiter";
+  /** The problematic value found in the output */
+  value: string;
+  /** Where it was found */
+  source: "text" | "tool_call";
+}
+
+// =============================================================================
+// Decode Warnings
+// =============================================================================
+
+/**
+ * Detect decode anomalies in the decoded output.
+ *
+ * 1. Surviving placeholders: encoded placeholders (e.g., ~000~) that remain
+ *    in the decoded text, meaning decode missed them.
+ * 2. Stripped delimiters: bare placeholder indices (e.g., 000) that appear
+ *    as standalone values, suggesting the LLM stripped the delimiter characters.
+ */
+function detectDecodeWarnings(
+  decodedText: string,
+  decodedToolCallInputs: string[],
+  mapping: Record<string, string>
+): DecodeWarning[] {
+  const placeholders = Object.keys(mapping);
+  if (placeholders.length === 0) return [];
+
+  const warnings: DecodeWarning[] = [];
+
+  // Extract bare indices from placeholders (e.g., "~000~" -> "000")
+  const bareIndices = new Set<string>();
+  for (const placeholder of placeholders) {
+    const match = placeholder.match(/^[^\d]*(\d+)[^\d]*$/);
+    if (match) bareIndices.add(match[1]);
+  }
+
+  function check(text: string, source: "text" | "tool_call") {
+    // Check for surviving placeholders
+    for (const placeholder of placeholders) {
+      if (text.includes(placeholder)) {
+        warnings.push({ type: "surviving_placeholder", value: placeholder, source });
+      }
+    }
+
+    // Check for stripped delimiters: bare indices appearing as standalone JSON string values
+    // Match "000" or similar as a JSON value (surrounded by quotes)
+    for (const bare of bareIndices) {
+      const pattern = new RegExp(`"${bare}"`, "g");
+      if (pattern.test(text)) {
+        warnings.push({ type: "stripped_delimiter", value: bare, source });
+      }
+    }
+  }
+
+  if (decodedText) check(decodedText, "text");
+  for (const input of decodedToolCallInputs) {
+    check(input, "tool_call");
+  }
+
+  return warnings;
+}
+
+// =============================================================================
+// Instruction Injection
+// =============================================================================
+
+const DEFAULT_INSTRUCTION =
+  "UUIDs have been replaced with short identifiers like {format}. Always pass these identifiers verbatim";
+
+/**
+ * Generate an example placeholder token for the active output format.
+ * e.g. SafeNumeric -> "~000~", Numeric -> "000", IdToken -> "0"
+ */
+function getExampleToken(config: EncodeConfig): string {
+  if (config.outputFormat === "Passthrough") return "";
+  return createFormatter(config.outputFormat)(0);
+}
+
+/**
+ * Build the instruction string, replacing {format} with the example token.
+ */
+function buildInstruction(config: EncodeConfig, customInstruction?: string): string {
+  const token = getExampleToken(config);
+  const template = customInstruction ?? DEFAULT_INSTRUCTION;
+  return template.replace("{format}", token);
+}
+
+/**
+ * Append instruction text to the last system message in the prompt.
+ * If no system message exists, prepends one.
+ */
+function injectInstructionIntoPrompt(
+  prompt: LanguageModelV3Prompt,
+  instruction: string
+): LanguageModelV3Prompt {
+  // Find last system message
+  let lastSystemIndex = -1;
+  for (let i = prompt.length - 1; i >= 0; i--) {
+    if (prompt[i].role === "system") {
+      lastSystemIndex = i;
+      break;
+    }
+  }
+
+  if (lastSystemIndex >= 0) {
+    const msg = prompt[lastSystemIndex];
+    // System messages have string content
+    const content = typeof msg.content === "string" ? msg.content : "";
+    const updatedMsg: LanguageModelV3Message = {
+      role: "system",
+      content: content + "\n\n" + instruction,
+      ...(msg.providerOptions && { providerOptions: msg.providerOptions }),
+    };
+    const updated = [...prompt];
+    updated[lastSystemIndex] = updatedMsg;
+    return updated;
+  }
+
+  // No system message - prepend one
+  const systemMsg: LanguageModelV3Message = { role: "system", content: instruction };
+  return [systemMsg, ...prompt];
 }
 
 // =============================================================================
@@ -440,14 +595,21 @@ export function promptIdentifiersMiddleware(
   options: PromptIdentifiersMiddlewareOptions
 ): LanguageModelV3Middleware {
   const { config, onEncode, onDecode, debug } = options;
+  const shouldInjectInstruction = options.injectInstruction ?? true;
 
   return {
     specificationVersion: "v3",
 
     transformParams: async ({ params }) => {
       const startTime = debug ? performance.now() : 0;
-      const { encodedPrompt, mapping } = encodePromptMessages(params.prompt, config);
+      let { encodedPrompt, mapping } = encodePromptMessages(params.prompt, config);
       const durationMs = debug ? performance.now() - startTime : 0;
+
+      // Inject instruction into the system message when IDs were encoded
+      if (shouldInjectInstruction && Object.keys(mapping).length > 0) {
+        const instruction = buildInstruction(config, options.customInstruction);
+        encodedPrompt = injectInstructionIntoPrompt(encodedPrompt, instruction);
+      }
 
       onEncode?.({
         mapping,
@@ -485,6 +647,7 @@ export function promptIdentifiersMiddleware(
 
       // Decode text and tool call inputs in content array
       let totalCount = 0;
+      const decodedToolCallInputs: string[] = [];
       const decodedContent = result.content.map((item) => {
         if (item.type === "text") {
           const { decoded, count } = decodeText(item.text, mapping);
@@ -497,16 +660,20 @@ export function promptIdentifiersMiddleware(
         }
         // Decode tool call inputs (input is stringified JSON)
         if (item.type === "tool-call" && "input" in item && typeof item.input === "string") {
-          return { ...item, input: decodeToolInputString(item.input, mapping) };
+          const decodedInput = decodeToolInputString(item.input, mapping);
+          decodedToolCallInputs.push(decodedInput);
+          return { ...item, input: decodedInput };
         }
         return item;
       });
 
       const durationMs = debug ? performance.now() - startTime : 0;
+      const warnings = detectDecodeWarnings(decodedText, decodedToolCallInputs, mapping);
 
       onDecode?.({
         output: decodedText,
         mapping,
+        ...(warnings.length > 0 && { warnings }),
         ...(debug && {
           debugData: {
             decodedCount: totalCount,
@@ -530,6 +697,7 @@ export function promptIdentifiersMiddleware(
       const textDecoder = createStreamingDecoder(mapping);
 
       let accDecodedText = "";
+      const accDecodedToolCallInputs: string[] = [];
 
       // Debug-only accumulation state
       let streamStartTime = 0;
@@ -561,9 +729,11 @@ export function promptIdentifiersMiddleware(
 
           // Decode complete tool calls (input is stringified JSON)
           if (chunk.type === "tool-call" && "input" in chunk && typeof chunk.input === "string") {
+            const decodedInput = decodeToolInputString(chunk.input, mapping);
+            accDecodedToolCallInputs.push(decodedInput);
             controller.enqueue({
               ...chunk,
-              input: decodeToolInputString(chunk.input, mapping),
+              input: decodedInput,
             });
             return;
           }
@@ -590,10 +760,16 @@ export function promptIdentifiersMiddleware(
           }
 
           const durationMs = debug && streamStarted ? performance.now() - streamStartTime : 0;
+          const warnings = detectDecodeWarnings(
+            accDecodedText,
+            accDecodedToolCallInputs,
+            mapping
+          );
 
           onDecode?.({
             output: accDecodedText,
             mapping,
+            ...(warnings.length > 0 && { warnings }),
             ...(debug && {
               debugData: {
                 decodedCount: Object.keys(mapping).length,

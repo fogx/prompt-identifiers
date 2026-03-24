@@ -200,7 +200,10 @@ type RequiredMiddleware = Required<
  * Throws at runtime if any hook is missing.
  */
 export function createMiddleware(options: PromptIdentifiersMiddlewareOptions): RequiredMiddleware {
-  const middleware = promptIdentifiersMiddleware(options);
+  const middleware = promptIdentifiersMiddleware({
+    injectInstruction: false,
+    ...options,
+  });
   if (!middleware.transformParams || !middleware.wrapGenerate || !middleware.wrapStream) {
     throw new Error("Middleware hooks are required but not defined");
   }

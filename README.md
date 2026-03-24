@@ -174,7 +174,6 @@ const model = wrapLanguageModel({
   model: openai("gpt-4o"),
   middleware: promptIdentifiersMiddleware({
     config: { inputFormat: "UUID", outputFormat: "SafeNumeric" },
-    onEncode: (result) => console.log(`Encoded ${result.encodedCount} IDs`),
   }),
 });
 
@@ -182,6 +181,33 @@ const model = wrapLanguageModel({
 const result = await generateText({
   model,
   prompt: "Summarize activity for user 123e4567-e89b-42d3-a456-426655440000",
+});
+```
+
+### Prompt Injection
+
+By default, the middleware appends a short instruction to the system message telling the model to preserve encoded identifiers:
+
+> "All UUIDs have been replaced with short identifiers in the format ~000~. Always pass these identifiers exactly as-is."
+
+This prevents LLMs from stripping delimiter characters (e.g., outputting `000` instead of `~000~` in tool call arguments). The instruction is only injected when at least one ID was encoded.
+
+```typescript
+// Default: instruction is injected (recommended)
+promptIdentifiersMiddleware({
+  config: { inputFormat: "UUID", outputFormat: "SafeNumeric" },
+});
+
+// Custom instruction ({format} is replaced with the example token)
+promptIdentifiersMiddleware({
+  config: { inputFormat: "UUID", outputFormat: "SafeNumeric" },
+  customInstruction: "IDs use {format} notation. Preserve them exactly.",
+});
+
+// Disable injection
+promptIdentifiersMiddleware({
+  config: { inputFormat: "UUID", outputFormat: "SafeNumeric" },
+  injectInstruction: false,
 });
 ```
 
@@ -294,6 +320,14 @@ promptIdentifiersMiddleware({
   },
 });
 ```
+
+#### LLM strips delimiters in tool call arguments
+
+**Symptom:** Tool calls fail because the model outputs `000` instead of `~000~`, causing the decode step to miss the placeholder.
+
+**Cause:** Some LLMs treat delimiter characters (like `~`) as decorative formatting and strip them when generating structured JSON for tool calls.
+
+**Fix:** Enable `injectInstruction` (on by default) to append a format-preservation instruction to the system message. This tells the model to preserve encoded identifiers exactly as-is.
 
 #### LLM outputs fabricated/hallucinated IDs
 

@@ -9,7 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### prompt-identifiers (core)
 
+#### Changed
+
+- Export `createFormatter` for use by integrations
+
 ### prompt-identifiers-ai-sdk
+
+#### Added
+
+- Add `injectInstruction` option (default `true`) to append a format-preservation instruction to the system message, preventing LLMs from stripping delimiter characters in tool call arguments
+- Add `customInstruction` option with `{format}` placeholder for custom instruction text
+- Add `DecodeWarning` type and `warnings` array in `onDecode` callback to detect stripped delimiters and surviving placeholders in both text and tool call outputs
 
 ### prompt-identifiers-baml
 

@@ -1064,4 +1064,284 @@ describe("prompt-identifiers-ai-sdk", () => {
       expect(onDecode.mock.calls[0][0].debugData).toBeUndefined();
     });
   });
+
+  describe("injectInstruction", () => {
+    function getSystemContent(prompt: LanguageModelV3Message[]): string {
+      const msg = prompt.find((m) => m.role === "system");
+      return msg?.role === "system" ? (msg.content as string) : "";
+    }
+
+    test("appends default instruction to system message when IDs are encoded", async () => {
+      const middleware = createMiddleware({
+        config: defaultConfig,
+        injectInstruction: true,
+      });
+
+      const params = createParams([
+        systemMessage("System prompt."),
+        userMessage("Find user 123e4567-e89b-42d3-a456-426655440000"),
+      ]);
+
+      const result = await middleware.transformParams({
+        params,
+        type: "generate",
+        model: mockModel,
+      });
+
+      const content = getSystemContent(result.prompt);
+      expect(content).toContain("~000~");
+    });
+
+    test("does not inject when no IDs are encoded", async () => {
+      const middleware = createMiddleware({
+        config: defaultConfig,
+        injectInstruction: true,
+      });
+
+      const params = createParams([
+        systemMessage("You are a helpful assistant."),
+        userMessage("Hello there"),
+      ]);
+
+      const result = await middleware.transformParams({
+        params,
+        type: "generate",
+        model: mockModel,
+      });
+
+      expect(getSystemContent(result.prompt)).toBe("You are a helpful assistant.");
+    });
+
+    test("creates system message when none exists", async () => {
+      const middleware = createMiddleware({
+        config: defaultConfig,
+        injectInstruction: true,
+      });
+
+      const params = createParams([
+        userMessage("Find user 123e4567-e89b-42d3-a456-426655440000"),
+      ]);
+
+      const result = await middleware.transformParams({
+        params,
+        type: "generate",
+        model: mockModel,
+      });
+
+      expect(result.prompt[0].role).toBe("system");
+      expect(getSystemContent(result.prompt)).toContain("~000~");
+    });
+
+    test("supports custom instruction with {format} placeholder", async () => {
+      const middleware = createMiddleware({
+        config: defaultConfig,
+        injectInstruction: true,
+        customInstruction: "IDs look like {format}. Keep them intact.",
+      });
+
+      const params = createParams([
+        systemMessage("You are a helpful assistant."),
+        userMessage("Find user 123e4567-e89b-42d3-a456-426655440000"),
+      ]);
+
+      const result = await middleware.transformParams({
+        params,
+        type: "generate",
+        model: mockModel,
+      });
+
+      const content = getSystemContent(result.prompt);
+      expect(content).toContain("IDs look like ~000~. Keep them intact.");
+    });
+
+    test("uses correct token format for Numeric output", async () => {
+      const middleware = createMiddleware({
+        config: { inputFormat: "UUID", outputFormat: "Numeric" },
+        injectInstruction: true,
+      });
+
+      const params = createParams([
+        systemMessage("System prompt."),
+        userMessage("Find user 123e4567-e89b-42d3-a456-426655440000"),
+      ]);
+
+      const result = await middleware.transformParams({
+        params,
+        type: "generate",
+        model: mockModel,
+      });
+
+      const content = getSystemContent(result.prompt);
+      expect(content).toContain("000");
+      expect(content).not.toContain("~");
+    });
+
+    test("does not inject when injectInstruction is false", async () => {
+      const middleware = createMiddleware({
+        config: defaultConfig,
+        injectInstruction: false,
+      });
+
+      const params = createParams([
+        systemMessage("You are a helpful assistant."),
+        userMessage("Find user 123e4567-e89b-42d3-a456-426655440000"),
+      ]);
+
+      const result = await middleware.transformParams({
+        params,
+        type: "generate",
+        model: mockModel,
+      });
+
+      expect(getSystemContent(result.prompt)).toBe("You are a helpful assistant.");
+    });
+
+    test("preserves providerOptions on system message", async () => {
+      const middleware = createMiddleware({
+        config: defaultConfig,
+        injectInstruction: true,
+      });
+
+      const params = createParams([
+        {
+          role: "system",
+          content: "You are helpful.",
+          providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } },
+        } as LanguageModelV3Message,
+        userMessage("Find user 123e4567-e89b-42d3-a456-426655440000"),
+      ]);
+
+      const result = await middleware.transformParams({
+        params,
+        type: "generate",
+        model: mockModel,
+      });
+
+      const sysMsg = result.prompt.find((m) => m.role === "system");
+      expect(sysMsg?.providerOptions?.anthropic).toEqual({
+        cacheControl: { type: "ephemeral" },
+      });
+    });
+  });
+
+  describe("decode warnings", () => {
+    test("detects stripped delimiters in tool call arguments via wrapGenerate", async () => {
+      const onDecode = jest.fn();
+      const middleware = createMiddleware({ config: defaultConfig, onDecode });
+
+      const uuid = "123e4567-e89b-42d3-a456-426655440000";
+      const params = createParams([userMessage(`Find campaign ${uuid}`)]);
+
+      const transformedParams = await middleware.transformParams({
+        params,
+        type: "generate",
+        model: mockModel,
+      });
+
+      // Simulate LLM stripping delimiters: outputs "000" instead of "~000~"
+      const mockResult: LanguageModelV3GenerateResult = {
+        content: [
+          { type: "text", text: "Looking up campaign." },
+          {
+            type: "tool-call",
+            toolCallId: "call_1",
+            toolName: "get_campaigns",
+            input: '{"campaignId":"000"}',
+          },
+        ],
+        finishReason: mockFinishReason(),
+        usage: mockUsage(),
+        warnings: [],
+      };
+
+      await middleware.wrapGenerate({
+        doGenerate: jest.fn().mockResolvedValue(mockResult),
+        doStream: jest.fn(),
+        params: transformedParams,
+        model: mockModel,
+      });
+
+      const result = onDecode.mock.calls[0][0];
+      expect(result.warnings).toBeDefined();
+      expect(result.warnings).toContainEqual({
+        type: "stripped_delimiter",
+        value: "000",
+        source: "tool_call",
+      });
+    });
+
+    test("detects surviving placeholders in text via wrapGenerate", async () => {
+      const onDecode = jest.fn();
+      const middleware = createMiddleware({ config: defaultConfig, onDecode });
+
+      const uuid = "123e4567-e89b-42d3-a456-426655440000";
+      const params = createParams([userMessage(`Find user ${uuid}`)]);
+
+      const transformedParams = await middleware.transformParams({
+        params,
+        type: "generate",
+        model: mockModel,
+      });
+
+      // Simulate LLM inventing a placeholder that doesn't exist in mapping
+      // But we test the surviving case: ~000~ appears in the decoded text
+      // This happens if decode somehow misses it
+      const mockResult: LanguageModelV3GenerateResult = {
+        content: [{ type: "text", text: "Found user ~000~ in the database." }],
+        finishReason: mockFinishReason(),
+        usage: mockUsage(),
+        warnings: [],
+      };
+
+      await middleware.wrapGenerate({
+        doGenerate: jest.fn().mockResolvedValue(mockResult),
+        doStream: jest.fn(),
+        params: transformedParams,
+        model: mockModel,
+      });
+
+      // ~000~ should be decoded to UUID, so no surviving placeholder warning
+      const result = onDecode.mock.calls[0][0];
+      expect(result.warnings).toBeUndefined();
+    });
+
+    test("no warnings when decode succeeds", async () => {
+      const onDecode = jest.fn();
+      const middleware = createMiddleware({ config: defaultConfig, onDecode });
+
+      const uuid = "123e4567-e89b-42d3-a456-426655440000";
+      const params = createParams([userMessage(`Find user ${uuid}`)]);
+
+      const transformedParams = await middleware.transformParams({
+        params,
+        type: "generate",
+        model: mockModel,
+      });
+
+      const mockResult: LanguageModelV3GenerateResult = {
+        content: [
+          { type: "text", text: "Found user ~000~." },
+          {
+            type: "tool-call",
+            toolCallId: "call_1",
+            toolName: "get_user",
+            input: '{"userId":"~000~"}',
+          },
+        ],
+        finishReason: mockFinishReason(),
+        usage: mockUsage(),
+        warnings: [],
+      };
+
+      await middleware.wrapGenerate({
+        doGenerate: jest.fn().mockResolvedValue(mockResult),
+        doStream: jest.fn(),
+        params: transformedParams,
+        model: mockModel,
+      });
+
+      const result = onDecode.mock.calls[0][0];
+      expect(result.warnings).toBeUndefined();
+    });
+  });
 });

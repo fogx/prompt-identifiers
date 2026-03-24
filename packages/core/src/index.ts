@@ -219,7 +219,7 @@ function parseTemplate(template: string): FormatterFn {
 /**
  * Create a formatter function from the output format.
  */
-function createFormatter(format: OutputFormat): FormatterFn {
+export function createFormatter(format: OutputFormat): FormatterFn {
   // Custom function
   if (typeof format === "function") return format;
 

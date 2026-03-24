@@ -47,7 +47,7 @@ describe("AI SDK Integration", () => {
         },
       });
 
-      const middleware = promptIdentifiersMiddleware({ config: defaultConfig });
+      const middleware = promptIdentifiersMiddleware({ config: defaultConfig, injectInstruction: false });
       const wrappedModel = wrapLanguageModel({ model: mockModel, middleware });
 
       const result = await wrappedModel.doGenerate({
@@ -78,7 +78,7 @@ describe("AI SDK Integration", () => {
         }),
       });
 
-      const middleware = promptIdentifiersMiddleware({ config: defaultConfig });
+      const middleware = promptIdentifiersMiddleware({ config: defaultConfig, injectInstruction: false });
       const wrappedModel = wrapLanguageModel({ model: mockModel, middleware });
 
       const result = await wrappedModel.doGenerate({
@@ -105,7 +105,7 @@ describe("AI SDK Integration", () => {
         },
       });
 
-      const middleware = promptIdentifiersMiddleware({ config: defaultConfig });
+      const middleware = promptIdentifiersMiddleware({ config: defaultConfig, injectInstruction: false });
       const wrappedModel = wrapLanguageModel({ model: mockModel, middleware });
 
       await wrappedModel.doGenerate({
@@ -138,7 +138,7 @@ describe("AI SDK Integration", () => {
         },
       });
 
-      const middleware = promptIdentifiersMiddleware({ config: defaultConfig });
+      const middleware = promptIdentifiersMiddleware({ config: defaultConfig, injectInstruction: false });
       const wrappedModel = wrapLanguageModel({ model: mockModel, middleware });
 
       await wrappedModel.doGenerate({
@@ -170,7 +170,7 @@ describe("AI SDK Integration", () => {
         },
       });
 
-      const middleware = promptIdentifiersMiddleware({ config: defaultConfig });
+      const middleware = promptIdentifiersMiddleware({ config: defaultConfig, injectInstruction: false });
       const wrappedModel = wrapLanguageModel({ model: mockModel, middleware });
 
       const result = await wrappedModel.doGenerate({
@@ -205,7 +205,7 @@ describe("AI SDK Integration", () => {
         ],
       });
 
-      const middleware = promptIdentifiersMiddleware({ config: defaultConfig });
+      const middleware = promptIdentifiersMiddleware({ config: defaultConfig, injectInstruction: false });
       const wrappedModel = wrapLanguageModel({ model: mockModel, middleware });
 
       const { stream } = await wrappedModel.doStream({
@@ -236,7 +236,7 @@ describe("AI SDK Integration", () => {
         ],
       });
 
-      const middleware = promptIdentifiersMiddleware({ config: defaultConfig });
+      const middleware = promptIdentifiersMiddleware({ config: defaultConfig, injectInstruction: false });
       const wrappedModel = wrapLanguageModel({ model: mockModel, middleware });
 
       const { stream } = await wrappedModel.doStream({
@@ -272,7 +272,7 @@ describe("AI SDK Integration", () => {
         ],
       });
 
-      const middleware = promptIdentifiersMiddleware({ config: defaultConfig });
+      const middleware = promptIdentifiersMiddleware({ config: defaultConfig, injectInstruction: false });
       const wrappedModel = wrapLanguageModel({ model: mockModel, middleware });
 
       const { stream } = await wrappedModel.doStream({
@@ -297,7 +297,7 @@ describe("AI SDK Integration", () => {
         ],
       });
 
-      const middleware = promptIdentifiersMiddleware({ config: defaultConfig });
+      const middleware = promptIdentifiersMiddleware({ config: defaultConfig, injectInstruction: false });
       const wrappedModel = wrapLanguageModel({ model: mockModel, middleware });
 
       const { stream } = await wrappedModel.doStream({
@@ -321,7 +321,7 @@ describe("AI SDK Integration", () => {
         ],
       });
 
-      const middleware = promptIdentifiersMiddleware({ config: defaultConfig });
+      const middleware = promptIdentifiersMiddleware({ config: defaultConfig, injectInstruction: false });
       const wrappedModel = wrapLanguageModel({ model: mockModel, middleware });
 
       const { stream } = await wrappedModel.doStream({
@@ -345,7 +345,7 @@ describe("AI SDK Integration", () => {
         }),
       });
 
-      const middleware = promptIdentifiersMiddleware({ config: defaultConfig });
+      const middleware = promptIdentifiersMiddleware({ config: defaultConfig, injectInstruction: false });
       const wrappedModel = wrapLanguageModel({ model: mockModel, middleware });
 
       const result = await wrappedModel.doGenerate({
@@ -370,7 +370,7 @@ describe("AI SDK Integration", () => {
         },
       });
 
-      const middleware = promptIdentifiersMiddleware({ config: defaultConfig });
+      const middleware = promptIdentifiersMiddleware({ config: defaultConfig, injectInstruction: false });
       const wrappedModel = wrapLanguageModel({ model: mockModel, middleware });
 
       await wrappedModel.doGenerate({
@@ -410,7 +410,7 @@ describe("AI SDK Integration", () => {
         },
       });
 
-      const middleware = promptIdentifiersMiddleware({ config: defaultConfig });
+      const middleware = promptIdentifiersMiddleware({ config: defaultConfig, injectInstruction: false });
       const wrappedModel = wrapLanguageModel({ model: mockModel, middleware });
 
       await wrappedModel.doGenerate({
@@ -436,7 +436,7 @@ describe("AI SDK Integration", () => {
         }),
       });
 
-      const middleware = promptIdentifiersMiddleware({ config: defaultConfig });
+      const middleware = promptIdentifiersMiddleware({ config: defaultConfig, injectInstruction: false });
       const wrappedModel = wrapLanguageModel({ model: mockModel, middleware });
 
       // Should not throw
@@ -482,7 +482,7 @@ describe("AI SDK Integration", () => {
         }),
       });
 
-      const middleware = promptIdentifiersMiddleware({ config: defaultConfig });
+      const middleware = promptIdentifiersMiddleware({ config: defaultConfig, injectInstruction: false });
       const wrappedModel = wrapLanguageModel({ model: mockModel, middleware });
 
       const result = await wrappedModel.doGenerate({
