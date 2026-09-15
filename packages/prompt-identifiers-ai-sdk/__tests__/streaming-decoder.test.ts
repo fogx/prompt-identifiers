@@ -5,7 +5,8 @@
  * symmetric delimiter handling (the primary bug fix).
  */
 
-import type { LanguageModelV3StreamPart } from "@ai-sdk/provider";
+import { describe, test, expect, vi } from "vitest";
+import type { LanguageModelV4StreamPart } from "@ai-sdk/provider";
 import { encode, type EncodeConfig } from "prompt-identifiers";
 import { promptIdentifiersMiddleware } from "../src/index";
 import {
@@ -127,7 +128,7 @@ async function streamAndCollect(
     model: mockModel,
   });
 
-  const streamParts: LanguageModelV3StreamPart[] = chunks.map((delta, i) => ({
+  const streamParts: LanguageModelV4StreamPart[] = chunks.map((delta, i) => ({
     type: "text-delta",
     id: String(i),
     delta,
@@ -136,8 +137,8 @@ async function streamAndCollect(
   const mockStreamResult = { stream: createMockStream(streamParts) };
 
   const result = await middleware.wrapStream({
-    doStream: jest.fn().mockResolvedValue(mockStreamResult),
-    doGenerate: jest.fn(),
+    doStream: vi.fn().mockResolvedValue(mockStreamResult),
+    doGenerate: vi.fn(),
     params: transformedParams,
     model: mockModel,
   });
@@ -470,7 +471,7 @@ describe("Streaming decoder: wrapLanguageModel integration", () => {
       .filter(
         (
           p
-        ): p is LanguageModelV3StreamPart & {
+        ): p is LanguageModelV4StreamPart & {
           type: "text-delta";
           delta: string;
         } => p.type === "text-delta"
@@ -507,7 +508,7 @@ describe("Streaming decoder: wrapLanguageModel integration", () => {
       .filter(
         (
           p
-        ): p is LanguageModelV3StreamPart & {
+        ): p is LanguageModelV4StreamPart & {
           type: "text-delta";
           delta: string;
         } => p.type === "text-delta"

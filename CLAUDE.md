@@ -34,7 +34,7 @@ Three-layer design where core is dependency-free and both integrations depend on
 
 ```
 prompt-identifiers (core)          ← Zero dependencies, pure encode/decode
-├── prompt-identifiers-ai-sdk      ← Vercel AI SDK v3 middleware
+├── prompt-identifiers-ai-sdk      ← Vercel AI SDK v7 middleware (LanguageModelV4)
 └── prompt-identifiers-baml        ← BAML function wrapper
 ```
 
@@ -50,7 +50,7 @@ Two main functions: `encode(text, config)` and `decode(text, mapping)`.
 
 ### AI SDK Middleware (`packages/prompt-identifiers-ai-sdk/src/index.ts`)
 
-`promptIdentifiersMiddleware(options)` returns a `LanguageModelV3Middleware` with three hooks:
+`promptIdentifiersMiddleware(options)` returns a `LanguageModelV4Middleware` with three hooks:
 
 - `transformParams` — encodes IDs in all prompt messages before LLM call
 - `wrapGenerate` — decodes IDs in response content
@@ -79,7 +79,7 @@ Handles TextPart, ToolResultPart (text + JSON), and tool call inputs.
 - Import test utilities from `test-helpers.ts` where available
 - No runtime dependencies in core package
 - All packages build with tsup (CJS + ESM + DTS)
-- Tests use Jest with ts-jest preset; test files live in `__tests__/` directories
+- Tests use Jest with ts-jest preset, except `prompt-identifiers-ai-sdk`, which uses Vitest because `ai@7` ships ESM only; test files live in `__tests__/` directories
 
 ## Changelog
 

@@ -5,12 +5,12 @@
  */
 
 import type {
-  LanguageModelV3GenerateResult,
-  LanguageModelV3Message,
-  LanguageModelV3Middleware,
-  LanguageModelV3Prompt,
-  LanguageModelV3StreamPart,
-  LanguageModelV3StreamResult,
+  LanguageModelV4GenerateResult,
+  LanguageModelV4Message,
+  LanguageModelV4Middleware,
+  LanguageModelV4Prompt,
+  LanguageModelV4StreamPart,
+  LanguageModelV4StreamResult,
 } from "@ai-sdk/provider";
 import {
   createEncodeState,
@@ -30,9 +30,9 @@ export interface EncodeDebugData {
   /** Number of unique IDs encoded */
   encodedCount: number;
   /** Original prompt messages before encoding */
-  input: LanguageModelV3Prompt;
+  input: LanguageModelV4Prompt;
   /** Encoded prompt messages */
-  output: LanguageModelV3Prompt;
+  output: LanguageModelV4Prompt;
   /** Time spent encoding in milliseconds */
   durationMs: number;
 }
@@ -195,9 +195,9 @@ function buildInstruction(config: EncodeConfig, customInstruction?: string): str
  * If no system message exists, prepends one.
  */
 function injectInstructionIntoPrompt(
-  prompt: LanguageModelV3Prompt,
+  prompt: LanguageModelV4Prompt,
   instruction: string
-): LanguageModelV3Prompt {
+): LanguageModelV4Prompt {
   // Find last system message
   let lastSystemIndex = -1;
   for (let i = prompt.length - 1; i >= 0; i--) {
@@ -211,7 +211,7 @@ function injectInstructionIntoPrompt(
     const msg = prompt[lastSystemIndex];
     // System messages have string content
     const content = typeof msg.content === "string" ? msg.content : "";
-    const updatedMsg: LanguageModelV3Message = {
+    const updatedMsg: LanguageModelV4Message = {
       role: "system",
       content: content + "\n\n" + instruction,
       ...(msg.providerOptions && { providerOptions: msg.providerOptions }),
@@ -222,7 +222,7 @@ function injectInstructionIntoPrompt(
   }
 
   // No system message - prepend one
-  const systemMsg: LanguageModelV3Message = { role: "system", content: instruction };
+  const systemMsg: LanguageModelV4Message = { role: "system", content: instruction };
   return [systemMsg, ...prompt];
 }
 
@@ -337,15 +337,15 @@ function encodeMessageContent(
  * the same placeholder, regardless of which message it first appears in.
  */
 function encodePromptMessages(
-  prompt: LanguageModelV3Prompt,
+  prompt: LanguageModelV4Prompt,
   config: EncodeConfig
-): { encodedPrompt: LanguageModelV3Prompt; mapping: Record<string, string> } {
+): { encodedPrompt: LanguageModelV4Prompt; mapping: Record<string, string> } {
   const state = createEncodeState();
 
   const encodedPrompt = prompt.map((message) => ({
     ...message,
     content: encodeMessageContent(message.content, config, state),
-  })) as LanguageModelV3Prompt;
+  })) as LanguageModelV4Prompt;
 
   return { encodedPrompt, mapping: state.mapping };
 }
@@ -593,12 +593,12 @@ interface ParamsWithMapping {
 
 export function promptIdentifiersMiddleware(
   options: PromptIdentifiersMiddlewareOptions
-): LanguageModelV3Middleware {
+): LanguageModelV4Middleware {
   const { config, onEncode, onDecode, debug } = options;
   const shouldInjectInstruction = options.injectInstruction ?? true;
 
   return {
-    specificationVersion: "v3",
+    specificationVersion: "v4",
 
     transformParams: async ({ params }) => {
       const startTime = debug ? performance.now() : 0;
@@ -633,7 +633,7 @@ export function promptIdentifiersMiddleware(
       return transformedParams;
     },
 
-    wrapGenerate: async ({ doGenerate, params }): Promise<LanguageModelV3GenerateResult> => {
+    wrapGenerate: async ({ doGenerate, params }): Promise<LanguageModelV4GenerateResult> => {
       const result = await doGenerate();
       const mapping = (params as ParamsWithMapping)[MAPPING_SYMBOL] ?? {};
 
@@ -686,7 +686,7 @@ export function promptIdentifiersMiddleware(
       return { ...result, content: decodedContent };
     },
 
-    wrapStream: async ({ doStream, params }): Promise<LanguageModelV3StreamResult> => {
+    wrapStream: async ({ doStream, params }): Promise<LanguageModelV4StreamResult> => {
       const { stream, ...rest } = await doStream();
       const mapping = (params as ParamsWithMapping)[MAPPING_SYMBOL] ?? {};
 
@@ -706,8 +706,8 @@ export function promptIdentifiersMiddleware(
 
       // Transform the stream to decode placeholders in text and tool calls
       const transformedStream = new TransformStream<
-        LanguageModelV3StreamPart,
-        LanguageModelV3StreamPart
+        LanguageModelV4StreamPart,
+        LanguageModelV4StreamPart
       >({
         transform(chunk, controller) {
           // Decode text deltas
@@ -756,7 +756,7 @@ export function promptIdentifiersMiddleware(
               type: "text-delta",
               id: "",
               delta: remaining,
-            } as LanguageModelV3StreamPart);
+            } as LanguageModelV4StreamPart);
           }
 
           const durationMs = debug && streamStarted ? performance.now() - streamStartTime : 0;

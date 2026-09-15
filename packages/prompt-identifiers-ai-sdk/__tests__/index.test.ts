@@ -1,8 +1,9 @@
+import { describe, test, expect, vi } from "vitest";
 import type {
-  LanguageModelV3GenerateResult,
-  LanguageModelV3Message,
-  LanguageModelV3StreamPart,
-  LanguageModelV3StreamResult,
+  LanguageModelV4GenerateResult,
+  LanguageModelV4Message,
+  LanguageModelV4StreamPart,
+  LanguageModelV4StreamResult,
 } from "@ai-sdk/provider";
 import type { EncodeConfig } from "prompt-identifiers";
 import { promptIdentifiersMiddleware } from "../src/index";
@@ -30,7 +31,7 @@ describe("prompt-identifiers-ai-sdk", () => {
     test("creates middleware with required hooks", () => {
       const middleware = promptIdentifiersMiddleware({ config: defaultConfig });
 
-      expect(middleware.specificationVersion).toBe("v3");
+      expect(middleware.specificationVersion).toBe("v4");
       expect(middleware.transformParams).toBeDefined();
       expect(middleware.wrapGenerate).toBeDefined();
       expect(middleware.wrapStream).toBeDefined();
@@ -39,7 +40,7 @@ describe("prompt-identifiers-ai-sdk", () => {
 
   describe("transformParams", () => {
     // Helper to extract user message text from prompt
-    function getUserText(prompt: LanguageModelV3Message[], index = 0): string {
+    function getUserText(prompt: LanguageModelV4Message[], index = 0): string {
       const msg = prompt[index];
       if (msg.role === "user") {
         const textPart = msg.content.find((p) => p.type === "text");
@@ -49,7 +50,7 @@ describe("prompt-identifiers-ai-sdk", () => {
     }
 
     // Helper to extract system message content
-    function getSystemContent(prompt: LanguageModelV3Message[], index = 0): string {
+    function getSystemContent(prompt: LanguageModelV4Message[], index = 0): string {
       const msg = prompt[index];
       if (msg.role === "system") {
         return typeof msg.content === "string" ? msg.content : "";
@@ -136,7 +137,7 @@ describe("prompt-identifiers-ai-sdk", () => {
     });
 
     test("placeholder collision: decode maps back to correct UUIDs after cross-message encoding", async () => {
-      const onEncode = jest.fn();
+      const onEncode = vi.fn();
       const middleware = createMiddleware({ config: defaultConfig, onEncode });
 
       const campaignId = "aaaa4567-e89b-42d3-a456-426655440000";
@@ -186,8 +187,8 @@ describe("prompt-identifiers-ai-sdk", () => {
       };
 
       const result = await middleware.wrapGenerate({
-        doGenerate: jest.fn().mockResolvedValue(mockResult),
-        doStream: jest.fn(),
+        doGenerate: vi.fn().mockResolvedValue(mockResult),
+        doStream: vi.fn(),
         params: encoded,
         model: mockModel,
       });
@@ -198,7 +199,7 @@ describe("prompt-identifiers-ai-sdk", () => {
     });
 
     test("calls onEncode callback with mapping", async () => {
-      const onEncode = jest.fn();
+      const onEncode = vi.fn();
       const middleware = createMiddleware({
         config: defaultConfig,
         onEncode,
@@ -238,13 +239,13 @@ describe("prompt-identifiers-ai-sdk", () => {
   });
 
   describe("wrapGenerate", () => {
-    // Helper to create a mock generate result with proper V3 types
-    function createMockGenerateResult(text: string): LanguageModelV3GenerateResult {
+    // Helper to create a mock generate result with proper V4 types
+    function createMockGenerateResult(text: string): LanguageModelV4GenerateResult {
       return {
         content: [{ type: "text", text }],
         finishReason: mockFinishReason(),
         usage: mockUsage(),
-        warnings: [], // V3 requires warnings array (can be empty)
+        warnings: [], // V4 requires warnings array (can be empty)
       };
     }
 
@@ -262,8 +263,8 @@ describe("prompt-identifiers-ai-sdk", () => {
 
       const mockResult = createMockGenerateResult("The user ~000~ was found in the database.");
 
-      const doGenerate = jest.fn().mockResolvedValue(mockResult);
-      const doStream = jest.fn();
+      const doGenerate = vi.fn().mockResolvedValue(mockResult);
+      const doStream = vi.fn();
 
       const result = await middleware.wrapGenerate({
         doGenerate,
@@ -278,7 +279,7 @@ describe("prompt-identifiers-ai-sdk", () => {
     });
 
     test("calls onDecode callback", async () => {
-      const onDecode = jest.fn();
+      const onDecode = vi.fn();
       const middleware = createMiddleware({
         config: defaultConfig,
         onDecode,
@@ -295,8 +296,8 @@ describe("prompt-identifiers-ai-sdk", () => {
       const mockResult = createMockGenerateResult("Found ~000~ in the system.");
 
       await middleware.wrapGenerate({
-        doGenerate: jest.fn().mockResolvedValue(mockResult),
-        doStream: jest.fn(),
+        doGenerate: vi.fn().mockResolvedValue(mockResult),
+        doStream: vi.fn(),
         params: transformedParams,
         model: mockModel,
       });
@@ -325,8 +326,8 @@ describe("prompt-identifiers-ai-sdk", () => {
       const mockResult = createMockGenerateResult("No users found.");
 
       const result = await middleware.wrapGenerate({
-        doGenerate: jest.fn().mockResolvedValue(mockResult),
-        doStream: jest.fn(),
+        doGenerate: vi.fn().mockResolvedValue(mockResult),
+        doStream: vi.fn(),
         params: transformedParams,
         model: mockModel,
       });
@@ -336,10 +337,10 @@ describe("prompt-identifiers-ai-sdk", () => {
   });
 
   describe("wrapStream", () => {
-    // Helper to create stream result with proper V3 types
+    // Helper to create stream result with proper V4 types
     function createMockStreamResult(
-      parts: LanguageModelV3StreamPart[]
-    ): LanguageModelV3StreamResult {
+      parts: LanguageModelV4StreamPart[]
+    ): LanguageModelV4StreamResult {
       return { stream: createMockStream(parts) };
     }
 
@@ -359,8 +360,8 @@ describe("prompt-identifiers-ai-sdk", () => {
         { type: "text-delta", id: "2", delta: "~000~" },
         { type: "text-delta", id: "3", delta: " in database." },
       ]);
-      const doStream = jest.fn().mockResolvedValue(mockStreamResult);
-      const doGenerate = jest.fn();
+      const doStream = vi.fn().mockResolvedValue(mockStreamResult);
+      const doGenerate = vi.fn();
 
       const result = await middleware.wrapStream({
         doStream,
@@ -389,8 +390,8 @@ describe("prompt-identifiers-ai-sdk", () => {
         { type: "text-delta", id: "1", delta: "User ~0" },
         { type: "text-delta", id: "2", delta: "00~ found." },
       ]);
-      const doStream = jest.fn().mockResolvedValue(mockStreamResult);
-      const doGenerate = jest.fn();
+      const doStream = vi.fn().mockResolvedValue(mockStreamResult);
+      const doGenerate = vi.fn();
 
       const result = await middleware.wrapStream({
         doStream,
@@ -418,8 +419,8 @@ describe("prompt-identifiers-ai-sdk", () => {
         { type: "text-delta", id: "1", delta: "~000~" },
         { type: "text-end", id: "2" },
       ]);
-      const doStream = jest.fn().mockResolvedValue(mockStreamResult);
-      const doGenerate = jest.fn();
+      const doStream = vi.fn().mockResolvedValue(mockStreamResult);
+      const doGenerate = vi.fn();
 
       const result = await middleware.wrapStream({
         doStream,
@@ -429,7 +430,7 @@ describe("prompt-identifiers-ai-sdk", () => {
       });
 
       const reader = result.stream.getReader();
-      const parts: LanguageModelV3StreamPart[] = [];
+      const parts: LanguageModelV4StreamPart[] = [];
 
       while (true) {
         const { done, value } = await reader.read();
@@ -469,7 +470,7 @@ describe("prompt-identifiers-ai-sdk", () => {
       }
 
       // Simulate LLM response with encoded IDs
-      const mockResult: LanguageModelV3GenerateResult = {
+      const mockResult: LanguageModelV4GenerateResult = {
         content: [
           {
             type: "text",
@@ -483,8 +484,8 @@ describe("prompt-identifiers-ai-sdk", () => {
 
       // Wrap generate (decode) - use encoded params which has the mapping
       const result = await middleware.wrapGenerate({
-        doGenerate: jest.fn().mockResolvedValue(mockResult),
-        doStream: jest.fn(),
+        doGenerate: vi.fn().mockResolvedValue(mockResult),
+        doStream: vi.fn(),
         params: encoded,
         model: mockModel,
       });
@@ -497,7 +498,7 @@ describe("prompt-identifiers-ai-sdk", () => {
 
   describe("Tool result encoding", () => {
     // Helper to extract tool result output from encoded prompt
-    function getToolResultOutput(prompt: LanguageModelV3Message[], index = 0): unknown {
+    function getToolResultOutput(prompt: LanguageModelV4Message[], index = 0): unknown {
       const msg = prompt[index];
       if (msg.role === "tool") {
         const toolResult = msg.content.find((p) => p.type === "tool-result");
@@ -621,7 +622,7 @@ describe("prompt-identifiers-ai-sdk", () => {
     });
 
     test("deduplicates UUIDs across user messages and tool results", async () => {
-      const onEncode = jest.fn();
+      const onEncode = vi.fn();
       const middleware = createMiddleware({
         config: defaultConfig,
         onEncode,
@@ -663,7 +664,7 @@ describe("prompt-identifiers-ai-sdk", () => {
               output: { type: "text", value: "result" },
             },
           ],
-        } as LanguageModelV3Message,
+        } as LanguageModelV4Message,
       ]);
 
       const result = await middleware.transformParams({
@@ -697,7 +698,7 @@ describe("prompt-identifiers-ai-sdk", () => {
               input: { creatorIds: [creatorId], campaignId },
             },
           ],
-        } as LanguageModelV3Message,
+        } as LanguageModelV4Message,
       ]);
 
       const result = await middleware.transformParams({
@@ -727,7 +728,7 @@ describe("prompt-identifiers-ai-sdk", () => {
     });
 
     test("deduplicates UUIDs across text, tool results, and tool-call args", async () => {
-      const onEncode = jest.fn();
+      const onEncode = vi.fn();
       const middleware = createMiddleware({ config: defaultConfig, onEncode });
 
       const creatorId = "123e4567-e89b-42d3-a456-426655440000";
@@ -745,7 +746,7 @@ describe("prompt-identifiers-ai-sdk", () => {
               input: { id: creatorId },
             },
           ],
-        } as LanguageModelV3Message,
+        } as LanguageModelV4Message,
         toolMessage("call-1", "get_creator", {
           type: "json",
           value: { id: creatorId, name: "Alice" },
@@ -780,7 +781,7 @@ describe("prompt-identifiers-ai-sdk", () => {
       });
 
       // Mock a generate result with a tool call containing encoded placeholder
-      const mockResult: LanguageModelV3GenerateResult = {
+      const mockResult: LanguageModelV4GenerateResult = {
         content: [
           {
             type: "tool-call",
@@ -795,8 +796,8 @@ describe("prompt-identifiers-ai-sdk", () => {
       };
 
       const result = await middleware.wrapGenerate({
-        doGenerate: jest.fn().mockResolvedValue(mockResult),
-        doStream: jest.fn(),
+        doGenerate: vi.fn().mockResolvedValue(mockResult),
+        doStream: vi.fn(),
         params: transformedParams,
         model: mockModel,
       });
@@ -829,13 +830,13 @@ describe("prompt-identifiers-ai-sdk", () => {
             toolCallId: "call-1",
             toolName: "get_user",
             input: '{"id":"~000~"}',
-          } as LanguageModelV3StreamPart,
+          } as LanguageModelV4StreamPart,
         ]),
       };
 
       const result = await middleware.wrapStream({
-        doStream: jest.fn().mockResolvedValue(mockStreamResult),
-        doGenerate: jest.fn(),
+        doStream: vi.fn().mockResolvedValue(mockStreamResult),
+        doGenerate: vi.fn(),
         params: transformedParams,
         model: mockModel,
       });
@@ -850,7 +851,7 @@ describe("prompt-identifiers-ai-sdk", () => {
 
   describe("Different output formats", () => {
     // Helper to get user message text from encoded prompt
-    function getUserMessageText(prompt: LanguageModelV3Message[]): string {
+    function getUserMessageText(prompt: LanguageModelV4Message[]): string {
       const msg = prompt[0];
       if (msg.role === "user") {
         const textPart = msg.content.find((p) => p.type === "text");
@@ -910,7 +911,7 @@ describe("prompt-identifiers-ai-sdk", () => {
 
   describe("debug mode", () => {
     test("onEncode receives debugData when debug is true", async () => {
-      const onEncode = jest.fn();
+      const onEncode = vi.fn();
       const middleware = createMiddleware({
         config: defaultConfig,
         debug: true,
@@ -938,7 +939,7 @@ describe("prompt-identifiers-ai-sdk", () => {
     });
 
     test("onDecode receives debugData on wrapGenerate when debug is true", async () => {
-      const onDecode = jest.fn();
+      const onDecode = vi.fn();
       const middleware = createMiddleware({
         config: defaultConfig,
         debug: true,
@@ -954,7 +955,7 @@ describe("prompt-identifiers-ai-sdk", () => {
         model: mockModel,
       });
 
-      const mockResult: LanguageModelV3GenerateResult = {
+      const mockResult: LanguageModelV4GenerateResult = {
         content: [{ type: "text", text: "Found ~000~ in the system." }],
         finishReason: mockFinishReason(),
         usage: mockUsage(),
@@ -962,8 +963,8 @@ describe("prompt-identifiers-ai-sdk", () => {
       };
 
       await middleware.wrapGenerate({
-        doGenerate: jest.fn().mockResolvedValue(mockResult),
-        doStream: jest.fn(),
+        doGenerate: vi.fn().mockResolvedValue(mockResult),
+        doStream: vi.fn(),
         params: transformedParams,
         model: mockModel,
       });
@@ -980,7 +981,7 @@ describe("prompt-identifiers-ai-sdk", () => {
     });
 
     test("onDecode receives debugData on wrapStream when debug is true", async () => {
-      const onDecode = jest.fn();
+      const onDecode = vi.fn();
       const middleware = createMiddleware({
         config: defaultConfig,
         debug: true,
@@ -1005,8 +1006,8 @@ describe("prompt-identifiers-ai-sdk", () => {
       };
 
       const result = await middleware.wrapStream({
-        doStream: jest.fn().mockResolvedValue(mockStreamResult),
-        doGenerate: jest.fn(),
+        doStream: vi.fn().mockResolvedValue(mockStreamResult),
+        doGenerate: vi.fn(),
         params: transformedParams,
         model: mockModel,
       });
@@ -1026,8 +1027,8 @@ describe("prompt-identifiers-ai-sdk", () => {
     });
 
     test("debugData is absent when debug is false", async () => {
-      const onEncode = jest.fn();
-      const onDecode = jest.fn();
+      const onEncode = vi.fn();
+      const onDecode = vi.fn();
       const middleware = createMiddleware({
         config: defaultConfig,
         debug: false,
@@ -1044,7 +1045,7 @@ describe("prompt-identifiers-ai-sdk", () => {
         model: mockModel,
       });
 
-      const mockResult: LanguageModelV3GenerateResult = {
+      const mockResult: LanguageModelV4GenerateResult = {
         content: [{ type: "text", text: "Found ~000~." }],
         finishReason: mockFinishReason(),
         usage: mockUsage(),
@@ -1052,8 +1053,8 @@ describe("prompt-identifiers-ai-sdk", () => {
       };
 
       await middleware.wrapGenerate({
-        doGenerate: jest.fn().mockResolvedValue(mockResult),
-        doStream: jest.fn(),
+        doGenerate: vi.fn().mockResolvedValue(mockResult),
+        doStream: vi.fn(),
         params: transformedParams,
         model: mockModel,
       });
@@ -1066,7 +1067,7 @@ describe("prompt-identifiers-ai-sdk", () => {
   });
 
   describe("injectInstruction", () => {
-    function getSystemContent(prompt: LanguageModelV3Message[]): string {
+    function getSystemContent(prompt: LanguageModelV4Message[]): string {
       const msg = prompt.find((m) => m.role === "system");
       return msg?.role === "system" ? (msg.content as string) : "";
     }
@@ -1207,7 +1208,7 @@ describe("prompt-identifiers-ai-sdk", () => {
           role: "system",
           content: "You are helpful.",
           providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } },
-        } as LanguageModelV3Message,
+        } as LanguageModelV4Message,
         userMessage("Find user 123e4567-e89b-42d3-a456-426655440000"),
       ]);
 
@@ -1226,7 +1227,7 @@ describe("prompt-identifiers-ai-sdk", () => {
 
   describe("decode warnings", () => {
     test("detects stripped delimiters in tool call arguments via wrapGenerate", async () => {
-      const onDecode = jest.fn();
+      const onDecode = vi.fn();
       const middleware = createMiddleware({ config: defaultConfig, onDecode });
 
       const uuid = "123e4567-e89b-42d3-a456-426655440000";
@@ -1239,7 +1240,7 @@ describe("prompt-identifiers-ai-sdk", () => {
       });
 
       // Simulate LLM stripping delimiters: outputs "000" instead of "~000~"
-      const mockResult: LanguageModelV3GenerateResult = {
+      const mockResult: LanguageModelV4GenerateResult = {
         content: [
           { type: "text", text: "Looking up campaign." },
           {
@@ -1255,8 +1256,8 @@ describe("prompt-identifiers-ai-sdk", () => {
       };
 
       await middleware.wrapGenerate({
-        doGenerate: jest.fn().mockResolvedValue(mockResult),
-        doStream: jest.fn(),
+        doGenerate: vi.fn().mockResolvedValue(mockResult),
+        doStream: vi.fn(),
         params: transformedParams,
         model: mockModel,
       });
@@ -1271,7 +1272,7 @@ describe("prompt-identifiers-ai-sdk", () => {
     });
 
     test("detects surviving placeholders in text via wrapGenerate", async () => {
-      const onDecode = jest.fn();
+      const onDecode = vi.fn();
       const middleware = createMiddleware({ config: defaultConfig, onDecode });
 
       const uuid = "123e4567-e89b-42d3-a456-426655440000";
@@ -1286,7 +1287,7 @@ describe("prompt-identifiers-ai-sdk", () => {
       // Simulate LLM inventing a placeholder that doesn't exist in mapping
       // But we test the surviving case: ~000~ appears in the decoded text
       // This happens if decode somehow misses it
-      const mockResult: LanguageModelV3GenerateResult = {
+      const mockResult: LanguageModelV4GenerateResult = {
         content: [{ type: "text", text: "Found user ~000~ in the database." }],
         finishReason: mockFinishReason(),
         usage: mockUsage(),
@@ -1294,8 +1295,8 @@ describe("prompt-identifiers-ai-sdk", () => {
       };
 
       await middleware.wrapGenerate({
-        doGenerate: jest.fn().mockResolvedValue(mockResult),
-        doStream: jest.fn(),
+        doGenerate: vi.fn().mockResolvedValue(mockResult),
+        doStream: vi.fn(),
         params: transformedParams,
         model: mockModel,
       });
@@ -1306,7 +1307,7 @@ describe("prompt-identifiers-ai-sdk", () => {
     });
 
     test("no warnings when decode succeeds", async () => {
-      const onDecode = jest.fn();
+      const onDecode = vi.fn();
       const middleware = createMiddleware({ config: defaultConfig, onDecode });
 
       const uuid = "123e4567-e89b-42d3-a456-426655440000";
@@ -1318,7 +1319,7 @@ describe("prompt-identifiers-ai-sdk", () => {
         model: mockModel,
       });
 
-      const mockResult: LanguageModelV3GenerateResult = {
+      const mockResult: LanguageModelV4GenerateResult = {
         content: [
           { type: "text", text: "Found user ~000~." },
           {
@@ -1334,8 +1335,8 @@ describe("prompt-identifiers-ai-sdk", () => {
       };
 
       await middleware.wrapGenerate({
-        doGenerate: jest.fn().mockResolvedValue(mockResult),
-        doStream: jest.fn(),
+        doGenerate: vi.fn().mockResolvedValue(mockResult),
+        doStream: vi.fn(),
         params: transformedParams,
         model: mockModel,
       });

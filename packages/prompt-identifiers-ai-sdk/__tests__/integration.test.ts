@@ -5,7 +5,8 @@
  * with our middleware, then call `doGenerate`/`doStream` on the wrapped model.
  */
 
-import type { LanguageModelV3Message, LanguageModelV3StreamPart } from "@ai-sdk/provider";
+import { describe, test, expect, vi } from "vitest";
+import type { LanguageModelV4Message, LanguageModelV4StreamPart } from "@ai-sdk/provider";
 import { wrapLanguageModel } from "ai";
 import type { EncodeConfig } from "prompt-identifiers";
 import { promptIdentifiersMiddleware } from "../src/index";
@@ -33,7 +34,7 @@ describe("AI SDK Integration", () => {
 
   describe("wrapLanguageModel + doGenerate", () => {
     test("encodes prompt and decodes text response", async () => {
-      let receivedPrompt: LanguageModelV3Message[] = [];
+      let receivedPrompt: LanguageModelV4Message[] = [];
 
       const mockModel = createMockModel({
         onGenerate: (prompt) => {
@@ -91,7 +92,7 @@ describe("AI SDK Integration", () => {
     });
 
     test("encodes JSON tool result values", async () => {
-      let receivedPrompt: LanguageModelV3Message[] = [];
+      let receivedPrompt: LanguageModelV4Message[] = [];
 
       const mockModel = createMockModel({
         onGenerate: (prompt) => {
@@ -124,7 +125,7 @@ describe("AI SDK Integration", () => {
     });
 
     test("encodes text tool result values", async () => {
-      let receivedPrompt: LanguageModelV3Message[] = [];
+      let receivedPrompt: LanguageModelV4Message[] = [];
 
       const mockModel = createMockModel({
         onGenerate: (prompt) => {
@@ -156,7 +157,7 @@ describe("AI SDK Integration", () => {
     });
 
     test("deduplicates UUIDs across messages", async () => {
-      let receivedPrompt: LanguageModelV3Message[] = [];
+      let receivedPrompt: LanguageModelV4Message[] = [];
 
       const mockModel = createMockModel({
         onGenerate: (prompt) => {
@@ -217,7 +218,7 @@ describe("AI SDK Integration", () => {
         .filter(
           (
             p
-          ): p is LanguageModelV3StreamPart & {
+          ): p is LanguageModelV4StreamPart & {
             type: "text-delta";
             delta: string;
           } => p.type === "text-delta"
@@ -248,7 +249,7 @@ describe("AI SDK Integration", () => {
         .filter(
           (
             p
-          ): p is LanguageModelV3StreamPart & {
+          ): p is LanguageModelV4StreamPart & {
             type: "text-delta";
             delta: string;
           } => p.type === "text-delta"
@@ -268,7 +269,7 @@ describe("AI SDK Integration", () => {
             toolCallId: "call-1",
             toolName: "get_user",
             input: '{"id":"~000~"}',
-          } as LanguageModelV3StreamPart,
+          } as LanguageModelV4StreamPart,
         ],
       });
 
@@ -293,7 +294,7 @@ describe("AI SDK Integration", () => {
             type: "tool-input-delta",
             id: "1",
             delta: '{"id":"~000~"}',
-          } as LanguageModelV3StreamPart,
+          } as LanguageModelV4StreamPart,
         ],
       });
 
@@ -356,7 +357,7 @@ describe("AI SDK Integration", () => {
     });
 
     test("handles deeply nested JSON in tool results", async () => {
-      let receivedPrompt: LanguageModelV3Message[] = [];
+      let receivedPrompt: LanguageModelV4Message[] = [];
 
       const mockModel = createMockModel({
         onGenerate: (prompt) => {
@@ -396,7 +397,7 @@ describe("AI SDK Integration", () => {
     });
 
     test("handles JSON arrays at root level", async () => {
-      let receivedPrompt: LanguageModelV3Message[] = [];
+      let receivedPrompt: LanguageModelV4Message[] = [];
 
       const mockModel = createMockModel({
         onGenerate: (prompt) => {
@@ -452,7 +453,7 @@ describe("AI SDK Integration", () => {
                 output: { type: "json" }, // Missing value
               },
             ],
-          } as LanguageModelV3Message,
+          } as LanguageModelV4Message,
         ],
       });
 
@@ -499,7 +500,7 @@ describe("AI SDK Integration", () => {
 
   describe("Callbacks", () => {
     test("onEncode is called with correct mapping", async () => {
-      const onEncode = jest.fn();
+      const onEncode = vi.fn();
 
       const mockModel = createMockModel();
       const middleware = promptIdentifiersMiddleware({
@@ -522,7 +523,7 @@ describe("AI SDK Integration", () => {
     });
 
     test("onDecode is called after decoding", async () => {
-      const onDecode = jest.fn();
+      const onDecode = vi.fn();
 
       const mockModel = createMockModel({
         onGenerate: () => ({
@@ -551,8 +552,8 @@ describe("AI SDK Integration", () => {
     });
 
     test("debug mode populates debugData in integration", async () => {
-      const onEncode = jest.fn();
-      const onDecode = jest.fn();
+      const onEncode = vi.fn();
+      const onDecode = vi.fn();
 
       const mockModel = createMockModel({
         onGenerate: () => ({
