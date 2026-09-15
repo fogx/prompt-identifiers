@@ -15,7 +15,7 @@ Thank you for your interest in contributing!
 ```
 prompt-identifiers/
 ├── packages/
-│   ├── prompt-identifiers-js/     # Core library
+│   ├── core/                      # Core library
 │   │   ├── src/index.ts
 │   │   └── __tests__/
 │   ├── prompt-identifiers-ai-sdk/ # AI SDK middleware
@@ -34,15 +34,15 @@ prompt-identifiers/
 
 ### Prerequisites
 
-- **Node.js 18+**
-- **pnpm** (recommended)
+- **Node.js 22.18+** (CI runs 22 and 24)
+- **pnpm 12**, pinned through `packageManager` in `package.json`
 
 ### Getting Started
 
 ```bash
 # Clone the repository
-git clone https://github.com/fogx/prompt_identifiers.git
-cd prompt_identifiers
+git clone https://github.com/fogx/prompt-identifiers.git
+cd prompt-identifiers
 
 # Install dependencies
 pnpm install
@@ -90,7 +90,7 @@ pnpm --filter prompt-identifiers build
 
 3. **Implement the feature**
 
-4. **Update changelog** - Add entry under `## [Unreleased]` in root `CHANGELOG.md`
+4. **Add a changeset** - Run `pnpm changeset` and describe the change for each package it affects
 
 5. **Run tests** - Ensure all tests pass
 
@@ -130,4 +130,4 @@ Follow [Conventional Commits](https://www.conventionalcommits.org/):
 
 ## Questions?
 
-Open an issue at https://github.com/fogx/prompt_identifiers/issues
+Open an issue at https://github.com/fogx/prompt-identifiers/issues
