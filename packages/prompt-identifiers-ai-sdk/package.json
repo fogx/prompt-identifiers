@@ -51,7 +51,7 @@
   },
   "devDependencies": {
     "@ai-sdk/provider": "^4.0.14",
-    "@types/node": "^26.5.1",
+    "@types/node": "^22.20.2",
     "ai": "^7.0.99",
     "prompt-identifiers": "workspace:*",
     "tsdown": "^0.23.0",
