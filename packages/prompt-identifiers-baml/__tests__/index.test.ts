@@ -1,3 +1,4 @@
+import { describe, test, expect, vi } from "vitest";
 import type { EncodeConfig } from "prompt-identifiers";
 import {
   decodeObject,
@@ -18,7 +19,7 @@ describe("prompt-identifiers-baml", () => {
   describe("wrapBamlFunction", () => {
     test("encodes UUIDs in input and decodes in output", async () => {
       // Mock BAML function that echoes input in output
-      const mockFn = jest.fn(async (input: { user_id: string }) => ({
+      const mockFn = vi.fn(async (input: { user_id: string }) => ({
         summary: `Analysis for user ${input.user_id}`,
         user_id: input.user_id,
       }));
@@ -52,14 +53,12 @@ describe("prompt-identifiers-baml", () => {
         };
       }
 
-      const mockFn = jest.fn(
-        async (input: Input): Promise<Output> => ({
-          result: {
-            user_id: input.data.user.id,
-            message: `Hello ${input.data.user.name}, your ID is ${input.data.user.id}`,
-          },
-        })
-      );
+      const mockFn = vi.fn(async (input: Input): Promise<Output> => ({
+        result: {
+          user_id: input.data.user.id,
+          message: `Hello ${input.data.user.name}, your ID is ${input.data.user.id}`,
+        },
+      }));
 
       const wrapped = wrapBamlFunction(mockFn, { config: defaultConfig });
 
@@ -92,7 +91,7 @@ describe("prompt-identifiers-baml", () => {
         items: Array<{ id: string; name: string }>;
       }
 
-      const mockFn = jest.fn(async (input: Input) => ({
+      const mockFn = vi.fn(async (input: Input) => ({
         processed: input.items.map((item) => `${item.id}: ${item.name}`),
       }));
 
@@ -118,7 +117,7 @@ describe("prompt-identifiers-baml", () => {
     });
 
     test("deduplicates repeated UUIDs", async () => {
-      const mockFn = jest.fn(async (input: { ids: string[] }) => ({
+      const mockFn = vi.fn(async (input: { ids: string[] }) => ({
         summary: input.ids.join(", "),
       }));
 
@@ -138,10 +137,10 @@ describe("prompt-identifiers-baml", () => {
     });
 
     test("calls onEncode and onDecode callbacks", async () => {
-      const onEncode = jest.fn();
-      const onDecode = jest.fn();
+      const onEncode = vi.fn();
+      const onDecode = vi.fn();
 
-      const mockFn = jest.fn(async (input: { id: string }) => ({
+      const mockFn = vi.fn(async (input: { id: string }) => ({
         result: `Found: ${input.id}`,
       }));
 
@@ -168,7 +167,7 @@ describe("prompt-identifiers-baml", () => {
         optional?: string | null;
       }
 
-      const mockFn = jest.fn(async (input: Input) => ({
+      const mockFn = vi.fn(async (input: Input) => ({
         id: input.id,
         optional: input.optional,
       }));
@@ -189,7 +188,7 @@ describe("prompt-identifiers-baml", () => {
         active: boolean;
       }
 
-      const mockFn = jest.fn(async (input: Input) => ({
+      const mockFn = vi.fn(async (input: Input) => ({
         ...input,
         message: `ID: ${input.id}`,
       }));
@@ -206,7 +205,7 @@ describe("prompt-identifiers-baml", () => {
 
   describe("encodeFields option", () => {
     test("only encodes specified top-level fields", async () => {
-      const mockFn = jest.fn(async (input: { user_id: string; code: string }) => ({
+      const mockFn = vi.fn(async (input: { user_id: string; code: string }) => ({
         result: `${input.user_id} - ${input.code}`,
       }));
 
@@ -234,7 +233,7 @@ describe("prompt-identifiers-baml", () => {
         };
       }
 
-      const mockFn = jest.fn(async (input: Input) => ({
+      const mockFn = vi.fn(async (input: Input) => ({
         result: input.data.user_id,
       }));
 
@@ -263,7 +262,7 @@ describe("prompt-identifiers-baml", () => {
         items: Array<{ id: string; code: string }>;
       }
 
-      const mockFn = jest.fn(async (input: Input) => ({
+      const mockFn = vi.fn(async (input: Input) => ({
         ids: input.items.map((i) => i.id),
       }));
 
@@ -298,7 +297,7 @@ describe("prompt-identifiers-baml", () => {
         };
       }
 
-      const mockFn = jest.fn(async (input: Input) => ({ ok: true }));
+      const mockFn = vi.fn(async (input: Input) => ({ ok: true }));
 
       const wrapped = wrapBamlFunction(mockFn, {
         config: defaultConfig,
@@ -355,8 +354,8 @@ describe("prompt-identifiers-baml", () => {
     });
 
     test("calls callbacks for streaming function", async () => {
-      const onEncode = jest.fn();
-      const onDecode = jest.fn();
+      const onEncode = vi.fn();
+      const onDecode = vi.fn();
 
       async function* mockStreamFn(input: { id: string }) {
         yield { status: input.id };
@@ -458,7 +457,7 @@ describe("prompt-identifiers-baml", () => {
 
   describe("Different output formats", () => {
     test("works with Numeric format", async () => {
-      const mockFn = jest.fn(async (input: { id: string }) => ({
+      const mockFn = vi.fn(async (input: { id: string }) => ({
         result: input.id,
       }));
 
@@ -472,7 +471,7 @@ describe("prompt-identifiers-baml", () => {
     });
 
     test("works with custom template format", async () => {
-      const mockFn = jest.fn(async (input: { id: string }) => ({
+      const mockFn = vi.fn(async (input: { id: string }) => ({
         result: input.id,
       }));
 
@@ -488,7 +487,7 @@ describe("prompt-identifiers-baml", () => {
     test("works with ULID input format", async () => {
       const ulid = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
 
-      const mockFn = jest.fn(async (input: { id: string }) => ({
+      const mockFn = vi.fn(async (input: { id: string }) => ({
         result: input.id,
       }));
 
@@ -505,7 +504,7 @@ describe("prompt-identifiers-baml", () => {
 
   describe("Edge cases", () => {
     test("handles empty objects", async () => {
-      const mockFn = jest.fn(async (input: {}) => ({ result: "ok" }));
+      const mockFn = vi.fn(async (input: {}) => ({ result: "ok" }));
 
       const wrapped = wrapBamlFunction(mockFn, { config: defaultConfig });
 
@@ -515,7 +514,7 @@ describe("prompt-identifiers-baml", () => {
     });
 
     test("handles input with no IDs", async () => {
-      const mockFn = jest.fn(async (input: { name: string }) => ({
+      const mockFn = vi.fn(async (input: { name: string }) => ({
         greeting: `Hello, ${input.name}`,
       }));
 
@@ -528,7 +527,7 @@ describe("prompt-identifiers-baml", () => {
     });
 
     test("handles output with no placeholders", async () => {
-      const mockFn = jest.fn(async (input: { id: string }) => ({
+      const mockFn = vi.fn(async (input: { id: string }) => ({
         message: "No IDs in response",
       }));
 
@@ -542,10 +541,10 @@ describe("prompt-identifiers-baml", () => {
 
   describe("debug mode", () => {
     test("wrapBamlFunction populates debugData when debug is true", async () => {
-      const onEncode = jest.fn();
-      const onDecode = jest.fn();
+      const onEncode = vi.fn();
+      const onDecode = vi.fn();
 
-      const mockFn = jest.fn(async (input: { id: string }) => ({
+      const mockFn = vi.fn(async (input: { id: string }) => ({
         result: `Found: ${input.id}`,
       }));
 
@@ -578,8 +577,8 @@ describe("prompt-identifiers-baml", () => {
     });
 
     test("wrapBamlStreamingFunction populates debugData when debug is true", async () => {
-      const onEncode = jest.fn();
-      const onDecode = jest.fn();
+      const onEncode = vi.fn();
+      const onDecode = vi.fn();
 
       async function* mockStreamFn(input: { id: string }) {
         yield { partial: `Processing ${input.id}...` };
@@ -611,10 +610,10 @@ describe("prompt-identifiers-baml", () => {
     });
 
     test("debugData is absent when debug is false", async () => {
-      const onEncode = jest.fn();
-      const onDecode = jest.fn();
+      const onEncode = vi.fn();
+      const onDecode = vi.fn();
 
-      const mockFn = jest.fn(async (input: { id: string }) => ({
+      const mockFn = vi.fn(async (input: { id: string }) => ({
         result: `Found: ${input.id}`,
       }));
 

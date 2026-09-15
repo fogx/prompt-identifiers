@@ -11,7 +11,7 @@ Monorepo for ID compression in LLM prompts. Replaces UUIDs/ULIDs with compact pl
 ```bash
 # Root-level (runs across all packages)
 pnpm install                    # Install all dependencies
-pnpm build                      # Build all packages (tsup → dist/)
+pnpm build                      # Build all packages (tsdown → dist/)
 pnpm test                       # Run all tests across all packages
 
 # Per-package
@@ -20,8 +20,8 @@ pnpm --filter prompt-identifiers-ai-sdk test    # AI SDK tests only
 pnpm --filter prompt-identifiers-baml test      # BAML tests only
 
 # Single test file (from package dir)
-cd packages/core && npx jest __tests__/index.test.ts
-cd packages/core && npx jest --testNamePattern "encode"   # Filter by name
+cd packages/core && npx vitest run __tests__/index.test.ts
+cd packages/core && npx vitest run -t "encode"   # Filter by name
 
 # Benchmarks (core only)
 cd packages/core && pnpm bench            # Performance benchmarks
@@ -78,8 +78,8 @@ Handles TextPart, ToolResultPart (text + JSON), and tool call inputs.
 - Extract repeated patterns into helper functions
 - Import test utilities from `test-helpers.ts` where available
 - No runtime dependencies in core package
-- All packages build with tsup (CJS + ESM + DTS)
-- Tests use Jest with ts-jest preset, except `prompt-identifiers-ai-sdk`, which uses Vitest because `ai@7` ships ESM only; test files live in `__tests__/` directories
+- All packages build with tsdown (CJS + ESM + DTS)
+- Tests use Vitest with explicit imports from `vitest`; test files live in `__tests__/` directories
 
 ## Changelog
 
