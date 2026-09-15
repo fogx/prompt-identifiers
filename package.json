@@ -9,9 +9,9 @@
     "release": "pnpm build && changeset publish"
   },
   "devDependencies": {
-    "@changesets/cli": "^2.27.0",
-    "@types/jest": "^29.5.14",
-    "@types/node": "^25.0.10",
-    "prettier": "^3.8.1"
+    "@changesets/cli": "^3.0.2",
+    "@types/jest": "^30.0.0",
+    "@types/node": "^26.5.1",
+    "prettier": "^3.9.6"
   }
 }
