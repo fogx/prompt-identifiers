@@ -3,15 +3,15 @@
  */
 
 import type {
-  LanguageModelV3,
-  LanguageModelV3CallOptions,
-  LanguageModelV3FinishReason,
-  LanguageModelV3GenerateResult,
-  LanguageModelV3Message,
-  LanguageModelV3Middleware,
-  LanguageModelV3StreamPart,
-  LanguageModelV3StreamResult,
-  LanguageModelV3Usage,
+  LanguageModelV4,
+  LanguageModelV4CallOptions,
+  LanguageModelV4FinishReason,
+  LanguageModelV4GenerateResult,
+  LanguageModelV4Message,
+  LanguageModelV4Middleware,
+  LanguageModelV4StreamPart,
+  LanguageModelV4StreamResult,
+  LanguageModelV4Usage,
 } from "@ai-sdk/provider";
 import { promptIdentifiersMiddleware, PromptIdentifiersMiddlewareOptions } from "../src/index";
 
@@ -19,7 +19,7 @@ import { promptIdentifiersMiddleware, PromptIdentifiersMiddlewareOptions } from 
 // Mock Data Factories
 // =============================================================================
 
-export function mockUsage(input = 10, output = 5): LanguageModelV3Usage {
+export function mockUsage(input = 10, output = 5): LanguageModelV4Usage {
   return {
     inputTokens: {
       total: input,
@@ -35,7 +35,7 @@ export function mockUsage(input = 10, output = 5): LanguageModelV3Usage {
   };
 }
 
-export function mockFinishReason(): LanguageModelV3FinishReason {
+export function mockFinishReason(): LanguageModelV4FinishReason {
   return { unified: "stop", raw: "stop" };
 }
 
@@ -43,8 +43,8 @@ export function mockFinishReason(): LanguageModelV3FinishReason {
 // Mock Model
 // =============================================================================
 
-export const mockModel: LanguageModelV3 = {
-  specificationVersion: "v3",
+export const mockModel: LanguageModelV4 = {
+  specificationVersion: "v4",
   provider: "test",
   modelId: "test-model",
   supportedUrls: {},
@@ -61,8 +61,8 @@ export const mockModel: LanguageModelV3 = {
 // =============================================================================
 
 export function createMockStream(
-  parts: LanguageModelV3StreamPart[]
-): ReadableStream<LanguageModelV3StreamPart> {
+  parts: LanguageModelV4StreamPart[]
+): ReadableStream<LanguageModelV4StreamPart> {
   return new ReadableStream({
     start(controller) {
       for (const part of parts) {
@@ -74,10 +74,10 @@ export function createMockStream(
 }
 
 export async function collectStreamParts(
-  stream: ReadableStream<LanguageModelV3StreamPart>
-): Promise<LanguageModelV3StreamPart[]> {
+  stream: ReadableStream<LanguageModelV4StreamPart>
+): Promise<LanguageModelV4StreamPart[]> {
   const reader = stream.getReader();
-  const parts: LanguageModelV3StreamPart[] = [];
+  const parts: LanguageModelV4StreamPart[] = [];
 
   while (true) {
     const { done, value } = await reader.read();
@@ -89,7 +89,7 @@ export async function collectStreamParts(
 }
 
 export async function collectStreamText(
-  stream: ReadableStream<LanguageModelV3StreamPart>
+  stream: ReadableStream<LanguageModelV4StreamPart>
 ): Promise<string> {
   const reader = stream.getReader();
   let text = "";
@@ -109,11 +109,11 @@ export async function collectStreamText(
 // Message Factories
 // =============================================================================
 
-export function userMessage(text: string): LanguageModelV3Message {
+export function userMessage(text: string): LanguageModelV4Message {
   return { role: "user", content: [{ type: "text", text }] };
 }
 
-export function systemMessage(content: string): LanguageModelV3Message {
+export function systemMessage(content: string): LanguageModelV4Message {
   return { role: "system", content };
 }
 
@@ -121,7 +121,7 @@ export function toolMessage(
   toolCallId: string,
   toolName: string,
   output: { type: string; value: unknown }
-): LanguageModelV3Message {
+): LanguageModelV4Message {
   return {
     role: "tool",
     content: [
@@ -132,14 +132,14 @@ export function toolMessage(
         output,
       },
     ],
-  } as LanguageModelV3Message;
+  } as LanguageModelV4Message;
 }
 
 // =============================================================================
 // Params Helper
 // =============================================================================
 
-export function createParams(messages: LanguageModelV3Message[]): LanguageModelV3CallOptions {
+export function createParams(messages: LanguageModelV4Message[]): LanguageModelV4CallOptions {
   return {
     prompt: messages,
   };
@@ -149,7 +149,7 @@ export function createParams(messages: LanguageModelV3Message[]): LanguageModelV
 // Content Extractors
 // =============================================================================
 
-export function getTextFromContent(content: LanguageModelV3GenerateResult["content"]): string {
+export function getTextFromContent(content: LanguageModelV4GenerateResult["content"]): string {
   const textItem = content.find((item) => item.type === "text");
   return textItem?.type === "text" ? textItem.text : "";
 }
@@ -161,7 +161,7 @@ interface ToolResultOutput<T = unknown> {
 }
 
 export function getToolResultOutput<T>(
-  msg: LanguageModelV3Message
+  msg: LanguageModelV4Message
 ): ToolResultOutput<T> | undefined {
   if (msg.role !== "tool") return undefined;
   const toolResult = msg.content.find((p) => p.type === "tool-result");
@@ -169,18 +169,18 @@ export function getToolResultOutput<T>(
   return toolResult.output as ToolResultOutput<T>;
 }
 
-export function getUserMessageText(msg: LanguageModelV3Message): string | undefined {
+export function getUserMessageText(msg: LanguageModelV4Message): string | undefined {
   if (msg.role !== "user") return undefined;
   const textPart = msg.content.find((p) => p.type === "text");
   return textPart?.type === "text" ? textPart.text : undefined;
 }
 
-export function getResultText(result: LanguageModelV3GenerateResult): string | undefined {
+export function getResultText(result: LanguageModelV4GenerateResult): string | undefined {
   const textContent = result.content.find((c) => c.type === "text");
   return textContent?.type === "text" ? textContent.text : undefined;
 }
 
-export function getToolCall(result: LanguageModelV3GenerateResult, index = 0) {
+export function getToolCall(result: LanguageModelV4GenerateResult, index = 0) {
   const toolCalls = result.content.filter((c) => c.type === "tool-call");
   return toolCalls[index] as
     | { type: "tool-call"; toolCallId: string; toolName: string; input: string }
@@ -192,7 +192,7 @@ export function getToolCall(result: LanguageModelV3GenerateResult, index = 0) {
 // =============================================================================
 
 type RequiredMiddleware = Required<
-  Pick<LanguageModelV3Middleware, "transformParams" | "wrapGenerate" | "wrapStream">
+  Pick<LanguageModelV4Middleware, "transformParams" | "wrapGenerate" | "wrapStream">
 >;
 
 /**
@@ -219,20 +219,20 @@ export function createMiddleware(options: PromptIdentifiersMiddlewareOptions): R
 // =============================================================================
 
 interface MockModelConfig {
-  onGenerate?: (prompt: LanguageModelV3Message[]) => LanguageModelV3GenerateResult;
-  onStream?: (prompt: LanguageModelV3Message[]) => LanguageModelV3StreamPart[];
+  onGenerate?: (prompt: LanguageModelV4Message[]) => LanguageModelV4GenerateResult;
+  onStream?: (prompt: LanguageModelV4Message[]) => LanguageModelV4StreamPart[];
 }
 
-export function createMockModel(config: MockModelConfig = {}): LanguageModelV3 {
+export function createMockModel(config: MockModelConfig = {}): LanguageModelV4 {
   return {
-    specificationVersion: "v3",
+    specificationVersion: "v4",
     provider: "test",
     modelId: "test-model",
     supportedUrls: {},
 
     doGenerate: async (
-      options: LanguageModelV3CallOptions
-    ): Promise<LanguageModelV3GenerateResult> => {
+      options: LanguageModelV4CallOptions
+    ): Promise<LanguageModelV4GenerateResult> => {
       if (config.onGenerate) {
         return config.onGenerate(options.prompt);
       }
@@ -244,7 +244,7 @@ export function createMockModel(config: MockModelConfig = {}): LanguageModelV3 {
       };
     },
 
-    doStream: async (options: LanguageModelV3CallOptions): Promise<LanguageModelV3StreamResult> => {
+    doStream: async (options: LanguageModelV4CallOptions): Promise<LanguageModelV4StreamResult> => {
       if (config.onStream) {
         return { stream: createMockStream(config.onStream(options.prompt)) };
       }
