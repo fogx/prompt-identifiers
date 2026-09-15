@@ -1,3 +1,4 @@
+import { describe, test, expect } from "vitest";
 import { decode, encode, EncodeConfig } from "../src/index";
 
 describe("prompt-identifiers", () => {

@@ -2,9 +2,9 @@
   "name": "prompt-identifiers",
   "version": "0.1.3",
   "description": "Efficient ID compression for LLM prompts in JS/TS/Node. Reduce token usage by up to 90%. UUID, ULID, regex",
-  "main": "dist/index.js",
+  "main": "dist/index.cjs",
   "module": "dist/index.mjs",
-  "types": "dist/index.d.ts",
+  "types": "dist/index.d.cts",
   "exports": {
     ".": {
       "import": {
@@ -12,8 +12,8 @@
         "default": "./dist/index.mjs"
       },
       "require": {
-        "types": "./dist/index.d.ts",
-        "default": "./dist/index.js"
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
       }
     }
   },
@@ -22,8 +22,8 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsup src/index.ts --format cjs,esm --dts --clean",
-    "test": "jest",
+    "build": "tsdown src/index.ts --format esm --format cjs --dts",
+    "test": "vitest run",
     "bench": "tsx bench/benchmark.ts",
     "bench:accuracy": "tsx bench/accuracy/run.ts",
     "prepublishOnly": "npm run build"
@@ -46,15 +46,13 @@
   "devDependencies": {
     "@anthropic-ai/sdk": "^0.125.0",
     "@faker-js/faker": "^10.6.0",
-    "@types/jest": "^30.0.0",
     "@types/node": "^26.5.1",
     "dotenv": "^17.4.2",
-    "jest": "^30.5.1",
     "openai": "^7.15.0",
-    "ts-jest": "^29.4.12",
-    "tsup": "^8.5.1",
+    "tsdown": "^0.23.0",
     "tsx": "^4.23.13",
-    "typescript": "^6.0.3",
-    "uuid": "^14.0.2"
+    "typescript": "^7.0.2",
+    "uuid": "^14.0.2",
+    "vitest": "^5.0.0"
   }
 }

@@ -2,9 +2,9 @@
   "name": "prompt-identifiers-ai-sdk",
   "version": "0.2.0",
   "description": "Vercel AI SDK middleware for prompt-identifiers. Efficient ID compression for token optimization.",
-  "main": "dist/index.js",
+  "main": "dist/index.cjs",
   "module": "dist/index.mjs",
-  "types": "dist/index.d.ts",
+  "types": "dist/index.d.cts",
   "exports": {
     ".": {
       "import": {
@@ -12,8 +12,8 @@
         "default": "./dist/index.mjs"
       },
       "require": {
-        "types": "./dist/index.d.ts",
-        "default": "./dist/index.js"
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
       }
     }
   },
@@ -22,7 +22,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsup src/index.ts --format cjs,esm --dts --clean",
+    "build": "tsdown src/index.ts --format esm --format cjs --dts",
     "test": "vitest run",
     "prepublishOnly": "npm run build"
   },
@@ -54,8 +54,8 @@
     "@types/node": "^26.5.1",
     "ai": "^7.0.99",
     "prompt-identifiers": "workspace:*",
-    "tsup": "^8.5.1",
-    "typescript": "^6.0.3",
+    "tsdown": "^0.23.0",
+    "typescript": "^7.0.2",
     "vitest": "^5.0.0"
   }
 }
