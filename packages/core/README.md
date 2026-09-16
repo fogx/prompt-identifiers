@@ -76,12 +76,12 @@ The global flag (`g`) is added automatically if not present.
 
 ### Built-in Formats
 
-| Format          | Description                                          | Examples                           |
-| --------------- | ---------------------------------------------------- | ---------------------------------- |
-| `'SafeNumeric'` | **Recommended.** Collision-safe with tildes           | `~000~`, `~001~`, `~002~`          |
-| `'Numeric'`     | Smart triplet expansion                              | `000`, `001`, ..., `999`, `001000` |
-| `'IdToken'`     | Base62 compact                                       | `0`, `A`, `z`, `10`                |
-| `'Passthrough'` | No replacement                                       | Original text unchanged            |
+| Format          | Description                                 | Examples                           |
+| --------------- | ------------------------------------------- | ---------------------------------- |
+| `'SafeNumeric'` | **Recommended.** Collision-safe with tildes | `~000~`, `~001~`, `~002~`          |
+| `'Numeric'`     | Smart triplet expansion                     | `000`, `001`, ..., `999`, `001000` |
+| `'IdToken'`     | Base62 compact                              | `0`, `A`, `z`, `10`                |
+| `'Passthrough'` | No replacement                              | Original text unchanged            |
 
 ### SafeNumeric Format (Recommended)
 
