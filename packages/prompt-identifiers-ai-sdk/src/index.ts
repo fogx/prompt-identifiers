@@ -122,6 +122,9 @@ export interface DecodeWarning {
  * 2. Stripped delimiters: bare placeholder indices (e.g., 000) that appear
  *    as standalone values, suggesting the LLM stripped the delimiter characters.
  */
+/** Stand-in for a restored ID while scanning decoded output for anomalies. */
+const ID_MASK = "\u0001";
+
 function detectDecodeWarnings(
   decodedText: string,
   decodedToolCallInputs: string[],
@@ -130,6 +133,7 @@ function detectDecodeWarnings(
   const placeholders = Object.keys(mapping);
   if (placeholders.length === 0) return [];
 
+  const ids = Object.values(mapping);
   const warnings: DecodeWarning[] = [];
 
   // Extract bare indices from placeholders (e.g., "~000~" -> "000")
@@ -140,9 +144,14 @@ function detectDecodeWarnings(
   }
 
   function check(text: string, source: "text" | "tool_call") {
+    // Mask out the restored IDs first. Non-delimited placeholders are bare digits
+    // ("000", "0") and a restored UUID contains those by construction, so an
+    // unmasked scan reports a surviving placeholder on every successful decode.
+    const masked = ids.reduce((acc, id) => acc.split(id).join(ID_MASK), text);
+
     // Check for surviving placeholders
     for (const placeholder of placeholders) {
-      if (text.includes(placeholder)) {
+      if (masked.includes(placeholder)) {
         warnings.push({ type: "surviving_placeholder", value: placeholder, source });
       }
     }
@@ -151,7 +160,7 @@ function detectDecodeWarnings(
     // Match "000" or similar as a JSON value (surrounded by quotes)
     for (const bare of bareIndices) {
       const pattern = new RegExp(`"${bare}"`, "g");
-      if (pattern.test(text)) {
+      if (pattern.test(masked)) {
         warnings.push({ type: "stripped_delimiter", value: bare, source });
       }
     }
@@ -230,9 +239,24 @@ function injectInstructionIntoPrompt(
 // Internal Helpers
 // =============================================================================
 
+/** The inline-text variant of a file part's tagged data union. */
+interface InlineTextFileData {
+  type: "text";
+  text: string;
+}
+
+function isInlineTextFileData(data: unknown): data is InlineTextFileData {
+  return (
+    typeof data === "object" &&
+    data !== null &&
+    (data as { type?: unknown }).type === "text" &&
+    typeof (data as { text?: unknown }).text === "string"
+  );
+}
+
 /**
  * Encode IDs in tool result output.
- * Handles both text and json output types.
+ * Handles the text, json, error-text, error-json, content and execution-denied output types.
  */
 function encodeToolResultOutput(
   output: unknown,
@@ -243,19 +267,37 @@ function encodeToolResultOutput(
     return output;
   }
 
-  const typedOutput = output as { type?: string; value?: unknown };
+  const typedOutput = output as { type?: string; value?: unknown; reason?: unknown };
 
   // For text output, encode the string value directly
-  if (typedOutput.type === "text" && typeof typedOutput.value === "string") {
+  if (
+    (typedOutput.type === "text" || typedOutput.type === "error-text") &&
+    typeof typedOutput.value === "string"
+  ) {
     const result = encode(typedOutput.value, config, state);
     return { ...typedOutput, value: result.encoded };
   }
 
   // For json output, stringify → encode → parse
-  if (typedOutput.type === "json" && typedOutput.value !== undefined) {
+  if (
+    (typedOutput.type === "json" || typedOutput.type === "error-json") &&
+    typedOutput.value !== undefined
+  ) {
     const stringified = JSON.stringify(typedOutput.value);
     const result = encode(stringified, config, state);
     return { ...typedOutput, value: JSON.parse(result.encoded) };
+  }
+
+  // For content output, the value is an array of the same text and file parts
+  // that appear in message content
+  if (typedOutput.type === "content" && Array.isArray(typedOutput.value)) {
+    return { ...typedOutput, value: encodeMessageContent(typedOutput.value, config, state) };
+  }
+
+  // For execution-denied output, the only payload is a free-text reason
+  if (typedOutput.type === "execution-denied" && typeof typedOutput.reason === "string") {
+    const result = encode(typedOutput.reason, config, state);
+    return { ...typedOutput, reason: result.encoded };
   }
 
   return output;
@@ -304,6 +346,18 @@ function encodeMessageContent(
         return {
           ...typedPart,
           text: encodeMessageContent(typedPart.text, config, state),
+        };
+      }
+
+      // Handle FilePart data: a tagged union where only the inline-text variant
+      // carries encodable content; binary, URL and reference data pass through
+      if (isInlineTextFileData(typedPart.data)) {
+        return {
+          ...typedPart,
+          data: {
+            ...typedPart.data,
+            text: encode(typedPart.data.text, config, state).encoded,
+          },
         };
       }
 
@@ -658,6 +712,10 @@ export function promptIdentifiersMiddleware(
           }
           return { ...item, text: decoded };
         }
+        if (item.type === "reasoning") {
+          const { decoded } = decodeText(item.text, mapping);
+          return { ...item, text: decoded };
+        }
         // Decode tool call inputs (input is stringified JSON)
         if (item.type === "tool-call" && "input" in item && typeof item.input === "string") {
           const decodedInput = decodeToolInputString(item.input, mapping);
@@ -695,9 +753,15 @@ export function promptIdentifiersMiddleware(
       }
 
       const textDecoder = createStreamingDecoder(mapping);
+      // Reasoning arrives as its own delta stream, so it needs a buffer of its own
+      const reasoningDecoder = createStreamingDecoder(mapping);
+      // Each streaming tool input is a separate JSON document with its own buffer
+      const toolInputDecoders = new Map<string, ReturnType<typeof createStreamingDecoder>>();
 
       let accDecodedText = "";
       const accDecodedToolCallInputs: string[] = [];
+      let lastTextId = "";
+      let lastReasoningId = "";
 
       // Debug-only accumulation state
       let streamStartTime = 0;
@@ -710,8 +774,35 @@ export function promptIdentifiersMiddleware(
         LanguageModelV4StreamPart
       >({
         transform(chunk, controller) {
+          // A closing chunk is the last chance to emit what a decoder still holds:
+          // anything enqueued from flush() arrives after the stream has finished,
+          // with no open block to attach to, and is dropped from the assembled message.
+          if (chunk.type === "text-end" || chunk.type === "finish") {
+            const remaining = textDecoder.flush();
+            if (remaining) {
+              accDecodedText += remaining;
+              controller.enqueue({
+                type: "text-delta",
+                id: lastTextId,
+                delta: remaining,
+              } as LanguageModelV4StreamPart);
+            }
+          }
+
+          if (chunk.type === "reasoning-end" || chunk.type === "finish") {
+            const remaining = reasoningDecoder.flush();
+            if (remaining) {
+              controller.enqueue({
+                type: "reasoning-delta",
+                id: lastReasoningId,
+                delta: remaining,
+              } as LanguageModelV4StreamPart);
+            }
+          }
+
           // Decode text deltas
           if (chunk.type === "text-delta" && chunk.delta) {
+            lastTextId = chunk.id;
             if (debug) {
               if (!streamStarted) {
                 streamStartTime = performance.now();
@@ -722,6 +813,16 @@ export function promptIdentifiersMiddleware(
             const decoded = textDecoder.process(chunk.delta);
             if (decoded) {
               accDecodedText += decoded;
+              controller.enqueue({ ...chunk, delta: decoded });
+            }
+            return;
+          }
+
+          // Decode reasoning deltas
+          if (chunk.type === "reasoning-delta" && chunk.delta) {
+            lastReasoningId = chunk.id;
+            const decoded = reasoningDecoder.process(chunk.delta);
+            if (decoded) {
               controller.enqueue({ ...chunk, delta: decoded });
             }
             return;
@@ -738,26 +839,47 @@ export function promptIdentifiersMiddleware(
             return;
           }
 
+          if (chunk.type === "tool-input-start") {
+            toolInputDecoders.set(chunk.id, createStreamingDecoder(mapping));
+            controller.enqueue(chunk);
+            return;
+          }
+
           // Decode tool input deltas (partial JSON strings)
           if (chunk.type === "tool-input-delta" && "delta" in chunk) {
-            const decodedDelta = decode((chunk as { delta: string }).delta, mapping);
-            controller.enqueue({ ...chunk, delta: decodedDelta });
+            const decoder = toolInputDecoders.get(chunk.id);
+            const rawDelta = (chunk as { delta: string }).delta;
+            const decodedDelta = decoder ? decoder.process(rawDelta) : decode(rawDelta, mapping);
+            if (decodedDelta) {
+              controller.enqueue({ ...chunk, delta: decodedDelta });
+            }
+            return;
+          }
+
+          if (chunk.type === "tool-input-end") {
+            const decoder = toolInputDecoders.get(chunk.id);
+            if (decoder) {
+              const remaining = decoder.flush();
+              if (remaining) {
+                controller.enqueue({
+                  type: "tool-input-delta",
+                  id: chunk.id,
+                  delta: remaining,
+                } as LanguageModelV4StreamPart);
+              }
+              toolInputDecoders.delete(chunk.id);
+            }
+            controller.enqueue(chunk);
             return;
           }
 
           controller.enqueue(chunk);
         },
 
-        flush(controller) {
-          const remaining = textDecoder.flush();
-          if (remaining) {
-            accDecodedText += remaining;
-            controller.enqueue({
-              type: "text-delta",
-              id: "",
-              delta: remaining,
-            } as LanguageModelV4StreamPart);
-          }
+        flush() {
+          // A stream that ended without a closing chunk leaves the buffer unflushed;
+          // it is too late to emit it, but the callback should still see it.
+          accDecodedText += textDecoder.flush();
 
           const durationMs = debug && streamStarted ? performance.now() - streamStartTime : 0;
           const warnings = detectDecodeWarnings(

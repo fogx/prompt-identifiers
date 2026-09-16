@@ -5,7 +5,7 @@ import type {
   LanguageModelV4StreamPart,
   LanguageModelV4StreamResult,
 } from "@ai-sdk/provider";
-import type { EncodeConfig } from "prompt-identifiers";
+import { encode, type EncodeConfig, type OutputFormat } from "prompt-identifiers";
 import { promptIdentifiersMiddleware } from "../src/index";
 import {
   collectStreamText,
@@ -1344,5 +1344,43 @@ describe("prompt-identifiers-ai-sdk", () => {
       const result = onDecode.mock.calls[0][0];
       expect(result.warnings).toBeUndefined();
     });
+
+    test.each<OutputFormat>(["SafeNumeric", "Numeric", "IdToken"])(
+      "no warnings on a clean round trip with the %s output format",
+      async (outputFormat) => {
+        const onDecode = vi.fn();
+        const config: EncodeConfig = { inputFormat: "UUID", outputFormat };
+        const middleware = createMiddleware({ config, onDecode });
+
+        const uuid = "123e4567-e89b-42d3-a456-426655440000";
+        const params = createParams([userMessage(`Find user ${uuid}`)]);
+
+        const transformedParams = await middleware.transformParams({
+          params,
+          type: "generate",
+          model: mockModel,
+        });
+
+        const mockResult: LanguageModelV4GenerateResult = {
+          content: [
+            { type: "text", text: encode(`Found user ${uuid}.`, config).encoded },
+          ],
+          finishReason: mockFinishReason(),
+          usage: mockUsage(),
+          warnings: [],
+        };
+
+        await middleware.wrapGenerate({
+          doGenerate: vi.fn().mockResolvedValue(mockResult),
+          doStream: vi.fn(),
+          params: transformedParams,
+          model: mockModel,
+        });
+
+        const result = onDecode.mock.calls[0][0];
+        expect(result.output).toBe(`Found user ${uuid}.`);
+        expect(result.warnings).toBeUndefined();
+      }
+    );
   });
 });
