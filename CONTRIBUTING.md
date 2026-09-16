@@ -28,8 +28,9 @@ prompt-identifiers/
 │       └── __tests__/
 ├── .changeset/                    # Pending release notes
 ├── .github/workflows/             # CI/CD
+├── README.md
 ├── CLAUDE.md
-├── CHANGELOG.md
+├── CHANGELOG.md                   # History up to 0.1.2; changesets own it since
 └── CONTRIBUTING.md
 ```
 
@@ -37,7 +38,7 @@ prompt-identifiers/
 
 ### Prerequisites
 
-- **Node.js ^22.18 or ^24.11+** (the range tsdown, vitest and changesets accept; CI runs 22 and 24)
+- **Node.js `^22.18.0 || ^24.11.0 || >=26.0.0`** (the range tsdown, vitest and changesets accept; CI runs 22 and 24)
 - **pnpm 12**, pinned through `packageManager` in `package.json`
 
 ### Getting Started

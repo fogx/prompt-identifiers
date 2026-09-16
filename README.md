@@ -188,7 +188,7 @@ const result = await generateText({
 
 By default, the middleware appends a short instruction to the system message telling the model to preserve encoded identifiers:
 
-> "All UUIDs have been replaced with short identifiers in the format ~000~. Always pass these identifiers exactly as-is."
+> "All UUIDs have been replaced with short identifiers in the format ~~000~~. Always pass these identifiers exactly as-is."
 
 This prevents LLMs from stripping delimiter characters (e.g., outputting `000` instead of `~000~` in tool call arguments). The instruction is only injected when at least one ID was encoded.
 
@@ -472,7 +472,7 @@ interface EncodeConfig {
 #### `OutputFormat`
 
 - `'Numeric'` - Smart triplet expansion (000, 001, ..., 001000, ...)
-- `'SafeNumeric'` - Collision-safe tilde-wrapped (~000~, ~001~, ...)
+- `'SafeNumeric'` - Collision-safe tilde-wrapped (~~000~~, ~~001~~, ...)
 - `'IdToken'` - Base62 compact format
 - `'Passthrough'` - No replacement (for testing)
 - `{ template: string }` - Template with `{i}` placeholder
