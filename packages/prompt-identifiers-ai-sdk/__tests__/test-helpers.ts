@@ -183,8 +183,7 @@ export function getResultText(result: LanguageModelV4GenerateResult): string | u
 export function getToolCall(result: LanguageModelV4GenerateResult, index = 0) {
   const toolCalls = result.content.filter((c) => c.type === "tool-call");
   return toolCalls[index] as
-    | { type: "tool-call"; toolCallId: string; toolName: string; input: string }
-    | undefined;
+    { type: "tool-call"; toolCallId: string; toolName: string; input: string } | undefined;
 }
 
 // =============================================================================

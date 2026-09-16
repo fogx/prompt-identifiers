@@ -114,6 +114,9 @@ export interface DecodeWarning {
 // Decode Warnings
 // =============================================================================
 
+/** Stand-in for a restored ID while scanning decoded output for anomalies. */
+const ID_MASK = "\u0001";
+
 /**
  * Detect decode anomalies in the decoded output.
  *
@@ -122,9 +125,6 @@ export interface DecodeWarning {
  * 2. Stripped delimiters: bare placeholder indices (e.g., 000) that appear
  *    as standalone values, suggesting the LLM stripped the delimiter characters.
  */
-/** Stand-in for a restored ID while scanning decoded output for anomalies. */
-const ID_MASK = "\u0001";
-
 function detectDecodeWarnings(
   decodedText: string,
   decodedToolCallInputs: string[],
@@ -307,11 +307,7 @@ function encodeToolResultOutput(
  * Encode IDs in tool call input (args).
  * Input is an arbitrary object in prompt messages — stringify → encode → parse.
  */
-function encodeToolCallInput(
-  input: unknown,
-  config: EncodeConfig,
-  state: EncodeState
-): unknown {
+function encodeToolCallInput(input: unknown, config: EncodeConfig, state: EncodeState): unknown {
   if (input == null) return input;
 
   const stringified = JSON.stringify(input);
@@ -323,11 +319,7 @@ function encodeToolCallInput(
  * Encode IDs in message content.
  * Handles plain string content, multi-part content arrays (TextPart, ToolResultPart, etc.).
  */
-function encodeMessageContent(
-  content: unknown,
-  config: EncodeConfig,
-  state: EncodeState
-): unknown {
+function encodeMessageContent(content: unknown, config: EncodeConfig, state: EncodeState): unknown {
   if (typeof content === "string") {
     const result = encode(content, config, state);
     return result.encoded;
@@ -882,11 +874,7 @@ export function promptIdentifiersMiddleware(
           accDecodedText += textDecoder.flush();
 
           const durationMs = debug && streamStarted ? performance.now() - streamStartTime : 0;
-          const warnings = detectDecodeWarnings(
-            accDecodedText,
-            accDecodedToolCallInputs,
-            mapping
-          );
+          const warnings = detectDecodeWarnings(accDecodedText, accDecodedToolCallInputs, mapping);
 
           onDecode?.({
             output: accDecodedText,
