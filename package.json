@@ -1,5 +1,5 @@
 {
-  "name": "prompt-identifiers",
+  "name": "prompt-identifiers-monorepo",
   "private": true,
   "scripts": {
     "build": "pnpm -r build",
@@ -13,5 +13,8 @@
     "@types/node": "^22.20.2",
     "prettier": "^3.9.6"
   },
-  "packageManager": "pnpm@12.4.0"
+  "packageManager": "pnpm@12.4.0",
+  "engines": {
+    "node": "^22.18.0 || ^24.11.0 || >=26.0.0"
+  }
 }

@@ -83,8 +83,6 @@ Handles TextPart, ToolResultPart (text + JSON), and tool call inputs.
 
 ## Changelog
 
-When making changes, update root `CHANGELOG.md`:
-
-- Add entries under the relevant package section
-- Categories: `Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`, `Security`
-- Imperative mood: "Add feature" not "Added feature"
+Changesets own the changelogs. Run `pnpm changeset` and describe the change for each
+package it affects, in imperative mood: "Add feature" not "Added feature". `changeset
+version` writes the per-package `CHANGELOG.md` files and the version bumps.
