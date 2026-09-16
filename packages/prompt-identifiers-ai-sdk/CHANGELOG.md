@@ -1,16 +1,5 @@
 # prompt-identifiers-ai-sdk
 
-## 0.3.0
-
-### Minor Changes
-
-- 326082a: **Breaking:** Support AI SDK v7. The middleware now implements `LanguageModelV4Middleware` (`specificationVersion: "v4"`) and requires `ai@>=7` and `@ai-sdk/provider@>=4`. Stay on 0.2.x for AI SDK v6.
-
-### Patch Changes
-
-- Updated dependencies [a0e182f]
-  - prompt-identifiers@0.1.4
-
 ## 0.2.0
 
 ### Minor Changes
