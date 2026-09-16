@@ -1,7 +1,7 @@
 # Changelog
 
-History up to 0.1.2. From 0.1.3 on, each package keeps its own `CHANGELOG.md`,
-written by changesets from the entries in `.changeset/`.
+Pre-changesets history, ending at 0.1.2. Each package's own `CHANGELOG.md` is
+authoritative, and changesets writes it from the entries in `.changeset/`.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
