@@ -30,7 +30,7 @@ prompt-identifiers/
 ├── .github/workflows/             # CI/CD
 ├── README.md
 ├── CLAUDE.md
-├── CHANGELOG.md                   # History up to 0.1.2; changesets own it since
+├── CHANGELOG.md                   # Pre-changesets history, ending at 0.1.2
 └── CONTRIBUTING.md
 ```
 
