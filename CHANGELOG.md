@@ -1,29 +1,10 @@
 # Changelog
 
-All notable changes to this project will be documented in this file.
+History up to 0.1.2. From 0.1.3 on, each package keeps its own `CHANGELOG.md`,
+written by changesets from the entries in `.changeset/`.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-
-## [Unreleased]
-
-### prompt-identifiers (core)
-
-#### Changed
-
-- Export `createFormatter` for use by integrations
-
-### prompt-identifiers-ai-sdk
-
-#### Added
-
-- Add `injectInstruction` option (default `true`) to append a format-preservation instruction to the system message, preventing LLMs from stripping delimiter characters in tool call arguments
-- Add `customInstruction` option with `{format}` placeholder for custom instruction text
-- Add `DecodeWarning` type and `warnings` array in `onDecode` callback to detect stripped delimiters and surviving placeholders in both text and tool call outputs
-
-### prompt-identifiers-baml
-
----
 
 ## [0.1.2] - 2026-03-02
 

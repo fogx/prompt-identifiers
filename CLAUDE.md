@@ -25,7 +25,7 @@ cd packages/core && npx vitest run -t "encode"   # Filter by name
 
 # Benchmarks (core only)
 cd packages/core && pnpm bench            # Performance benchmarks
-cd packages/core && pnpm bench:accuracy   # Accuracy benchmarks
+cd packages/core && pnpm bench:accuracy   # Accuracy benchmarks (needs API keys, see packages/core/.env.example)
 ```
 
 ## Architecture
