@@ -1119,9 +1119,7 @@ describe("prompt-identifiers-ai-sdk", () => {
         injectInstruction: true,
       });
 
-      const params = createParams([
-        userMessage("Find user 123e4567-e89b-42d3-a456-426655440000"),
-      ]);
+      const params = createParams([userMessage("Find user 123e4567-e89b-42d3-a456-426655440000")]);
 
       const result = await middleware.transformParams({
         params,
@@ -1362,9 +1360,7 @@ describe("prompt-identifiers-ai-sdk", () => {
         });
 
         const mockResult: LanguageModelV4GenerateResult = {
-          content: [
-            { type: "text", text: encode(`Found user ${uuid}.`, config).encoded },
-          ],
+          content: [{ type: "text", text: encode(`Found user ${uuid}.`, config).encoded }],
           finishReason: mockFinishReason(),
           usage: mockUsage(),
           warnings: [],

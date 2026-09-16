@@ -446,7 +446,11 @@ describe("Streaming decoder: overlapping delimiter edge cases", () => {
   });
 
   test("~ID: literal ~ID in text (not followed by digits)", async () => {
-    const text = await streamAndCollect(closePrefixConfig, [uuid1], ["~IDeas are great. ~ID000~ works."]);
+    const text = await streamAndCollect(
+      closePrefixConfig,
+      [uuid1],
+      ["~IDeas are great. ~ID000~ works."]
+    );
     expect(text).toBe(`~IDeas are great. ${uuid1} works.`);
   });
 
@@ -456,52 +460,46 @@ describe("Streaming decoder: overlapping delimiter edge cases", () => {
   });
 
   test("ID~: literal ~ in text between placeholders", async () => {
-    const text = await streamAndCollect(openSuffixConfig, [uuid1, uuid2], [
-      "~000ID~ has a ~ tilde ~001ID~",
-    ]);
+    const text = await streamAndCollect(
+      openSuffixConfig,
+      [uuid1, uuid2],
+      ["~000ID~ has a ~ tilde ~001ID~"]
+    );
     expect(text).toBe(`${uuid1} has a ~ tilde ${uuid2}`);
   });
 
   // ─── Overlap at chunk boundary ────────────────────────────────
   test("~ID: chunk ends with closing ~ that could start new ~ID", async () => {
     // The ~ at end of chunk 1 is CLOSE for first placeholder, not start of OPEN
-    const text = await streamAndCollect(closePrefixConfig, [uuid1, uuid2], [
-      "~ID000~",
-      " and ~ID001~",
-    ]);
+    const text = await streamAndCollect(
+      closePrefixConfig,
+      [uuid1, uuid2],
+      ["~ID000~", " and ~ID001~"]
+    );
     expect(text).toBe(`${uuid1} and ${uuid2}`);
   });
 
   test("~ID: chunk boundary splits closing ~ from OPEN of next placeholder", async () => {
-    const text = await streamAndCollect(closePrefixConfig, [uuid1, uuid2], [
-      "~ID000~",
-      "~ID00",
-      "1~",
-    ]);
+    const text = await streamAndCollect(
+      closePrefixConfig,
+      [uuid1, uuid2],
+      ["~ID000~", "~ID00", "1~"]
+    );
     expect(text).toBe(`${uuid1}${uuid2}`);
   });
 
   test("ID~: chunk boundary splits ~ that is both end of CLOSE and potential OPEN", async () => {
-    const text = await streamAndCollect(openSuffixConfig, [uuid1, uuid2], [
-      "~000ID~",
-      "~001ID~",
-    ]);
+    const text = await streamAndCollect(openSuffixConfig, [uuid1, uuid2], ["~000ID~", "~001ID~"]);
     expect(text).toBe(`${uuid1}${uuid2}`);
   });
 
   test("ID~: chunk ends mid-CLOSE (ID without ~)", async () => {
-    const text = await streamAndCollect(openSuffixConfig, [uuid1], [
-      "Result: ~000ID",
-      "~ done",
-    ]);
+    const text = await streamAndCollect(openSuffixConfig, [uuid1], ["Result: ~000ID", "~ done"]);
     expect(text).toBe(`Result: ${uuid1} done`);
   });
 
   test("~ID: chunk ends mid-OPEN (~I without D)", async () => {
-    const text = await streamAndCollect(closePrefixConfig, [uuid1], [
-      "Result: ~I",
-      "D000~ done",
-    ]);
+    const text = await streamAndCollect(closePrefixConfig, [uuid1], ["Result: ~I", "D000~ done"]);
     expect(text).toBe(`Result: ${uuid1} done`);
   });
 });
