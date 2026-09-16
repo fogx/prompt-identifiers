@@ -19,12 +19,14 @@
   },
   "sideEffects": false,
   "files": [
-    "dist"
+    "dist",
+    "src"
   ],
   "scripts": {
-    "build": "tsdown src/index.ts --format esm --format cjs --dts",
+    "build": "tsdown src/index.ts --format esm --format cjs --dts --sourcemap",
     "test": "vitest run",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build",
+    "typecheck": "tsc --noEmit -p tsconfig.typecheck.json"
   },
   "keywords": [
     "llm",
