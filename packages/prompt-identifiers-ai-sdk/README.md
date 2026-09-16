@@ -68,7 +68,9 @@ promptIdentifiersMiddleware({
   onEncode: (result) => {
     console.log("Mapping:", result.mapping);
     if (result.debugData) {
-      console.log(`Encoded ${result.debugData.encodedCount} IDs in ${result.debugData.durationMs}ms`);
+      console.log(
+        `Encoded ${result.debugData.encodedCount} IDs in ${result.debugData.durationMs}ms`
+      );
     }
   },
   onDecode: (result) => {
@@ -78,7 +80,9 @@ promptIdentifiersMiddleware({
       console.warn("Decode warnings:", result.warnings);
     }
     if (result.debugData) {
-      console.log(`Decoded ${result.debugData.decodedCount} placeholders in ${result.debugData.durationMs}ms`);
+      console.log(
+        `Decoded ${result.debugData.decodedCount} placeholders in ${result.debugData.durationMs}ms`
+      );
     }
   },
 });
@@ -94,12 +98,12 @@ promptIdentifiersMiddleware({
 
 ### Output Formats
 
-| Format                | Description                                       | Example                               |
-| --------------------- | ------------------------------------------------- | ------------------------------------- |
-| `'SafeNumeric'`       | Collision-safe with tildes (recommended)          | `~000~`, `~001~`                      |
-| `'Numeric'`           | Simple numeric with smart triplet expansion       | `000`, `001`                          |
-| `'IdToken'`           | Base62 encoding                                   | `0`, `A`, `z`, `10`                   |
-| `{ template: '...' }` | Custom template                                   | `{ template: '[ID:{i}]' }` → `[ID:0]` |
+| Format                | Description                                 | Example                               |
+| --------------------- | ------------------------------------------- | ------------------------------------- |
+| `'SafeNumeric'`       | Collision-safe with tildes (recommended)    | `~000~`, `~001~`                      |
+| `'Numeric'`           | Simple numeric with smart triplet expansion | `000`, `001`                          |
+| `'IdToken'`           | Base62 encoding                             | `0`, `A`, `z`, `10`                   |
+| `{ template: '...' }` | Custom template                             | `{ template: '[ID:{i}]' }` → `[ID:0]` |
 
 ## Streaming Support
 

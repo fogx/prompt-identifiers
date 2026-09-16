@@ -65,12 +65,16 @@ wrapBamlFunction(fn, {
     console.log("Mapping:", result.mapping);
     // debugData is only present when debug: true
     if (result.debugData) {
-      console.log(`Encoded ${result.debugData.encodedCount} IDs in ${result.debugData.durationMs}ms`);
+      console.log(
+        `Encoded ${result.debugData.encodedCount} IDs in ${result.debugData.durationMs}ms`
+      );
     }
   },
   onDecode: (result) => {
     if (result.debugData) {
-      console.log(`Decoded ${result.debugData.decodedCount} placeholders in ${result.debugData.durationMs}ms`);
+      console.log(
+        `Decoded ${result.debugData.decodedCount} placeholders in ${result.debugData.durationMs}ms`
+      );
     }
   },
 });
@@ -97,12 +101,12 @@ The `encodeFields` option supports dot notation and array wildcards:
 
 ### Output Formats
 
-| Format                | Description                                       | Example                               |
-| --------------------- | ------------------------------------------------- | ------------------------------------- |
-| `'SafeNumeric'`       | Collision-safe with tildes (recommended)          | `~000~`, `~001~`                      |
-| `'Numeric'`           | Simple numeric with smart triplet expansion       | `000`, `001`                          |
-| `'IdToken'`           | Base62 encoding                                   | `0`, `A`, `z`, `10`                   |
-| `{ template: '...' }` | Custom template                                   | `{ template: '[ID:{i}]' }` → `[ID:0]` |
+| Format                | Description                                 | Example                               |
+| --------------------- | ------------------------------------------- | ------------------------------------- |
+| `'SafeNumeric'`       | Collision-safe with tildes (recommended)    | `~000~`, `~001~`                      |
+| `'Numeric'`           | Simple numeric with smart triplet expansion | `000`, `001`                          |
+| `'IdToken'`           | Base62 encoding                             | `0`, `A`, `z`, `10`                   |
+| `{ template: '...' }` | Custom template                             | `{ template: '[ID:{i}]' }` → `[ID:0]` |
 
 ## Streaming Support
 
