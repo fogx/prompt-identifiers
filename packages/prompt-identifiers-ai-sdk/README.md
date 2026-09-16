@@ -8,6 +8,8 @@ Vercel AI SDK middleware for automatic ID encoding/decoding in LLM prompts. Redu
 npm install prompt-identifiers-ai-sdk prompt-identifiers ai
 ```
 
+Requires `ai` v7 and `@ai-sdk/provider` v4. On AI SDK v6, stay on `prompt-identifiers-ai-sdk@0.2.x`.
+
 ## Quick Start
 
 ```typescript

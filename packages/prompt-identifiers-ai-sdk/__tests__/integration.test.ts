@@ -7,7 +7,7 @@
 
 import { describe, test, expect, vi } from "vitest";
 import type { LanguageModelV4Message, LanguageModelV4StreamPart } from "@ai-sdk/provider";
-import { wrapLanguageModel } from "ai";
+import { streamText, wrapLanguageModel } from "ai";
 import type { EncodeConfig } from "prompt-identifiers";
 import { promptIdentifiersMiddleware } from "../src/index";
 import {
@@ -589,5 +589,293 @@ describe("AI SDK Integration", () => {
       expect(decodeResult.debugData.input).toBe("Found ~000~ in DB.");
       expect(decodeResult.debugData.output).toBe(`Found ${uuid1} in DB.`);
     });
+  });
+});
+
+describe("AI SDK Integration: V4 content coverage", () => {
+  const config: EncodeConfig = {
+    inputFormat: "UUID",
+    outputFormat: "SafeNumeric",
+  };
+
+  const uuid1 = "123e4567-e89b-42d3-a456-426655440000";
+  const uuid2 = "987fcdeb-51a2-43f7-8d9c-0123456789ab";
+
+  function wrap(model: ReturnType<typeof createMockModel>) {
+    return wrapLanguageModel({
+      model,
+      middleware: promptIdentifiersMiddleware({ config, injectInstruction: false }),
+    });
+  }
+
+  /** Sends the prompt through the middleware and returns what the model received. */
+  async function promptSeenByModel(
+    prompt: LanguageModelV4Message[]
+  ): Promise<LanguageModelV4Message[]> {
+    let receivedPrompt: LanguageModelV4Message[] = [];
+    const model = createMockModel({
+      onGenerate: (p) => {
+        receivedPrompt = p;
+        return {
+          content: [{ type: "text", text: "OK" }],
+          finishReason: mockFinishReason(),
+          usage: mockUsage(),
+          warnings: [],
+        };
+      },
+    });
+
+    await wrap(model).doGenerate({ prompt });
+    return receivedPrompt;
+  }
+
+  function fileData(msg: LanguageModelV4Message, index: number): unknown {
+    if (msg.role !== "user") return undefined;
+    const part = msg.content[index];
+    return part.type === "file" ? part.data : undefined;
+  }
+
+  function toolResultOutput(msg: LanguageModelV4Message): Record<string, unknown> | undefined {
+    if (msg.role !== "tool") return undefined;
+    const part = msg.content.find((p) => p.type === "tool-result");
+    return part && "output" in part ? (part.output as Record<string, unknown>) : undefined;
+  }
+
+  function toolResultMessage(output: unknown): LanguageModelV4Message {
+    return {
+      role: "tool",
+      content: [{ type: "tool-result", toolCallId: "call-1", toolName: "get_user", output }],
+    } as LanguageModelV4Message;
+  }
+
+  describe("file parts", () => {
+    test("encodes inline text carried by a file part", async () => {
+      const received = await promptSeenByModel([
+        {
+          role: "user",
+          content: [
+            { type: "text", text: `See the attached notes for ${uuid1}` },
+            {
+              type: "file",
+              mediaType: "text/plain",
+              data: { type: "text", text: `user ${uuid1} was last seen yesterday` },
+            },
+          ],
+        },
+      ]);
+
+      expect(fileData(received[0], 1)).toEqual({
+        type: "text",
+        text: "user ~000~ was last seen yesterday",
+      });
+    });
+
+    test("leaves binary, URL and reference file data untouched", async () => {
+      const url = new URL("https://example.com/report.pdf");
+      const received = await promptSeenByModel([
+        {
+          role: "user",
+          content: [
+            { type: "text", text: `Check ${uuid1}` },
+            { type: "file", mediaType: "application/pdf", data: { type: "data", data: "YmFzZTY0" } },
+            { type: "file", mediaType: "application/pdf", data: { type: "url", url } },
+            {
+              type: "file",
+              mediaType: "application/pdf",
+              data: { type: "reference", reference: { openai: uuid1 } },
+            },
+          ],
+        },
+      ]);
+
+      expect(fileData(received[0], 1)).toEqual({ type: "data", data: "YmFzZTY0" });
+      expect(fileData(received[0], 2)).toEqual({ type: "url", url });
+      expect(fileData(received[0], 3)).toEqual({
+        type: "reference",
+        reference: { openai: uuid1 },
+      });
+    });
+  });
+
+  describe("tool result outputs", () => {
+    test("encodes an error-text output", async () => {
+      const received = await promptSeenByModel([
+        toolResultMessage({ type: "error-text", value: `no such user ${uuid1}` }),
+      ]);
+
+      expect(toolResultOutput(received[0])).toEqual({
+        type: "error-text",
+        value: "no such user ~000~",
+      });
+    });
+
+    test("encodes an error-json output", async () => {
+      const received = await promptSeenByModel([
+        toolResultMessage({ type: "error-json", value: { code: "not_found", id: uuid1 } }),
+      ]);
+
+      expect(toolResultOutput(received[0])).toEqual({
+        type: "error-json",
+        value: { code: "not_found", id: "~000~" },
+      });
+    });
+
+    test("encodes text and inline-text file entries in a content output", async () => {
+      const received = await promptSeenByModel([
+        toolResultMessage({
+          type: "content",
+          value: [
+            { type: "text", text: `user ${uuid1}` },
+            {
+              type: "file",
+              mediaType: "text/plain",
+              data: { type: "text", text: `owner ${uuid2}` },
+            },
+            { type: "file", mediaType: "image/png", data: { type: "data", data: "YmFzZTY0" } },
+          ],
+        }),
+      ]);
+
+      expect(toolResultOutput(received[0])).toEqual({
+        type: "content",
+        value: [
+          { type: "text", text: "user ~000~" },
+          { type: "file", mediaType: "text/plain", data: { type: "text", text: "owner ~001~" } },
+          { type: "file", mediaType: "image/png", data: { type: "data", data: "YmFzZTY0" } },
+        ],
+      });
+    });
+
+    test("encodes the reason of an execution-denied output", async () => {
+      const received = await promptSeenByModel([
+        toolResultMessage({ type: "execution-denied", reason: `user ${uuid1} declined` }),
+      ]);
+
+      expect(toolResultOutput(received[0])).toEqual({
+        type: "execution-denied",
+        reason: "user ~000~ declined",
+      });
+    });
+  });
+
+  describe("reasoning output", () => {
+    test("decodes reasoning content in a generate result", async () => {
+      const model = createMockModel({
+        onGenerate: () => ({
+          content: [
+            { type: "reasoning", text: "The user asked about ~000~." },
+            { type: "text", text: "Done with ~000~." },
+          ],
+          finishReason: mockFinishReason(),
+          usage: mockUsage(),
+          warnings: [],
+        }),
+      });
+
+      const result = await wrap(model).doGenerate({ prompt: [userMessage(`Find ${uuid1}`)] });
+
+      const reasoning = result.content.find((c) => c.type === "reasoning");
+      expect(reasoning?.type === "reasoning" ? reasoning.text : undefined).toBe(
+        `The user asked about ${uuid1}.`
+      );
+      expect(getResultText(result)).toBe(`Done with ${uuid1}.`);
+    });
+
+    test("decodes reasoning deltas in a stream", async () => {
+      const model = createMockModel({
+        onStream: () => [
+          { type: "reasoning-delta", id: "r1", delta: "Looking up ~000~ first." },
+          { type: "text-delta", id: "t1", delta: "Found ~000~." },
+        ],
+      });
+
+      const { stream } = await wrap(model).doStream({ prompt: [userMessage(`Find ${uuid1}`)] });
+      const parts = await collectStreamParts(stream);
+
+      expect(deltasOfType(parts, "reasoning-delta")).toBe(`Looking up ${uuid1} first.`);
+      expect(deltasOfType(parts, "text-delta")).toBe(`Found ${uuid1}.`);
+    });
+
+    test("buffers reasoning deltas separately from text deltas", async () => {
+      const model = createMockModel({
+        onStream: () => [
+          { type: "reasoning-delta", id: "r1", delta: "Ref ~00" },
+          { type: "text-delta", id: "t1", delta: `Answer for ~001~.` },
+          { type: "reasoning-delta", id: "r2", delta: "0~ noted." },
+        ],
+      });
+
+      const { stream } = await wrap(model).doStream({
+        prompt: [userMessage(`Find ${uuid1} and ${uuid2}`)],
+      });
+      const parts = await collectStreamParts(stream);
+
+      expect(deltasOfType(parts, "reasoning-delta")).toBe(`Ref ${uuid1} noted.`);
+      expect(deltasOfType(parts, "text-delta")).toBe(`Answer for ${uuid2}.`);
+    });
+  });
+});
+
+function deltasOfType(parts: LanguageModelV4StreamPart[], type: "text-delta" | "reasoning-delta") {
+  return parts
+    .filter((p) => p.type === type)
+    .map((p) => ("delta" in p ? p.delta : ""))
+    .join("");
+}
+
+describe("AI SDK Integration: streamText", () => {
+  const config: EncodeConfig = {
+    inputFormat: "UUID",
+    outputFormat: "SafeNumeric",
+  };
+
+  const uuid1 = "123e4567-e89b-42d3-a456-426655440000";
+
+  const finishPart = {
+    type: "finish",
+    finishReason: mockFinishReason(),
+    usage: mockUsage(),
+  } as unknown as LanguageModelV4StreamPart;
+
+  function textStreamParts(deltas: string[]): LanguageModelV4StreamPart[] {
+    return [
+      { type: "stream-start", warnings: [] },
+      { type: "text-start", id: "t0" },
+      ...deltas.map((delta) => ({ type: "text-delta" as const, id: "t0", delta })),
+      { type: "text-end", id: "t0" },
+      finishPart,
+    ];
+  }
+
+  function wrappedModel(deltas: string[]) {
+    return wrapLanguageModel({
+      model: createMockModel({ onStream: () => textStreamParts(deltas) }),
+      middleware: promptIdentifiersMiddleware({ config, injectInstruction: false }),
+    });
+  }
+
+  test("emits no text-delta after the stream has finished", async () => {
+    const { stream } = await wrappedModel(["Item ~000"]).doStream({
+      prompt: [userMessage(`Find ${uuid1}`)],
+    });
+
+    const types = (await collectStreamParts(stream)).map((p) => p.type);
+    expect(types.indexOf("text-delta", types.indexOf("finish"))).toBe(-1);
+  });
+
+  test.each([
+    { label: "a trailing bare delimiter", deltas: ["The id is ~000~ and cost ~"] },
+    { label: "a truncated placeholder", deltas: ["Item ~000"] },
+    { label: "a placeholder split across the last two deltas", deltas: ["Item ~0", "00"] },
+  ])("textStream and result.text agree with $label", async ({ deltas }) => {
+    const result = streamText({
+      model: wrappedModel(deltas),
+      prompt: `Tell me about ${uuid1}`,
+    });
+
+    let streamed = "";
+    for await (const delta of result.textStream) streamed += delta;
+
+    expect(await result.text).toBe(streamed);
   });
 });

@@ -115,7 +115,8 @@ const uuid5 = "facefeed-dead-4bee-af00-aabbccddeeff";
 async function streamAndCollect(
   config: EncodeConfig,
   uuids: string[],
-  chunks: string[]
+  chunks: string[],
+  partType: "text-delta" | "reasoning-delta" = "text-delta"
 ): Promise<string> {
   // Build a prompt that contains all UUIDs so they get encoded
   const promptText = uuids.map((u, i) => `id${i}=${u}`).join(" ");
@@ -129,7 +130,7 @@ async function streamAndCollect(
   });
 
   const streamParts: LanguageModelV4StreamPart[] = chunks.map((delta, i) => ({
-    type: "text-delta",
+    type: partType,
     id: String(i),
     delta,
   }));
@@ -143,7 +144,53 @@ async function streamAndCollect(
     model: mockModel,
   });
 
-  return collectStreamText(result.stream);
+  if (partType === "text-delta") {
+    return collectStreamText(result.stream);
+  }
+
+  const parts = await collectStreamParts(result.stream);
+  return parts
+    .filter((p) => p.type === partType)
+    .map((p) => ("delta" in p ? p.delta : ""))
+    .join("");
+}
+
+/**
+ * Stream a tool input through the middleware and collect the tool-input deltas.
+ */
+async function streamToolInputAndCollect(
+  config: EncodeConfig,
+  uuids: string[],
+  chunks: string[]
+): Promise<string> {
+  const promptText = uuids.map((u, i) => `id${i}=${u}`).join(" ");
+  const middleware = createMiddleware({ config });
+
+  const params = createParams([userMessage(promptText)]);
+  const transformedParams = await middleware.transformParams({
+    params,
+    type: "stream",
+    model: mockModel,
+  });
+
+  const streamParts = [
+    { type: "tool-input-start", id: "call-1", toolName: "lookup" },
+    ...chunks.map((delta) => ({ type: "tool-input-delta", id: "call-1", delta })),
+    { type: "tool-input-end", id: "call-1" },
+  ] as LanguageModelV4StreamPart[];
+
+  const result = await middleware.wrapStream({
+    doStream: vi.fn().mockResolvedValue({ stream: createMockStream(streamParts) }),
+    doGenerate: vi.fn(),
+    params: transformedParams,
+    model: mockModel,
+  });
+
+  const parts = await collectStreamParts(result.stream);
+  return parts
+    .filter((p) => p.type === "tool-input-delta")
+    .map((p) => ("delta" in p ? p.delta : ""))
+    .join("");
 }
 
 // =============================================================================
@@ -185,6 +232,25 @@ describe.each(formats)("Streaming decoder: $label", (fmt) => {
   test("split at closer", async () => {
     // e.g., "User [000" + "]" or "User ~000" + "~"
     const text = await streamAndCollect(config, [uuid1], [`User ${open}000`, `${close} found.`]);
+    expect(text).toBe(`User ${uuid1} found.`);
+  });
+
+  test("tool input placeholder split across two deltas", async () => {
+    const text = await streamToolInputAndCollect(
+      config,
+      [uuid1],
+      [`{"id":"${open}0`, `00${close}"}`]
+    );
+    expect(text).toBe(`{"id":"${uuid1}"}`);
+  });
+
+  test("reasoning placeholder split across two deltas", async () => {
+    const text = await streamAndCollect(
+      config,
+      [uuid1],
+      [`User ${open}0`, `00${close} found.`],
+      "reasoning-delta"
+    );
     expect(text).toBe(`User ${uuid1} found.`);
   });
 
