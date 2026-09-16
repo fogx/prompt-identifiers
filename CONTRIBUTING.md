@@ -17,6 +17,8 @@ prompt-identifiers/
 ├── packages/
 │   ├── core/                      # Core library
 │   │   ├── src/index.ts
+│   │   ├── bench/
+│   │   ├── docs/
 │   │   └── __tests__/
 │   ├── prompt-identifiers-ai-sdk/ # AI SDK middleware
 │   │   ├── src/index.ts
@@ -24,6 +26,7 @@ prompt-identifiers/
 │   └── prompt-identifiers-baml/   # BAML wrapper
 │       ├── src/index.ts
 │       └── __tests__/
+├── .changeset/                    # Pending release notes
 ├── .github/workflows/             # CI/CD
 ├── CLAUDE.md
 ├── CHANGELOG.md
@@ -34,7 +37,7 @@ prompt-identifiers/
 
 ### Prerequisites
 
-- **Node.js 22.18+** (CI runs 22 and 24)
+- **Node.js ^22.18 or ^24.11+** (the range tsdown, vitest and changesets accept; CI runs 22 and 24)
 - **pnpm 12**, pinned through `packageManager` in `package.json`
 
 ### Getting Started
@@ -125,7 +128,7 @@ Follow [Conventional Commits](https://www.conventionalcommits.org/):
 
 - [ ] All tests pass (`pnpm test`)
 - [ ] Code compiles (`pnpm build`)
-- [ ] Changelog updated
+- [ ] Changeset added (`pnpm changeset`)
 - [ ] Commit messages are descriptive
 
 ## Questions?

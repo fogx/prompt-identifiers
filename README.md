@@ -600,7 +600,7 @@ const { encoded, mapping } = encode(prompt, {
 
 Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, guidelines, and how to get started.
 
-For bug reports and feature requests, please [open an issue](https://github.com/fogx/prompt_identifiers/issues).
+For bug reports and feature requests, please [open an issue](https://github.com/fogx/prompt-identifiers/issues).
 
 ---
 
