@@ -1266,6 +1266,7 @@ describe("prompt-identifiers-ai-sdk", () => {
         type: "stripped_delimiter",
         value: "000",
         source: "tool_call",
+        toolName: "get_campaigns",
       });
     });
 
@@ -1394,7 +1395,12 @@ describe("prompt-identifiers-ai-sdk", () => {
       ]);
 
       expect(result.warnings).toEqual([
-        { type: "unknown_placeholder", value: "~081~", source: "tool_call" },
+        {
+          type: "unknown_placeholder",
+          value: "~081~",
+          source: "tool_call",
+          toolName: "evaluate_results",
+        },
       ]);
     });
 
@@ -1424,6 +1430,43 @@ describe("prompt-identifiers-ai-sdk", () => {
         expect(result.warnings).toBeUndefined();
       }
     );
+
+    test("names the tool for each tool call in a stream", async () => {
+      const onDecode = vi.fn();
+      const middleware = createMiddleware({ config: defaultConfig, onDecode });
+      const transformedParams = await middleware.transformParams({
+        params: createParams([userMessage("Find user 123e4567-e89b-42d3-a456-426655440000")]),
+        type: "stream",
+        model: mockModel,
+      });
+
+      const result = await middleware.wrapStream({
+        doStream: vi.fn().mockResolvedValue({
+          stream: createMockStream([
+            { type: "tool-call", toolCallId: "c1", toolName: "get_user", input: '{"id":"~000~"}' },
+            {
+              type: "tool-call",
+              toolCallId: "c2",
+              toolName: "evaluate_results",
+              input: '{"ids":["~081~"]}',
+            },
+          ]),
+        }),
+        doGenerate: vi.fn(),
+        params: transformedParams,
+        model: mockModel,
+      });
+      await collectStreamText(result.stream);
+
+      expect(onDecode.mock.calls[0][0].warnings).toEqual([
+        {
+          type: "unknown_placeholder",
+          value: "~081~",
+          source: "tool_call",
+          toolName: "evaluate_results",
+        },
+      ]);
+    });
 
     test("detects an invented placeholder in a stream", async () => {
       const onDecode = vi.fn();
