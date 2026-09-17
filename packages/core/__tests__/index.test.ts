@@ -1,5 +1,5 @@
 import { describe, test, expect } from "vitest";
-import { decode, encode, EncodeConfig } from "../src/index";
+import { decode, encode, EncodeConfig, findPlaceholders, OutputFormat } from "../src/index";
 
 describe("prompt-identifiers", () => {
   // Shared test configuration
@@ -484,6 +484,87 @@ describe("prompt-identifiers", () => {
       // Roundtrip should work
       const decoded = decode(encoded, mapping);
       expect(decoded).toBe(prompt);
+    });
+  });
+
+  describe("findPlaceholders", () => {
+    test("returns each distinct SafeNumeric placeholder in the text", () => {
+      const text = "See [A](creator://~053~), [B](creator://~001000~) and ~053~ again";
+
+      expect(findPlaceholders(text, "SafeNumeric")).toEqual(["~053~", "~001000~"]);
+    });
+
+    test("finds every placeholder in a run that touches, wherever the run starts", () => {
+      expect(findPlaceholders("ids: ~053~~081~", "SafeNumeric")).toEqual(["~053~", "~081~"]);
+      expect(findPlaceholders("~053~~081~", "SafeNumeric")).toEqual(["~053~", "~081~"]);
+      expect(findPlaceholders("~053~~081~~092~", "SafeNumeric")).toEqual([
+        "~053~",
+        "~081~",
+        "~092~",
+      ]);
+    });
+
+    test("a format with only a closing delimiter never consults the doubling rule", () => {
+      expect(findPlaceholders("000>>", { template: "{i:03}>" })).toEqual(["000>"]);
+    });
+
+    test("returns a body the format would have padded, which is how a model invents one", () => {
+      expect(findPlaceholders("see ~5~ and ~42~ and ~001000~", "SafeNumeric")).toEqual([
+        "~5~",
+        "~42~",
+        "~001000~",
+      ]);
+    });
+
+    test("ignores a body outside the format's character set", () => {
+      expect(findPlaceholders("see ~a1~ and ~~ and ~-5~", "SafeNumeric")).toEqual([]);
+    });
+
+    test("finds nothing for a formatter that ignores its index", () => {
+      expect(findPlaceholders("a X b", () => "X")).toEqual([]);
+    });
+
+    test("finds nothing for a formatter that throws above its range", () => {
+      const labels = ["<a>", "<b>"];
+      const formatter = (index: number) => {
+        if (index >= labels.length) throw new RangeError(`index ${index} out of range`);
+        return labels[index];
+      };
+
+      expect(findPlaceholders("a <a> b", formatter)).toEqual([]);
+    });
+
+    test("finds nothing for a template without an index", () => {
+      expect(findPlaceholders("a <x> b", { template: "no-index-here" })).toEqual([]);
+    });
+
+    test("ignores markdown strikethrough around digits", () => {
+      expect(findPlaceholders("was ~~120~~ now 90", "SafeNumeric")).toEqual([]);
+    });
+
+    test.each<[string, OutputFormat, string, string]>([
+      ["a template", { template: "<id:{i}>" }, "<id:7>", "<id:seven>"],
+      ["a base62 template", { template: "[{i:base62}]" }, "[zZ9]", "[z-9]"],
+      ["a padded prefix template", { template: "ID_{i:04}" }, "ID_0042", "ID_"],
+      ["a formatter function", (i) => `[[ID_${i}]]`, "[[ID_12]]", "[[ID_]]"],
+      ["an offset formatter function", (i) => `<${i + 1}>`, "<3>", "<>"],
+    ])("matches placeholders of %s", (_, outputFormat, placeholder, lookalike) => {
+      expect(findPlaceholders(`a ${placeholder} b ${lookalike}`, outputFormat)).toEqual([
+        placeholder,
+      ]);
+    });
+
+    test.each<[OutputFormat]>([["Numeric"], ["IdToken"], ["Passthrough"]])(
+      "%s finds nothing, since its placeholders look like ordinary text",
+      (outputFormat) => {
+        expect(findPlaceholders("Order 000 has 0 items ~000~", outputFormat)).toEqual([]);
+      }
+    );
+
+    test("finds nothing for a formatter function that only covers small indices", () => {
+      const labels = ["<a>", "<b>"];
+
+      expect(findPlaceholders("<a> <b>", (i) => labels[i])).toEqual([]);
     });
   });
 });

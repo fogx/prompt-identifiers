@@ -7,6 +7,7 @@ Complete technical reference for `prompt-identifiers`.
 - [Functions](#functions)
   - [encode](#encode)
   - [decode](#decode)
+  - [findPlaceholders](#findplaceholders)
 - [Types](#types)
   - [InputFormat](#inputformat)
   - [OutputFormat](#outputformat)
@@ -89,6 +90,31 @@ const decoded = decode("User 000 logged in", {
 
 ---
 
+### findPlaceholders
+
+```typescript
+function findPlaceholders(text: string, format: OutputFormat): string[];
+```
+
+Return the distinct tokens in `text` that carry the output format's delimiters and hold nothing but the characters it writes between them, in order of first appearance.
+
+**Parameters:**
+
+- `text` - Text to scan, usually a model's response
+- `format` - The output format the placeholders were written in
+
+**Returns:** The tokens found. Any that are not keys of the mapping are candidates the model invented, and that includes a body the format would have written differently, such as `~5~` against `~005~`. A doubled delimiter, as in markdown strikethrough (`~~120~~`), does not count. `Numeric`, `IdToken` and `Passthrough` always return `[]`, since their placeholders look like ordinary numbers and words.
+
+**Example:**
+
+```typescript
+// mapping came from encode()
+const invented = findPlaceholders(llmResponse, "SafeNumeric").filter((p) => !(p in mapping));
+// ["~053~"]
+```
+
+---
+
 ## Types
 
 ### InputFormat
@@ -110,13 +136,15 @@ Specifies how to detect identifiers in the input text.
 ### OutputFormat
 
 ```typescript
-type OutputFormat = "Numeric" | "IdToken" | "Passthrough" | TemplateFormat | FormatterFn;
+type OutputFormat =
+  "SafeNumeric" | "Numeric" | "IdToken" | "Passthrough" | TemplateFormat | FormatterFn;
 ```
 
 Specifies how to generate placeholder strings.
 
 | Value                       | Description                                       |
 | --------------------------- | ------------------------------------------------- |
+| `'SafeNumeric'`             | Tilde-delimited: `~000~`, `~001~`                 |
 | `'Numeric'`                 | Smart triplet: `000`, `001`, ..., `999`, `001000` |
 | `'IdToken'`                 | Base62: `0`, `A`, `z`, `10`                       |
 | `'Passthrough'`             | No replacement (returns original text)            |

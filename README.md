@@ -448,6 +448,19 @@ const restored = decode("User ~000~ was granted access", mapping);
 
 ---
 
+#### `findPlaceholders(text: string, format: OutputFormat): string[]`
+
+Return the distinct tokens in a text that the output format could have produced, in order of first appearance. Any that are not keys of the mapping are candidates the model invented. A doubled delimiter, as in markdown strikethrough (`~~120~~`), does not count. Formats without delimiters (`Numeric`, `IdToken`, `Passthrough`) always return `[]`.
+
+**Example:**
+
+```typescript
+const invented = findPlaceholders(llmResponse, "SafeNumeric").filter((p) => !(p in mapping));
+// ["~053~"]
+```
+
+---
+
 ### Configuration
 
 #### `EncodeConfig`
