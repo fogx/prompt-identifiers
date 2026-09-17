@@ -109,6 +109,14 @@ export interface DecodeWarning {
   value: string;
   /** Where it was found */
   source: "text" | "tool_call";
+  /** The tool whose call arguments contained the value, when source is "tool_call" */
+  toolName?: string;
+}
+
+/** A tool call's arguments after decoding, kept for the warning scan */
+interface DecodedToolCall {
+  toolName: string;
+  input: string;
 }
 
 // =============================================================================
@@ -130,7 +138,7 @@ const ID_MASK = "\u0001";
  */
 function detectDecodeWarnings(
   decodedText: string,
-  decodedToolCallInputs: string[],
+  decodedToolCalls: DecodedToolCall[],
   mapping: Record<string, string>,
   config: EncodeConfig
 ): DecodeWarning[] {
@@ -147,7 +155,7 @@ function detectDecodeWarnings(
     if (match) bareIndices.add(match[1]);
   }
 
-  function check(text: string, source: "text" | "tool_call") {
+  function check(text: string, source: Pick<DecodeWarning, "source" | "toolName">) {
     // Mask out the restored IDs first. Non-delimited placeholders are bare digits
     // ("000", "0") and a restored UUID contains those by construction, so an
     // unmasked scan reports a surviving placeholder on every successful decode.
@@ -156,13 +164,13 @@ function detectDecodeWarnings(
     // Check for surviving placeholders
     for (const placeholder of placeholders) {
       if (masked.includes(placeholder)) {
-        warnings.push({ type: "surviving_placeholder", value: placeholder, source });
+        warnings.push({ type: "surviving_placeholder", value: placeholder, ...source });
       }
     }
 
     for (const token of findPlaceholders(masked, config.outputFormat)) {
       if (!Object.prototype.hasOwnProperty.call(mapping, token)) {
-        warnings.push({ type: "unknown_placeholder", value: token, source });
+        warnings.push({ type: "unknown_placeholder", value: token, ...source });
       }
     }
 
@@ -171,14 +179,14 @@ function detectDecodeWarnings(
     for (const bare of bareIndices) {
       const pattern = new RegExp(`"${bare}"`, "g");
       if (pattern.test(masked)) {
-        warnings.push({ type: "stripped_delimiter", value: bare, source });
+        warnings.push({ type: "stripped_delimiter", value: bare, ...source });
       }
     }
   }
 
-  if (decodedText) check(decodedText, "text");
-  for (const input of decodedToolCallInputs) {
-    check(input, "tool_call");
+  if (decodedText) check(decodedText, { source: "text" });
+  for (const { toolName, input } of decodedToolCalls) {
+    check(input, { source: "tool_call", toolName });
   }
 
   return warnings;
@@ -703,7 +711,7 @@ export function promptIdentifiersMiddleware(
 
       // Decode text and tool call inputs in content array
       let totalCount = 0;
-      const decodedToolCallInputs: string[] = [];
+      const decodedToolCalls: DecodedToolCall[] = [];
       const decodedContent = result.content.map((item) => {
         if (item.type === "text") {
           const { decoded, count } = decodeText(item.text, mapping);
@@ -721,14 +729,14 @@ export function promptIdentifiersMiddleware(
         // Decode tool call inputs (input is stringified JSON)
         if (item.type === "tool-call" && "input" in item && typeof item.input === "string") {
           const decodedInput = decodeToolInputString(item.input, mapping);
-          decodedToolCallInputs.push(decodedInput);
+          decodedToolCalls.push({ toolName: item.toolName, input: decodedInput });
           return { ...item, input: decodedInput };
         }
         return item;
       });
 
       const durationMs = debug ? performance.now() - startTime : 0;
-      const warnings = detectDecodeWarnings(decodedText, decodedToolCallInputs, mapping, config);
+      const warnings = detectDecodeWarnings(decodedText, decodedToolCalls, mapping, config);
 
       onDecode?.({
         output: decodedText,
@@ -761,7 +769,7 @@ export function promptIdentifiersMiddleware(
       const toolInputDecoders = new Map<string, ReturnType<typeof createStreamingDecoder>>();
 
       let accDecodedText = "";
-      const accDecodedToolCallInputs: string[] = [];
+      const accDecodedToolCalls: DecodedToolCall[] = [];
       let lastTextId = "";
       let lastReasoningId = "";
 
@@ -833,7 +841,7 @@ export function promptIdentifiersMiddleware(
           // Decode complete tool calls (input is stringified JSON)
           if (chunk.type === "tool-call" && "input" in chunk && typeof chunk.input === "string") {
             const decodedInput = decodeToolInputString(chunk.input, mapping);
-            accDecodedToolCallInputs.push(decodedInput);
+            accDecodedToolCalls.push({ toolName: chunk.toolName, input: decodedInput });
             controller.enqueue({
               ...chunk,
               input: decodedInput,
@@ -886,7 +894,7 @@ export function promptIdentifiersMiddleware(
           const durationMs = debug && streamStarted ? performance.now() - streamStartTime : 0;
           const warnings = detectDecodeWarnings(
             accDecodedText,
-            accDecodedToolCallInputs,
+            accDecodedToolCalls,
             mapping,
             config
           );

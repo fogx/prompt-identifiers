@@ -129,7 +129,7 @@ for await (const chunk of result.textStream) {
 
 ## Decode Warnings
 
-`onDecode` receives a `warnings` array when the output looks wrong. Each warning has a `type`, the offending `value`, and a `source` of `text` or `tool_call`.
+`onDecode` receives a `warnings` array when the output looks wrong. Each warning has a `type`, the offending `value`, and a `source` of `text` or `tool_call`. Warnings from a tool call also carry the `toolName`.
 
 | Type                    | Meaning                                                                                    |
 | ----------------------- | ------------------------------------------------------------------------------------------ |
@@ -142,7 +142,7 @@ for await (const chunk of result.textStream) {
 ```typescript
 onDecode: ({ warnings }) => {
   for (const warning of warnings ?? []) {
-    console.warn(`${warning.type}: ${warning.value} in ${warning.source}`);
+    console.warn(`${warning.type}: ${warning.value} in ${warning.toolName ?? warning.source}`);
   }
 },
 ```
