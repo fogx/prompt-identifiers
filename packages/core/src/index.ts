@@ -66,12 +66,7 @@ export type FormatterFn = (index: number) => string;
  * - (index) => string    → custom formatter function
  */
 export type OutputFormat =
-  | "Numeric"
-  | "IdToken"
-  | "Passthrough"
-  | "SafeNumeric"
-  | TemplateFormat
-  | FormatterFn;
+  "Numeric" | "IdToken" | "Passthrough" | "SafeNumeric" | TemplateFormat | FormatterFn;
 
 /** Encoding configuration */
 export interface EncodeConfig {
@@ -239,6 +234,99 @@ export function createFormatter(format: OutputFormat): FormatterFn {
   }
 }
 
+// These three differ in their first and last character, in decimal and in base62, so whatever all
+// three formatted placeholders share is delimiter
+const PLACEHOLDER_PROBE_INDICES = [0, 123456789, 987654321];
+
+const builtInShapeCache = new Map<string, PlaceholderShape | undefined>();
+const customShapeCache = new WeakMap<object, PlaceholderShape | undefined>();
+
+/** What an output format's placeholders look like: its delimiters and the characters between. */
+interface PlaceholderShape {
+  pattern: RegExp;
+  prefix: string;
+  suffix: string;
+}
+
+/**
+ * The placeholder shape for an output format, or undefined when the format has no delimiters:
+ * Numeric and IdToken produce plain numbers and words, which no pattern can find in prose.
+ *
+ * @example
+ * getPlaceholderShape("SafeNumeric")?.pattern // /~\d+~/g
+ */
+function getPlaceholderShape(format: OutputFormat): PlaceholderShape | undefined {
+  if (typeof format === "string") {
+    if (!builtInShapeCache.has(format)) {
+      builtInShapeCache.set(format, buildPlaceholderShape(format));
+    }
+    return builtInShapeCache.get(format);
+  }
+  if (!customShapeCache.has(format)) {
+    customShapeCache.set(format, buildPlaceholderShape(format));
+  }
+  return customShapeCache.get(format);
+}
+
+function buildPlaceholderShape(format: OutputFormat): PlaceholderShape | undefined {
+  if (format === "Passthrough") return undefined;
+
+  let probes: string[];
+  try {
+    probes = PLACEHOLDER_PROBE_INDICES.map(createFormatter(format));
+  } catch {
+    // A template without {i}, or a custom formatter that only covers the indices it expects
+    return undefined;
+  }
+  // A custom formatter can still hand back a non-string for an index it does not cover
+  if (!probes.every((p) => typeof p === "string")) return undefined;
+
+  // Running off the end of the probe stops the loop, so a formatter that returns the same string
+  // for every index does not grow the prefix forever
+  let prefixLength = 0;
+  while (
+    probes[0][prefixLength] &&
+    probes.every((p) => p[prefixLength] === probes[0][prefixLength])
+  ) {
+    prefixLength++;
+  }
+  const maxSuffixLength = Math.min(...probes.map((p) => p.length)) - prefixLength;
+  let suffixLength = 0;
+  while (
+    suffixLength < maxSuffixLength &&
+    probes.every(
+      (p) => p[p.length - 1 - suffixLength] === probes[0][probes[0].length - 1 - suffixLength]
+    )
+  ) {
+    suffixLength++;
+  }
+  if (prefixLength === 0 && suffixLength === 0) return undefined;
+
+  const bodies = probes.map((p) => p.slice(prefixLength, p.length - suffixLength));
+  let body: string;
+  if (bodies.every((b) => /^\d+$/.test(b))) {
+    body = "\\d+";
+  } else if (bodies.every((b) => /^[0-9A-Za-z]+$/.test(b))) {
+    body = "[0-9A-Za-z]+";
+  } else {
+    return undefined;
+  }
+
+  const prefix = probes[0].slice(0, prefixLength);
+  const suffix = probes[0].slice(probes[0].length - suffixLength);
+  return {
+    // No lookarounds: they would hide the second of two placeholders that touch. A doubled
+    // delimiter is ruled out per match instead.
+    pattern: new RegExp(escapeRegExp(prefix) + body + escapeRegExp(suffix), "g"),
+    prefix,
+    suffix,
+  };
+}
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 // =============================================================================
 // Core API
 // =============================================================================
@@ -343,6 +431,54 @@ export function encode(text: string, config: EncodeConfig, state?: EncodeState):
   });
 
   return { encoded, mapping };
+}
+
+/**
+ * Return the distinct tokens in a text that carry the output format's delimiters, in order of
+ * first appearance. Compare them against a mapping to find the ones a model invented.
+ *
+ * A body the format would have written differently still counts: "~5~" where SafeNumeric pads to
+ * "~005~" is how a model invents an identifier, not a reason to skip it. Delimiters that also
+ * occur in ordinary text, such as a bracket template against a markdown link, match text that was
+ * never a placeholder. Numeric, IdToken and Passthrough always return an empty list, and so does
+ * a formatter that throws on the indices this probes.
+ *
+ * @example
+ * findPlaceholders("See creator://~053~ and ~~120~~ and ~5~", "SafeNumeric") // ["~053~", "~5~"]
+ */
+export function findPlaceholders(text: string, format: OutputFormat): string[] {
+  const shape = getPlaceholderShape(format);
+  if (!shape) return [];
+
+  const { pattern, prefix, suffix } = shape;
+  const matches = [...text.matchAll(pattern)];
+  const found = new Set<string>();
+
+  for (const [position, match] of matches.entries()) {
+    const token = match[0];
+    const start = match.index;
+    const end = start + token.length;
+
+    // A delimiter on both sides is other syntax, such as ~~strikethrough~~. A neighbouring
+    // placeholder shares the delimiter between them, so its side does not count.
+    const previous = matches[position - 1];
+    const openerIsShared = previous !== undefined && previous.index + previous[0].length === start;
+    const closerIsShared = matches[position + 1]?.index === end;
+    if (
+      prefix &&
+      suffix &&
+      !openerIsShared &&
+      !closerIsShared &&
+      start >= prefix.length &&
+      text.startsWith(prefix, start - prefix.length) &&
+      text.startsWith(suffix, end)
+    ) {
+      continue;
+    }
+
+    found.add(token);
+  }
+  return [...found];
 }
 
 // Cache for decode regex patterns - WeakMap allows GC when mapping is no longer referenced

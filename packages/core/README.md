@@ -183,6 +183,14 @@ function decode(text: string, mapping: Record<string, string>): string;
 
 Restore original IDs from placeholders using the mapping from `encode()`.
 
+### `findPlaceholders(text, format)`
+
+```typescript
+function findPlaceholders(text: string, format: OutputFormat): string[];
+```
+
+Return the distinct tokens in `text` that carry the output format's delimiters and hold nothing but the characters it writes between them, such as `~053~` for `SafeNumeric`. A token missing from a mapping is a candidate the model invented, and that includes a body the format would have written differently: `~5~` counts, because dropping the padding is one of the ways a model invents an identifier. A format whose delimiters occur in ordinary text, such as a bracket template against a markdown link, also matches text that was never a placeholder, and so does a run of digits the format would have padded: a `-{i}-` template reports `-01-` out of the date `2024-01-15`. Two placeholders that touch are both returned. A doubled delimiter, as in markdown strikethrough (`~~120~~`), does not count. Formats without delimiters (`Numeric`, `IdToken`, `Passthrough`) always return `[]`, since their placeholders look like ordinary numbers and words, and so does a formatter function that throws on the indices this probes.
+
 ## Features
 
 - **Deduplication**: Repeated IDs get the same placeholder

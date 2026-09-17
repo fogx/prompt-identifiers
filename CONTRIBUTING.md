@@ -96,6 +96,10 @@ pnpm --filter prompt-identifiers build
 
 4. **Add a changeset** - Run `pnpm changeset` and describe the change for each package it affects
 
+   Every package here is on 0.x, where a caret range stops at the minor. So minor is the breaking
+   slot, and an additive export ships as a patch to stay reachable from a `^0.1.x` a consumer
+   already has.
+
 5. **Run tests** - Ensure all tests pass
 
    ```bash
