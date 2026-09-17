@@ -343,7 +343,9 @@ promptIdentifiersMiddleware({
 
 **Cause:** The LLM invented a placeholder that doesn't exist in the mapping (e.g. `~005~` when only `~000~` through `~002~` were assigned). The LLM can "hallucinate" plausible-looking placeholders.
 
-**Fix:** Compare `onDecode`'s output against the mapping keys. If the LLM is inventing placeholders, add a system prompt instruction like _"Only reference the identifiers provided to you. Do not invent new ones."_
+**Detect:** The AI SDK middleware reports each one as an `unknown_placeholder` warning in `onDecode`, for text and tool call arguments alike. With core directly, `findPlaceholders(output, outputFormat)` lists the placeholder-shaped tokens in a response; any that are not keys of the mapping were invented. Both need a delimited output format.
+
+**Fix:** Add a system prompt instruction like _"Only reference the identifiers provided to you. Do not invent new ones."_ To repair an answer that already leaked one, send the model its answer and the invented placeholders and ask it to correct itself.
 
 #### Wrong ID restored after decoding
 

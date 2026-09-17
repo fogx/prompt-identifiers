@@ -19,6 +19,7 @@ import {
   encode,
   EncodeConfig,
   EncodeState,
+  findPlaceholders,
 } from "prompt-identifiers";
 
 // =============================================================================
@@ -103,7 +104,7 @@ export interface PromptIdentifiersMiddlewareOptions {
 
 /** Warning about a decode anomaly */
 export interface DecodeWarning {
-  type: "surviving_placeholder" | "stripped_delimiter";
+  type: "surviving_placeholder" | "stripped_delimiter" | "unknown_placeholder";
   /** The problematic value found in the output */
   value: string;
   /** Where it was found */
@@ -124,11 +125,14 @@ const ID_MASK = "\u0001";
  *    in the decoded text, meaning decode missed them.
  * 2. Stripped delimiters: bare placeholder indices (e.g., 000) that appear
  *    as standalone values, suggesting the LLM stripped the delimiter characters.
+ * 3. Unknown placeholders: placeholder-shaped tokens that are not in the mapping,
+ *    such as one the model invented. Only delimited formats can report these.
  */
 function detectDecodeWarnings(
   decodedText: string,
   decodedToolCallInputs: string[],
-  mapping: Record<string, string>
+  mapping: Record<string, string>,
+  config: EncodeConfig
 ): DecodeWarning[] {
   const placeholders = Object.keys(mapping);
   if (placeholders.length === 0) return [];
@@ -153,6 +157,12 @@ function detectDecodeWarnings(
     for (const placeholder of placeholders) {
       if (masked.includes(placeholder)) {
         warnings.push({ type: "surviving_placeholder", value: placeholder, source });
+      }
+    }
+
+    for (const token of findPlaceholders(masked, config.outputFormat)) {
+      if (!Object.prototype.hasOwnProperty.call(mapping, token)) {
+        warnings.push({ type: "unknown_placeholder", value: token, source });
       }
     }
 
@@ -718,7 +728,7 @@ export function promptIdentifiersMiddleware(
       });
 
       const durationMs = debug ? performance.now() - startTime : 0;
-      const warnings = detectDecodeWarnings(decodedText, decodedToolCallInputs, mapping);
+      const warnings = detectDecodeWarnings(decodedText, decodedToolCallInputs, mapping, config);
 
       onDecode?.({
         output: decodedText,
@@ -874,7 +884,12 @@ export function promptIdentifiersMiddleware(
           accDecodedText += textDecoder.flush();
 
           const durationMs = debug && streamStarted ? performance.now() - streamStartTime : 0;
-          const warnings = detectDecodeWarnings(accDecodedText, accDecodedToolCallInputs, mapping);
+          const warnings = detectDecodeWarnings(
+            accDecodedText,
+            accDecodedToolCallInputs,
+            mapping,
+            config
+          );
 
           onDecode?.({
             output: accDecodedText,
