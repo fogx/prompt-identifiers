@@ -1343,6 +1343,116 @@ describe("prompt-identifiers-ai-sdk", () => {
       expect(result.warnings).toBeUndefined();
     });
 
+    async function decodeWith(
+      content: LanguageModelV4GenerateResult["content"],
+      config: EncodeConfig = defaultConfig
+    ) {
+      const onDecode = vi.fn();
+      const middleware = createMiddleware({ config, onDecode });
+      const transformedParams = await middleware.transformParams({
+        params: createParams([userMessage("Find user 123e4567-e89b-42d3-a456-426655440000")]),
+        type: "generate",
+        model: mockModel,
+      });
+
+      await middleware.wrapGenerate({
+        doGenerate: vi.fn().mockResolvedValue({
+          content,
+          finishReason: mockFinishReason(),
+          usage: mockUsage(),
+          warnings: [],
+        }),
+        doStream: vi.fn(),
+        params: transformedParams,
+        model: mockModel,
+      });
+
+      return onDecode.mock.calls[0][0];
+    }
+
+    test("detects a placeholder the model invented in text", async () => {
+      const result = await decodeWith([
+        { type: "text", text: "See [A](creator://~000~) and [B](creator://~053~)." },
+      ]);
+
+      expect(result.output).toBe(
+        "See [A](creator://123e4567-e89b-42d3-a456-426655440000) and [B](creator://~053~)."
+      );
+      expect(result.warnings).toEqual([
+        { type: "unknown_placeholder", value: "~053~", source: "text" },
+      ]);
+    });
+
+    test("detects a placeholder the model invented in tool call arguments", async () => {
+      const result = await decodeWith([
+        {
+          type: "tool-call",
+          toolCallId: "call_1",
+          toolName: "evaluate_results",
+          input: '{"ids":["~000~","~081~"]}',
+        },
+      ]);
+
+      expect(result.warnings).toEqual([
+        { type: "unknown_placeholder", value: "~081~", source: "tool_call" },
+      ]);
+    });
+
+    test("reports each invented placeholder once per source", async () => {
+      const result = await decodeWith([{ type: "text", text: "~053~, ~053~ and ~001000~" }]);
+
+      expect(result.warnings).toEqual([
+        { type: "unknown_placeholder", value: "~053~", source: "text" },
+        { type: "unknown_placeholder", value: "~001000~", source: "text" },
+      ]);
+    });
+
+    test("ignores markdown strikethrough", async () => {
+      const result = await decodeWith([{ type: "text", text: "Price was ~~120~~ now 90." }]);
+
+      expect(result.warnings).toBeUndefined();
+    });
+
+    test.each<OutputFormat>(["Numeric", "IdToken"])(
+      "does not report bare numbers as invented placeholders with %s",
+      async (outputFormat) => {
+        const result = await decodeWith([{ type: "text", text: "Order 053 has 7 items." }], {
+          inputFormat: "UUID",
+          outputFormat,
+        });
+
+        expect(result.warnings).toBeUndefined();
+      }
+    );
+
+    test("detects an invented placeholder in a stream", async () => {
+      const onDecode = vi.fn();
+      const middleware = createMiddleware({ config: defaultConfig, onDecode });
+      const transformedParams = await middleware.transformParams({
+        params: createParams([userMessage("Find user 123e4567-e89b-42d3-a456-426655440000")]),
+        type: "stream",
+        model: mockModel,
+      });
+
+      const result = await middleware.wrapStream({
+        doStream: vi.fn().mockResolvedValue({
+          stream: createMockStream([
+            { type: "text-delta", id: "1", delta: "Also [B](creator://~0" },
+            { type: "text-delta", id: "1", delta: "53~)." },
+            { type: "text-end", id: "1" },
+          ]),
+        }),
+        doGenerate: vi.fn(),
+        params: transformedParams,
+        model: mockModel,
+      });
+      await collectStreamText(result.stream);
+
+      expect(onDecode.mock.calls[0][0].warnings).toEqual([
+        { type: "unknown_placeholder", value: "~053~", source: "text" },
+      ]);
+    });
+
     test.each<OutputFormat>(["SafeNumeric", "Numeric", "IdToken"])(
       "no warnings on a clean round trip with the %s output format",
       async (outputFormat) => {

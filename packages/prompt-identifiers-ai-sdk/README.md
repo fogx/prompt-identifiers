@@ -77,7 +77,7 @@ promptIdentifiersMiddleware({
   },
   onDecode: (result) => {
     console.log("Decoded output:", result.output);
-    // Warnings detect anomalies like stripped delimiters
+    // Warnings flag stripped delimiters and placeholders the model invented
     if (result.warnings?.length) {
       console.warn("Decode warnings:", result.warnings);
     }
@@ -125,6 +125,26 @@ for await (const chunk of result.textStream) {
   // IDs are decoded in real-time as the stream arrives
   console.log(chunk);
 }
+```
+
+## Decode Warnings
+
+`onDecode` receives a `warnings` array when the output looks wrong. Each warning has a `type`, the offending `value`, and a `source` of `text` or `tool_call`.
+
+| Type                    | Meaning                                                                                    |
+| ----------------------- | ------------------------------------------------------------------------------------------ |
+| `surviving_placeholder` | A placeholder from the mapping is still in the decoded output                              |
+| `stripped_delimiter`    | A tool call argument holds a bare index such as `"000"` instead of `~000~`                 |
+| `unknown_placeholder`   | A placeholder such as `~053~` is not in the mapping, so the model invented it and it leaks |
+
+`unknown_placeholder` needs a delimited output format such as `SafeNumeric` or a template. With `Numeric` or `IdToken`, a placeholder cannot be told apart from an ordinary number or word, so nothing is reported.
+
+```typescript
+onDecode: ({ warnings }) => {
+  for (const warning of warnings ?? []) {
+    console.warn(`${warning.type}: ${warning.value} in ${warning.source}`);
+  }
+},
 ```
 
 ## Works With Any Provider
