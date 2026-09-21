@@ -6,7 +6,6 @@
 
 import type {
   LanguageModelV4GenerateResult,
-  LanguageModelV4Message,
   LanguageModelV4Middleware,
   LanguageModelV4Prompt,
   LanguageModelV4StreamPart,
@@ -62,24 +61,17 @@ export interface PromptIdentifiersMiddlewareOptions {
   debug?: boolean;
 
   /**
-   * Inject a short instruction into the system message telling the model
-   * to preserve encoded identifiers exactly as-is.
+   * Instruction appended to the system message, telling the model to preserve encoded identifiers
+   * exactly as-is. `{format}` becomes an example token in the active output format, e.g. `~000~`
+   * for SafeNumeric. Pass `false` to send none and leave the prompt's own messages alone.
    *
-   * - `true` (default): appends the default instruction
-   * - `false`: no injection
+   * It goes in on every call, including calls whose prompt carries no ID: a system message that
+   * changes mid-conversation costs a full prompt-cache rewrite of the system block.
    *
-   * Only injected when at least one ID was encoded.
+   * Without an instruction most models strip the delimiters out of tool call arguments, so the
+   * choice is required rather than defaulted.
    */
-  injectInstruction?: boolean;
-
-  /**
-   * Custom instruction text to inject instead of the default.
-   * Use `{format}` as a placeholder for an example token in the
-   * active output format (e.g. `~000~` for SafeNumeric).
-   *
-   * Only used when `injectInstruction` is true.
-   */
-  customInstruction?: string;
+  instruction: string | false;
 
   /**
    * Optional callback fired after encoding IDs in the prompt.
@@ -159,6 +151,8 @@ function detectDecodeWarnings(
     // Mask out the restored IDs first. Non-delimited placeholders are bare digits
     // ("000", "0") and a restored UUID contains those by construction, so an
     // unmasked scan reports a surviving placeholder on every successful decode.
+    // It also keeps findPlaceholders off a restored ID that carries the format's
+    // own delimiters, such as a "-{i}-" template against a UUID's hyphens.
     const masked = ids.reduce((acc, id) => acc.split(id).join(ID_MASK), text);
 
     // Check for surviving placeholders
@@ -169,7 +163,7 @@ function detectDecodeWarnings(
     }
 
     for (const token of findPlaceholders(masked, config.outputFormat)) {
-      if (!Object.prototype.hasOwnProperty.call(mapping, token)) {
+      if (mapping[token] === undefined) {
         warnings.push({ type: "unknown_placeholder", value: token, ...source });
       }
     }
@@ -196,27 +190,6 @@ function detectDecodeWarnings(
 // Instruction Injection
 // =============================================================================
 
-const DEFAULT_INSTRUCTION =
-  "UUIDs have been replaced with short identifiers like {format}. Always pass these identifiers verbatim";
-
-/**
- * Generate an example placeholder token for the active output format.
- * e.g. SafeNumeric -> "~000~", Numeric -> "000", IdToken -> "0"
- */
-function getExampleToken(config: EncodeConfig): string {
-  if (config.outputFormat === "Passthrough") return "";
-  return createFormatter(config.outputFormat)(0);
-}
-
-/**
- * Build the instruction string, replacing {format} with the example token.
- */
-function buildInstruction(config: EncodeConfig, customInstruction?: string): string {
-  const token = getExampleToken(config);
-  const template = customInstruction ?? DEFAULT_INSTRUCTION;
-  return template.replace("{format}", token);
-}
-
 /**
  * Append instruction text to the last system message in the prompt.
  * If no system message exists, prepends one.
@@ -225,32 +198,16 @@ function injectInstructionIntoPrompt(
   prompt: LanguageModelV4Prompt,
   instruction: string
 ): LanguageModelV4Prompt {
-  // Find last system message
-  let lastSystemIndex = -1;
   for (let i = prompt.length - 1; i >= 0; i--) {
-    if (prompt[i].role === "system") {
-      lastSystemIndex = i;
-      break;
-    }
-  }
-
-  if (lastSystemIndex >= 0) {
-    const msg = prompt[lastSystemIndex];
-    // System messages have string content
-    const content = typeof msg.content === "string" ? msg.content : "";
-    const updatedMsg: LanguageModelV4Message = {
-      role: "system",
-      content: content + "\n\n" + instruction,
-      ...(msg.providerOptions && { providerOptions: msg.providerOptions }),
-    };
+    const msg = prompt[i];
+    if (msg.role !== "system") continue;
     const updated = [...prompt];
-    updated[lastSystemIndex] = updatedMsg;
+    // Spread the message so providerOptions, such as a cache breakpoint, survive
+    updated[i] = { ...msg, content: msg.content + "\n\n" + instruction };
     return updated;
   }
 
-  // No system message - prepend one
-  const systemMsg: LanguageModelV4Message = { role: "system", content: instruction };
-  return [systemMsg, ...prompt];
+  return [{ role: "system", content: instruction }, ...prompt];
 }
 
 // =============================================================================
@@ -623,6 +580,13 @@ function createStreamingDecoder(mapping: Record<string, string>) {
 // Middleware Factory
 // =============================================================================
 
+// Symbol to attach mapping to params object - survives SDK transformations
+const MAPPING_SYMBOL = Symbol("promptIdentifiersMapping");
+
+interface ParamsWithMapping {
+  [MAPPING_SYMBOL]?: Record<string, string>;
+}
+
 /**
  * Creates a Vercel AI SDK middleware that automatically encodes IDs in prompts
  * and decodes them in responses.
@@ -637,7 +601,8 @@ function createStreamingDecoder(mapping: Record<string, string>) {
  *   model: openai('gpt-4o'),
  *   middleware: promptIdentifiersMiddleware({
  *     config: { inputFormat: 'UUID', outputFormat: 'SafeNumeric' },
- *     onEncode: (result) => console.log(`Encoded ${result.encodedCount} IDs`),
+ *     instruction: 'IDs have been replaced with short identifiers like {format}. Pass them verbatim.',
+ *     onEncode: (result) => console.log(`Encoded ${Object.keys(result.mapping).length} IDs`),
  *   })
  * });
  *
@@ -648,18 +613,21 @@ function createStreamingDecoder(mapping: Record<string, string>) {
  * });
  * ```
  */
-// Symbol to attach mapping to params object - survives SDK transformations
-const MAPPING_SYMBOL = Symbol("promptIdentifiersMapping");
-
-interface ParamsWithMapping {
-  [MAPPING_SYMBOL]?: Record<string, string>;
-}
-
 export function promptIdentifiersMiddleware(
   options: PromptIdentifiersMiddlewareOptions
 ): LanguageModelV4Middleware {
-  const { config, onEncode, onDecode, debug } = options;
-  const shouldInjectInstruction = options.injectInstruction ?? true;
+  const { config, instruction, onEncode, onDecode, debug } = options;
+  if (instruction === undefined) {
+    throw new Error(
+      "promptIdentifiersMiddleware: instruction is required. Pass the text to append to the " +
+        "system message, or false to send none."
+    );
+  }
+  // Passthrough encodes nothing, so there is no format to name and nothing to instruct about
+  const builtInstruction =
+    instruction === false || config.outputFormat === "Passthrough"
+      ? undefined
+      : instruction.replace(/\{format\}/g, createFormatter(config.outputFormat)(0));
 
   return {
     specificationVersion: "v4",
@@ -669,10 +637,10 @@ export function promptIdentifiersMiddleware(
       let { encodedPrompt, mapping } = encodePromptMessages(params.prompt, config);
       const durationMs = debug ? performance.now() - startTime : 0;
 
-      // Inject instruction into the system message when IDs were encoded
-      if (shouldInjectInstruction && Object.keys(mapping).length > 0) {
-        const instruction = buildInstruction(config, options.customInstruction);
-        encodedPrompt = injectInstructionIntoPrompt(encodedPrompt, instruction);
+      // On every call, so the system message stays identical across a conversation and the
+      // provider's prompt cache keeps matching it
+      if (builtInstruction) {
+        encodedPrompt = injectInstructionIntoPrompt(encodedPrompt, builtInstruction);
       }
 
       onEncode?.({
@@ -777,6 +745,33 @@ export function promptIdentifiersMiddleware(
       let streamStartTime = 0;
       let accEncodedText = "";
       let streamStarted = false;
+
+      let reported = false;
+      function report() {
+        if (reported) return;
+        reported = true;
+
+        // A stream that ended without a closing chunk leaves the buffer unflushed;
+        // it is too late to emit it, but the callback should still see it.
+        accDecodedText += textDecoder.flush();
+
+        const durationMs = debug && streamStarted ? performance.now() - streamStartTime : 0;
+        const warnings = detectDecodeWarnings(accDecodedText, accDecodedToolCalls, mapping, config);
+
+        onDecode?.({
+          output: accDecodedText,
+          mapping,
+          ...(warnings.length > 0 && { warnings }),
+          ...(debug && {
+            debugData: {
+              decodedCount: Object.keys(mapping).length,
+              input: accEncodedText,
+              output: accDecodedText,
+              durationMs,
+            },
+          }),
+        });
+      }
 
       // Transform the stream to decode placeholders in text and tool calls
       const transformedStream = new TransformStream<
@@ -886,33 +881,11 @@ export function promptIdentifiersMiddleware(
           controller.enqueue(chunk);
         },
 
-        flush() {
-          // A stream that ended without a closing chunk leaves the buffer unflushed;
-          // it is too late to emit it, but the callback should still see it.
-          accDecodedText += textDecoder.flush();
+        flush: report,
 
-          const durationMs = debug && streamStarted ? performance.now() - streamStartTime : 0;
-          const warnings = detectDecodeWarnings(
-            accDecodedText,
-            accDecodedToolCalls,
-            mapping,
-            config
-          );
-
-          onDecode?.({
-            output: accDecodedText,
-            mapping,
-            ...(warnings.length > 0 && { warnings }),
-            ...(debug && {
-              debugData: {
-                decodedCount: Object.keys(mapping).length,
-                input: accEncodedText,
-                output: accDecodedText,
-                durationMs,
-              },
-            }),
-          });
-        },
+        // A stream that errors runs neither flush nor the closing chunk, and the consumer
+        // is already holding the text decoded so far
+        cancel: report,
       });
 
       return {
