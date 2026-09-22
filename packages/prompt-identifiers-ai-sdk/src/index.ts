@@ -372,19 +372,14 @@ function encodePromptMessages(
 }
 
 /**
- * Decode IDs in text content using the mapping.
+ * Count the placeholders a decode replaced. One pass per placeholder, so it costs more than the
+ * decode itself on a large mapping and only debugData reports it.
  */
-function decodeText(
-  text: string,
-  mapping: Record<string, string>
-): { decoded: string; count: number } {
-  const decoded = decode(text, mapping);
-  // Count how many placeholders were replaced
-  const count = Object.keys(mapping).reduce((acc, placeholder) => {
+function countPlaceholders(text: string, mapping: Record<string, string>): number {
+  return Object.keys(mapping).reduce((acc, placeholder) => {
     const regex = new RegExp(placeholder.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g");
     return acc + (text.match(regex)?.length ?? 0);
   }, 0);
-  return { decoded, count };
 }
 
 /**
@@ -577,17 +572,16 @@ export function promptIdentifiersMiddleware(
       const decodedToolCalls: DecodedToolCall[] = [];
       const decodedContent = result.content.map((item) => {
         if (item.type === "text") {
-          const { decoded, count } = decodeText(item.text, mapping);
-          totalCount += count;
+          const decoded = decode(item.text, mapping);
           decodedText += decoded;
           if (debug) {
+            totalCount += countPlaceholders(item.text, mapping);
             encodedText += item.text;
           }
           return { ...item, text: decoded };
         }
         if (item.type === "reasoning") {
-          const { decoded } = decodeText(item.text, mapping);
-          return { ...item, text: decoded };
+          return { ...item, text: decode(item.text, mapping) };
         }
         // Decode tool call inputs (input is stringified JSON)
         if (item.type === "tool-call" && "input" in item && typeof item.input === "string") {

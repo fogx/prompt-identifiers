@@ -980,6 +980,90 @@ describe("prompt-identifiers-ai-sdk", () => {
       expect(typeof result.debugData.durationMs).toBe("number");
     });
 
+    test("counts the placeholders in every text part of an answer, not just the last one", async () => {
+      const onDecode = vi.fn();
+      const middleware = createMiddleware({ config: defaultConfig, debug: true, onDecode });
+
+      const first = "123e4567-e89b-42d3-a456-426655440000";
+      const second = "987fcdeb-51a2-43f7-8d9c-0123456789ab";
+      const transformedParams = await middleware.transformParams({
+        params: createParams([userMessage(`Compare ${first} with ${second}`)]),
+        type: "generate",
+        model: mockModel,
+      });
+
+      // A provider splits text around a tool call, so one answer arrives as several text parts
+      const mockResult: LanguageModelV4GenerateResult = {
+        content: [
+          { type: "text", text: "First, ~000~ and ~000~ again." },
+          { type: "tool-call", toolCallId: "call-1", toolName: "lookup", input: '{"id":"~000~"}' },
+          { type: "text", text: "Then ~001~." },
+        ],
+        finishReason: mockFinishReason(),
+        usage: mockUsage(),
+        warnings: [],
+      };
+
+      await middleware.wrapGenerate({
+        doGenerate: vi.fn().mockResolvedValue(mockResult),
+        doStream: vi.fn(),
+        params: transformedParams,
+        model: mockModel,
+      });
+
+      const result = onDecode.mock.calls[0][0];
+      // Two in the first part plus one in the second. `totalCount = ...` would report 1.
+      expect(result.debugData.decodedCount).toBe(3);
+      expect(result.debugData.input).toBe("First, ~000~ and ~000~ again.Then ~001~.");
+      expect(result.output).toBe(`First, ${first} and ${first} again.Then ${second}.`);
+    });
+
+    test("the placeholder count is only paid for when debug is on", async () => {
+      const ids = Array.from(
+        { length: 40 },
+        (_, i) => `${i.toString(16).padStart(8, "0")}-4567-42d3-a456-426655440000`
+      );
+      const { mapping } = encode(`Look up ${ids.join(" ")}`, defaultConfig);
+      const answer = Object.keys(mapping).join(" and ");
+
+      // Counting replacements builds one RegExp per placeholder, and only debugData reports it
+      async function regexpsBuiltWith(debug: boolean) {
+        const middleware = createMiddleware({ config: defaultConfig, debug });
+        const transformedParams = await middleware.transformParams({
+          params: createParams([userMessage(`Look up ${ids.join(" ")}`)]),
+          type: "generate",
+          model: mockModel,
+        });
+
+        const RealRegExp = globalThis.RegExp;
+        let built = 0;
+        globalThis.RegExp = new Proxy(RealRegExp, {
+          construct(target, args: ConstructorParameters<typeof RegExp>) {
+            built++;
+            return new target(...args);
+          },
+        });
+        try {
+          await middleware.wrapGenerate({
+            doGenerate: vi.fn().mockResolvedValue({
+              content: [{ type: "text", text: answer }],
+              finishReason: mockFinishReason(),
+              usage: mockUsage(),
+              warnings: [],
+            }),
+            doStream: vi.fn(),
+            params: transformedParams,
+            model: mockModel,
+          });
+        } finally {
+          globalThis.RegExp = RealRegExp;
+        }
+        return built;
+      }
+
+      expect((await regexpsBuiltWith(true)) - (await regexpsBuiltWith(false))).toBe(ids.length);
+    });
+
     test("onDecode receives debugData on wrapStream when debug is true", async () => {
       const onDecode = vi.fn();
       const middleware = createMiddleware({
