@@ -17,7 +17,9 @@ import {
   createMockModel,
   createMockStream,
   createParams,
+  mockFinishReason,
   mockModel,
+  mockUsage,
   userMessage,
 } from "./test-helpers";
 
@@ -722,5 +724,47 @@ describe("Streaming decoder: stream bookkeeping", () => {
       .join("");
 
     expect(text).toBe(`Found ${uuid1} and ~00`);
+  });
+
+  // The reasoning buffer is flushed by its own branch, and report() only ever sees the text one
+  describe("a reasoning block ending while the decoder holds a tail", () => {
+    const deltas = ["look ~00", "1~ done ~00"];
+
+    function reasoningOf(parts: LanguageModelV4StreamPart[]) {
+      return parts
+        .filter((p) => p.type === "reasoning-delta")
+        .map((p) => ("delta" in p ? p.delta : ""))
+        .join("");
+    }
+
+    async function reasoningParts(closer: "reasoning-end" | "finish" | "both") {
+      const parts: LanguageModelV4StreamPart[] = [
+        { type: "reasoning-start", id: "r" },
+        ...deltas.map((delta) => ({ type: "reasoning-delta" as const, id: "r", delta })),
+      ];
+      if (closer !== "finish") parts.push({ type: "reasoning-end", id: "r" });
+      parts.push({ type: "finish", finishReason: mockFinishReason(), usage: mockUsage() });
+      return streamParts(parts);
+    }
+
+    test("reasoning-end delivers the held tail", async () => {
+      expect(reasoningOf(await reasoningParts("reasoning-end"))).toBe(`look ${uuid2} done ~00`);
+    });
+
+    test("finish delivers it when no reasoning-end arrives", async () => {
+      expect(reasoningOf(await reasoningParts("finish"))).toBe(`look ${uuid2} done ~00`);
+    });
+
+    test("both closers deliver it exactly once", async () => {
+      expect(reasoningOf(await reasoningParts("both"))).toBe(`look ${uuid2} done ~00`);
+    });
+
+    test("the flushed delta carries the block's own id", async () => {
+      const ids = (await reasoningParts("reasoning-end"))
+        .filter((p) => p.type === "reasoning-delta")
+        .map((p) => ("id" in p ? p.id : ""));
+
+      expect(ids).toEqual(["r", "r", "r"]);
+    });
   });
 });
