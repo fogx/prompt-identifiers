@@ -400,19 +400,15 @@ function decodeToolInputString(input: string, mapping: Record<string, string>): 
 // =============================================================================
 
 /**
- * Creates a streaming buffer that handles placeholders split across chunks.
+ * Creates a streaming buffer that holds back a chunk tail that could still grow into a
+ * placeholder, so one split across chunks ("~00" | "0~") is decoded as a whole.
  *
- * For delimited formats like SafeNumeric (<000>, <001>, etc.), placeholders
- * may arrive split across chunks: "<00" | "0>" or "<" | "000" | ">"
- *
- * Strategy: Buffer content when we see an opening delimiter,
- * flush when we see the closing delimiter.
- *
- * For non-delimited formats (Numeric, IdToken), buffering isn't possible
- * so we decode immediately.
+ * Only a placeholder in the mapping can be decoded, so the tails worth holding are exactly the
+ * proper prefixes of those, whatever an output format writes. A tail may begin where a match
+ * begins, since that match can still grow into a longer placeholder, but never partway through
+ * one, because the text on either side of it was already decoded around it.
  */
 function createStreamingDecoder(mapping: Record<string, string>) {
-  // Detect delimiter pattern from mapping keys
   const placeholders = Object.keys(mapping);
   if (placeholders.length === 0) {
     return {
@@ -421,154 +417,53 @@ function createStreamingDecoder(mapping: Record<string, string>) {
     };
   }
 
-  // Detect delimiter pattern from the first placeholder
-  // e.g., "<000>" -> open="<", close=">"
-  // e.g., "[[000]]" -> open="[[", close="]]"
-  // e.g., "000" -> no delimiters (can't buffer)
-  const firstPlaceholder = placeholders[0];
-  const match = firstPlaceholder.match(/^([^\d]*)\d+([^\d]*)$/);
-
-  if (!match || (!match[1] && !match[2])) {
-    // No delimiters found (e.g., pure "000", "A", "z")
-    // Can't reliably buffer, just decode immediately
-    return {
-      process: (text: string) => decode(text, mapping),
-      flush: () => "",
-    };
-  }
-
-  const OPEN = match[1];
-  const CLOSE = match[2];
-
-  if (!OPEN) {
-    // No opening delimiter means we can't detect incomplete placeholders
-    return {
-      process: (text: string) => decode(text, mapping),
-      flush: () => "",
-    };
-  }
-
-  const isSymmetric = OPEN === CLOSE;
-  const MAX_PLACEHOLDER_LEN = 15; // safety: flush if buffer tail exceeds this
-
-  /**
-   * Check if the buffer ends with a partial prefix of a multi-char delimiter.
-   * e.g., buffer "text[" could be the start of "[[" opener.
-   * Returns the length of the partial prefix (0 if none).
-   */
-  function partialDelimiterSuffix(buf: string, delim: string): number {
-    if (delim.length <= 1) return 0;
-    // Check if buffer ends with a prefix of the delimiter (length 1..delim.length-1)
-    for (let len = Math.min(delim.length - 1, buf.length); len >= 1; len--) {
-      if (buf.endsWith(delim.substring(0, len))) {
-        return len;
-      }
+  const growable = new Set<string>();
+  for (const placeholder of placeholders) {
+    for (let length = 1; length < placeholder.length; length++) {
+      growable.add(placeholder.slice(0, length));
     }
-    return 0;
   }
+  const longestTail = Math.max(...placeholders.map((p) => p.length)) - 1;
 
-  // Buffer incomplete placeholders
+  // Matches what decode matches, longest placeholder first, so both agree on where one ends
+  const pattern = new RegExp(
+    [...placeholders]
+      .sort((a, b) => b.length - a.length)
+      .map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+      .join("|"),
+    "g"
+  );
+
   let buffer = "";
 
   return {
     process: (text: string): string => {
-      buffer += text;
+      const pending = buffer + text;
 
-      if (!isSymmetric) {
-        // Asymmetric path — use regex to find complete placeholders.
-        // The old lastIndexOf approach breaks when delimiters share characters
-        // (e.g., ~ID000~ where CLOSE ~ is a prefix of OPEN ~ID).
-        const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-        const completeRe = new RegExp(esc(OPEN) + "\\d+" + esc(CLOSE), "g");
-
-        // Find where the last complete placeholder ends
-        let lastCompleteEnd = 0;
-        let m;
-        while ((m = completeRe.exec(buffer)) !== null) {
-          lastCompleteEnd = m.index + m[0].length;
-        }
-
-        const tail = buffer.substring(lastCompleteEnd);
-
-        // Check for incomplete placeholder: OPEN + digit(s), no complete CLOSE yet
-        const incompleteRe = new RegExp(esc(OPEN) + "\\d");
-        const incMatch = incompleteRe.exec(tail);
-        if (incMatch) {
-          const afterOpen = tail.substring(incMatch.index + OPEN.length);
-          if (afterOpen.indexOf(CLOSE) === -1) {
-            const dm = afterOpen.match(/^(\d+)([\s\S]*)$/);
-            if (dm && (dm[2] === "" || CLOSE.startsWith(dm[2]))) {
-              // OPEN + digits + optional partial CLOSE — buffer it
-              const splitPoint = lastCompleteEnd + incMatch.index;
-              const complete = buffer.substring(0, splitPoint);
-              buffer = buffer.substring(splitPoint);
-              return decode(complete, mapping);
-            }
-          }
-        }
-
-        // Check for bare OPEN at end of buffer (no digits yet)
-        if (tail.endsWith(OPEN)) {
-          const complete = buffer.substring(0, buffer.length - OPEN.length);
-          buffer = buffer.substring(buffer.length - OPEN.length);
-          return decode(complete, mapping);
-        }
-
-        // Check for partial multi-char opener at end (e.g., "[" when OPEN="[[")
-        const partialLen = partialDelimiterSuffix(tail, OPEN);
-        if (partialLen > 0) {
-          const complete = buffer.substring(0, buffer.length - partialLen);
-          buffer = buffer.substring(buffer.length - partialLen);
-          return decode(complete, mapping);
-        }
-
-        // All placeholders are complete, decode everything
-        const result = decode(buffer, mapping);
-        buffer = "";
-        return result;
+      // Only a match reaching into the last longestTail characters can contain a candidate tail
+      pattern.lastIndex = 0;
+      const tailStart = Math.max(0, pending.length - longestTail);
+      const reachingTail: [start: number, end: number][] = [];
+      for (let match = pattern.exec(pending); match; match = pattern.exec(pending)) {
+        if (pattern.lastIndex > tailStart) reachingTail.push([match.index, pattern.lastIndex]);
       }
 
-      // Symmetric path (e.g., ~000~) — look-back approach
-      const lastDelim = buffer.lastIndexOf(OPEN);
-      if (lastDelim >= 0) {
-        const afterDelim = buffer.substring(lastDelim + OPEN.length);
-
-        // Case 1: digits after last delimiter (e.g., "~00") → partial placeholder
-        if (/^\d+$/.test(afterDelim) && afterDelim.length <= MAX_PLACEHOLDER_LEN) {
-          const complete = buffer.substring(0, lastDelim);
-          buffer = buffer.substring(lastDelim);
-          return decode(complete, mapping);
-        }
-
-        // Case 2: delimiter at very end of buffer (e.g., "text~")
-        if (afterDelim === "") {
-          // Look back: is there OPEN + digits immediately before this delimiter?
-          // If yes → this delimiter is a CLOSER, decode everything
-          const precedingDelim = buffer.lastIndexOf(OPEN, lastDelim - 1);
-          if (precedingDelim >= 0) {
-            const between = buffer.substring(precedingDelim + OPEN.length, lastDelim);
-            if (/^\d+$/.test(between)) {
-              // Confirmed closer (e.g., "~000~") — decode all
-              const result = decode(buffer, mapping);
-              buffer = "";
-              return result;
-            }
-          }
-          // No valid opener found before → this might be an opener, buffer it
-          const complete = buffer.substring(0, lastDelim);
-          buffer = buffer.substring(lastDelim);
-          return decode(complete, mapping);
-        }
+      let hold = 0;
+      for (let length = Math.min(longestTail, pending.length); length > 0; length--) {
+        const cut = pending.length - length;
+        if (!growable.has(pending.slice(cut))) continue;
+        // Holding a whole match back is fine, it may still grow. Cutting one in half is not,
+        // since the text before the cut was already decoded around it.
+        if (reachingTail.some(([start, end]) => start < cut && cut < end)) continue;
+        hold = length;
+        break;
       }
 
-      // No partial placeholder detected, decode everything
-      const result = decode(buffer, mapping);
-      buffer = "";
-      return result;
+      buffer = pending.slice(pending.length - hold);
+      return decode(pending.slice(0, pending.length - hold), mapping);
     },
 
     flush: (): string => {
-      // Stream ended, decode whatever remains (might be incomplete placeholder)
       const result = decode(buffer, mapping);
       buffer = "";
       return result;
@@ -594,7 +489,7 @@ interface ParamsWithMapping {
  * @example
  * ```typescript
  * import { openai } from '@ai-sdk/openai';
- * import { wrapLanguageModel } from 'ai';
+ * import { wrapLanguageModel, generateText } from 'ai';
  * import { promptIdentifiersMiddleware } from 'prompt-identifiers-ai-sdk';
  *
  * const model = wrapLanguageModel({
@@ -803,6 +698,20 @@ export function promptIdentifiersMiddleware(
                 delta: remaining,
               } as LanguageModelV4StreamPart);
             }
+          }
+
+          if (chunk.type === "finish") {
+            for (const [id, decoder] of toolInputDecoders) {
+              const remaining = decoder.flush();
+              if (remaining) {
+                controller.enqueue({
+                  type: "tool-input-delta",
+                  id,
+                  delta: remaining,
+                } as LanguageModelV4StreamPart);
+              }
+            }
+            toolInputDecoders.clear();
           }
 
           // Decode text deltas
