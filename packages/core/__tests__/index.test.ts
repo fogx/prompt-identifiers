@@ -397,6 +397,23 @@ describe("prompt-identifiers", () => {
         "User 123e4567-e89b-42d3-a456-426655440000 and 987fcdeb-51a2-43f7-8d9c-0123456789ab"
       );
     });
+
+    test("an empty placeholder is rejected, naming the index that produced it", () => {
+      const names = ["ALPHA"];
+      expect(() =>
+        encode(uuidPrompt, { inputFormat: "UUID", outputFormat: (i) => names[i] ?? "" })
+      ).toThrow(/index 1/);
+    });
+
+    test("a formatter that hands back a non-string is rejected", () => {
+      expect(() =>
+        encode(uuidPrompt, {
+          inputFormat: "UUID",
+          // @ts-expect-error a caller with no types can return anything
+          outputFormat: (i) => (i === 0 ? "A" : undefined),
+        })
+      ).toThrow(/index 1/);
+    });
   });
 
   describe("SafeNumeric format", () => {

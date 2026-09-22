@@ -425,6 +425,14 @@ export function encode(text: string, config: EncodeConfig, state?: EncodeState):
     }
 
     const placeholder = formatter(idToPlaceholder.size);
+    // An empty or missing placeholder drops the ID out of the prompt and leaves a mapping key
+    // that matches everywhere, so the output format has to be told rather than worked around
+    if (typeof placeholder !== "string" || placeholder.length === 0) {
+      throw new Error(
+        `The output format returned ${JSON.stringify(placeholder)} for index ` +
+          `${idToPlaceholder.size}. A placeholder must be a non-empty string.`
+      );
+    }
     idToPlaceholder.set(id, placeholder);
     mapping[placeholder] = id;
     return placeholder;
