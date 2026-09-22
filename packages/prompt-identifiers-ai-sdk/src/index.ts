@@ -155,7 +155,8 @@ function detectDecodeWarnings(
     // own delimiters, such as a "-{i}-" template against a UUID's hyphens.
     const masked = ids.reduce((acc, id) => acc.split(id).join(ID_MASK), text);
 
-    // Check for surviving placeholders
+    // Masking leaves nothing for this to find while decode replaces every key it is given, so it
+    // reports a regression in one of the two rather than anything a model can write
     for (const placeholder of placeholders) {
       if (masked.includes(placeholder)) {
         warnings.push({ type: "surviving_placeholder", value: placeholder, ...source });

@@ -1296,6 +1296,60 @@ describe("prompt-identifiers-ai-sdk", () => {
   });
 
   describe("decode warnings", () => {
+    /** Runs one answer through wrapGenerate and returns the warnings onDecode saw. */
+    async function warningsFor(format: OutputFormat, answer: string) {
+      const onDecode = vi.fn();
+      const config: EncodeConfig = { inputFormat: "UUID", outputFormat: format };
+      const middleware = createMiddleware({ config, onDecode });
+      const uuid = "123e4567-e89b-42d3-a456-426655440000";
+
+      const transformedParams = await middleware.transformParams({
+        params: createParams([userMessage(`creator ${uuid}`)]),
+        type: "generate",
+        model: mockModel,
+      });
+
+      await middleware.wrapGenerate({
+        doGenerate: vi.fn().mockResolvedValue({
+          content: [{ type: "text", text: answer }],
+          finishReason: mockFinishReason(),
+          usage: mockUsage(),
+          warnings: [],
+        }),
+        doStream: vi.fn(),
+        params: transformedParams,
+        model: mockModel,
+      });
+
+      const { warnings } = onDecode.mock.calls[0][0];
+      return (warnings ?? []).map((w: { type: string; value: string }) => [w.type, w.value]);
+    }
+
+    test("a stripped delimiter is a quoted JSON value, not a number in prose", async () => {
+      expect(await warningsFor("SafeNumeric", '{"creatorId": "000"}')).toEqual([
+        ["stripped_delimiter", "000"],
+      ]);
+      expect(await warningsFor("SafeNumeric", "row 000 of the table, up 000 since May")).toEqual(
+        []
+      );
+      expect(await warningsFor("SafeNumeric", "revenue was 1000 EUR across 2000 posts")).toEqual(
+        []
+      );
+    });
+
+    test("a format whose literal part carries a digit contributes no bare index", async () => {
+      // No digit run spans the whole placeholder of `<v2:000>`, so "2" is not an index to miss
+      expect(
+        await warningsFor({ template: "<v2:{i:03}>" }, '{"page": "2", "limit": "50"}')
+      ).toEqual([]);
+      expect(await warningsFor({ template: "<v2:{i:03}>" }, "creator <v2:000> is fine")).toEqual(
+        []
+      );
+      expect(await warningsFor({ template: "<id:{i:03}>" }, '{"page": "000"}')).toEqual([
+        ["stripped_delimiter", "000"],
+      ]);
+    });
+
     test("detects stripped delimiters in tool call arguments via wrapGenerate", async () => {
       const onDecode = vi.fn();
       const middleware = createMiddleware({ config: defaultConfig, onDecode });
