@@ -108,9 +108,7 @@ promptIdentifiersMiddleware({
 
 ## Streaming Support
 
-> **Important:** For streaming responses, use a **delimited format** like `SafeNumeric` or a custom template with delimiters. Non-delimited formats (`Numeric`, `IdToken`) cannot reliably handle placeholders split across chunks.
-
-The middleware buffers incomplete placeholders when using delimited formats like `SafeNumeric`:
+The middleware holds back the end of a chunk while it could still grow into one of this call's placeholders, so a placeholder split across chunks is decoded whole. That works for every output format, delimited or not. What a non-delimited format (`Numeric`, `IdToken`) costs you is `unknown_placeholder` detection, which needs delimiters to tell a placeholder from ordinary text.
 
 ```typescript
 import { streamText } from "ai";
