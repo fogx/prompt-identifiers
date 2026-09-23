@@ -489,14 +489,23 @@ export function findPlaceholders(text: string, format: OutputFormat): string[] {
   return [...found];
 }
 
-// Cache for decode regex patterns - WeakMap allows GC when mapping is no longer referenced
-const decodeRegexCache = new WeakMap<Record<string, string>, RegExp>();
+// Cache for decode regex patterns - WeakMap allows GC when mapping is no longer referenced.
+// encode() adds to a shared state's mapping in place, so the entry carries the count it was
+// built from and is rebuilt once the mapping has grown.
+const decodeRegexCache = new WeakMap<Record<string, string>, { keys: string[]; pattern: RegExp }>();
+
+/** Whether two key lists hold the same names in the same order. */
+function sameKeys(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
 
 /**
  * Decode placeholders back to original IDs.
  *
- * Optimization: The regex pattern is cached per mapping object using WeakMap.
- * Repeated calls with the same mapping skip regex compilation entirely.
+ * Optimization: The regex pattern is cached per mapping object using WeakMap, and rebuilt when
+ * that mapping's keys change, so repeated calls over an unchanged mapping skip compilation.
  *
  * @param text - Text containing placeholders
  * @param mapping - Mapping from placeholders to original IDs (from encode)
@@ -506,9 +515,14 @@ export function decode(text: string, mapping: Record<string, string>): string {
   const placeholders = Object.keys(mapping);
   if (placeholders.length === 0) return text;
 
-  // Check cache for pre-compiled pattern
-  let pattern = decodeRegexCache.get(mapping);
+  // A cached pattern matches the keys the mapping held when it was built. encode() adds to the
+  // mapping it returns, and a caller may prune it, so a stale pattern misses keys and reports a
+  // key it no longer holds.
+  const cached = decodeRegexCache.get(mapping);
+  let pattern = cached && sameKeys(cached.keys, placeholders) ? cached.pattern : undefined;
   if (!pattern) {
+    const keys = placeholders.slice();
+
     // Sort by length descending to prevent partial matches (e.g., "0010" before "001")
     placeholders.sort((a, b) => b.length - a.length);
 
@@ -518,7 +532,7 @@ export function decode(text: string, mapping: Record<string, string>): string {
       "g"
     );
 
-    decodeRegexCache.set(mapping, pattern);
+    decodeRegexCache.set(mapping, { keys, pattern });
   }
 
   // Reset lastIndex for global regex reuse
