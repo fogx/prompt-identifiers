@@ -59,7 +59,8 @@ promptIdentifiersMiddleware({
 
   // Required. Appended to the system message on every call ({format} becomes an example token
   // like ~000~). Prevents LLMs from stripping delimiter characters in tool call arguments. Pass
-  // false, or use the Passthrough output format, and the middleware leaves the system message alone.
+  // false and the middleware leaves the system message alone. Under the Passthrough output
+  // format it is ignored, but the option is still required.
   instruction: "IDs use {format} notation. Preserve them exactly.",
 
   // Optional: enable debug mode for detailed diagnostics
