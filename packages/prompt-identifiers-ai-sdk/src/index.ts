@@ -654,7 +654,7 @@ export function promptIdentifiersMiddleware(
           ...(warnings.length > 0 && { warnings }),
           ...(debug && {
             debugData: {
-              decodedCount: Object.keys(mapping).length,
+              decodedCount: countPlaceholders(accEncodedText, mapping),
               input: accEncodedText,
               output: accDecodedText,
               durationMs,
