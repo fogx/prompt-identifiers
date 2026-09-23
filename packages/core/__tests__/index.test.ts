@@ -1,5 +1,12 @@
 import { describe, test, expect } from "vitest";
-import { decode, encode, EncodeConfig, findPlaceholders, OutputFormat } from "../src/index";
+import {
+  createEncodeState,
+  decode,
+  encode,
+  EncodeConfig,
+  findPlaceholders,
+  OutputFormat,
+} from "../src/index";
 
 describe("prompt-identifiers", () => {
   // Shared test configuration
@@ -413,6 +420,36 @@ describe("prompt-identifiers", () => {
           outputFormat: (i) => (i === 0 ? "A" : undefined),
         })
       ).toThrow(/index 1/);
+    });
+  });
+
+  describe("Shared encode state across turns", () => {
+    const config: EncodeConfig = { inputFormat: "UUID", outputFormat: "SafeNumeric" };
+    const first = "123e4567-e89b-42d3-a456-426655440000";
+    const second = "987fcdeb-51a2-43f7-8d9c-0123456789ab";
+
+    test("an id minted after an earlier decode still decodes", () => {
+      const state = createEncodeState();
+
+      encode(`Look at ${first}`, config, state);
+      expect(decode("~000~", state.mapping)).toBe(first);
+
+      encode(`And ${second}`, config, state);
+
+      expect(decode("~001~", state.mapping)).toBe(second);
+      expect(decode("~000~ and ~001~", state.mapping)).toBe(`${first} and ${second}`);
+    });
+
+    test("a key replaced at the same count decodes against the keys the mapping holds now", () => {
+      const third = "3f1c1a2a-60a6-444f-915f-7960a929fb78";
+      const mapping: Record<string, string> = { "~000~": first, "~001~": second };
+
+      expect(decode("~000~ ~001~", mapping)).toBe(`${first} ${second}`);
+
+      delete mapping["~001~"];
+      mapping["~777~"] = third;
+
+      expect(decode("~000~ ~001~ ~777~", mapping)).toBe(`${first} ~001~ ${third}`);
     });
   });
 
