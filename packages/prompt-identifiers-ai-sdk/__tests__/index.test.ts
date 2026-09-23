@@ -8,6 +8,7 @@ import type {
 import { encode, type EncodeConfig, type OutputFormat } from "prompt-identifiers";
 import { promptIdentifiersMiddleware } from "../src/index";
 import {
+  collectStreamParts,
   collectStreamText,
   createMiddleware,
   createMockStream,
@@ -1016,6 +1017,36 @@ describe("prompt-identifiers-ai-sdk", () => {
       expect(result.debugData.decodedCount).toBe(3);
       expect(result.debugData.input).toBe("First, ~000~ and ~000~ again.Then ~001~.");
       expect(result.output).toBe(`First, ${first} and ${first} again.Then ${second}.`);
+    });
+
+    test("the streamed count means the same thing as the generated one", async () => {
+      const onDecode = vi.fn();
+      const middleware = createMiddleware({ config: defaultConfig, debug: true, onDecode });
+
+      const first = "123e4567-e89b-42d3-a456-426655440000";
+      const second = "987fcdeb-51a2-43f7-8d9c-0123456789ab";
+      const transformedParams = await middleware.transformParams({
+        params: createParams([userMessage(`Compare ${first} with ${second}`)]),
+        type: "stream",
+        model: mockModel,
+      });
+
+      const result = await middleware.wrapStream({
+        doStream: vi.fn().mockResolvedValue({
+          stream: createMockStream([
+            { type: "text-delta", id: "1", delta: "First, ~000~ and ~000~ again. " },
+            { type: "text-delta", id: "1", delta: "Then ~001~." },
+            { type: "text-end", id: "1" },
+          ]),
+        }),
+        doGenerate: vi.fn(),
+        params: transformedParams,
+        model: mockModel,
+      });
+      await collectStreamParts(result.stream);
+
+      // Three occurrences across two deltas, against a mapping of two
+      expect(onDecode.mock.calls[0][0].debugData.decodedCount).toBe(3);
     });
 
     test("the placeholder count is only paid for when debug is on", async () => {
