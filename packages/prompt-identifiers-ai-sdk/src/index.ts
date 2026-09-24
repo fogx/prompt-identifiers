@@ -126,19 +126,25 @@ const ID_MASK = "\u0001";
  * 2. Stripped delimiters: bare placeholder indices (e.g., 000) that appear
  *    as standalone values, suggesting the LLM stripped the delimiter characters.
  * 3. Unknown placeholders: placeholder-shaped tokens that are not in the mapping,
- *    such as one the model invented. Only delimited formats can report these.
+ *    such as one the model invented. Only delimited formats can report these, and a truncated
+ *    answer's trailing token is spared when a placeholder this call minted starts with it.
  */
 function detectDecodeWarnings(
   decodedText: string,
   decodedToolCalls: DecodedToolCall[],
   mapping: Record<string, string>,
-  config: EncodeConfig
+  config: EncodeConfig,
+  isTruncated: boolean
 ): DecodeWarning[] {
   const placeholders = Object.keys(mapping);
   if (placeholders.length === 0) return [];
 
   const ids = Object.values(mapping);
   const warnings: DecodeWarning[] = [];
+  // What a cut leaves behind is the start of a placeholder this call minted. A token that starts
+  // none of them is the model's own, however the answer ended.
+  const startsAPlaceholder = (token: string) =>
+    placeholders.some((p) => p.length > token.length && p.startsWith(token));
 
   // Extract bare indices from placeholders (e.g., "~000~" -> "000")
   const bareIndices = new Set<string>();
@@ -164,9 +170,12 @@ function detectDecodeWarnings(
     }
 
     for (const token of findPlaceholders(masked, config.outputFormat)) {
-      if (mapping[token] === undefined) {
-        warnings.push({ type: "unknown_placeholder", value: token, ...source });
-      }
+      if (mapping[token] !== undefined) continue;
+
+      // Only the token at the cut can be half a placeholder, and only if a longer one starts with it
+      if (isTruncated && masked.endsWith(token) && startsAPlaceholder(token)) continue;
+
+      warnings.push({ type: "unknown_placeholder", value: token, ...source });
     }
 
     // Check for stripped delimiters: bare indices appearing as standalone JSON string values
@@ -518,7 +527,7 @@ export function promptIdentifiersMiddleware(
   const builtInstruction =
     instruction === false || config.outputFormat === "Passthrough"
       ? undefined
-      : instruction.replace(/\{format\}/g, createFormatter(config.outputFormat)(0));
+      : instruction.replace(/\{format\}/g, () => createFormatter(config.outputFormat)(0));
 
   return {
     specificationVersion: "v4",
@@ -594,7 +603,13 @@ export function promptIdentifiersMiddleware(
       });
 
       const durationMs = debug ? performance.now() - startTime : 0;
-      const warnings = detectDecodeWarnings(decodedText, decodedToolCalls, mapping, config);
+      const warnings = detectDecodeWarnings(
+        decodedText,
+        decodedToolCalls,
+        mapping,
+        config,
+        result.finishReason?.unified === "length"
+      );
 
       onDecode?.({
         output: decodedText,
@@ -636,6 +651,9 @@ export function promptIdentifiersMiddleware(
       let accEncodedText = "";
       let streamStarted = false;
 
+      // A stream that never reports one was cut off, the same as one that ran out of room
+      let streamFinishReason: string | undefined;
+
       let reported = false;
       function report() {
         if (reported) return;
@@ -646,7 +664,13 @@ export function promptIdentifiersMiddleware(
         accDecodedText += textDecoder.flush();
 
         const durationMs = debug && streamStarted ? performance.now() - streamStartTime : 0;
-        const warnings = detectDecodeWarnings(accDecodedText, accDecodedToolCalls, mapping, config);
+        const warnings = detectDecodeWarnings(
+          accDecodedText,
+          accDecodedToolCalls,
+          mapping,
+          config,
+          streamFinishReason === undefined || streamFinishReason === "length"
+        );
 
         onDecode?.({
           output: accDecodedText,
@@ -696,6 +720,8 @@ export function promptIdentifiersMiddleware(
           }
 
           if (chunk.type === "finish") {
+            streamFinishReason = chunk.finishReason?.unified;
+
             for (const [id, decoder] of toolInputDecoders) {
               const remaining = decoder.flush();
               if (remaining) {

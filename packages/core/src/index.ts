@@ -490,8 +490,8 @@ export function findPlaceholders(text: string, format: OutputFormat): string[] {
 }
 
 // Cache for decode regex patterns - WeakMap allows GC when mapping is no longer referenced.
-// encode() adds to a shared state's mapping in place, so the entry carries the count it was
-// built from and is rebuilt once the mapping has grown.
+// encode() adds to a shared state's mapping in place and a caller may prune it, so the entry
+// carries the keys it was built from and is rebuilt whenever they change.
 const decodeRegexCache = new WeakMap<Record<string, string>, { keys: string[]; pattern: RegExp }>();
 
 /** Whether two key lists hold the same names in the same order. */
@@ -514,6 +514,12 @@ function sameKeys(a: string[], b: string[]): boolean {
 export function decode(text: string, mapping: Record<string, string>): string {
   const placeholders = Object.keys(mapping);
   if (placeholders.length === 0) return text;
+
+  // An empty key matches at every position, so it would insert its ID throughout the text.
+  // encode refuses to mint one, and a mapping that carries one is built by hand.
+  if (placeholders.includes("")) {
+    throw new Error("The mapping has an empty placeholder key, which matches at every position.");
+  }
 
   // A cached pattern matches the keys the mapping held when it was built. encode() adds to the
   // mapping it returns, and a caller may prune it, so a stale pattern misses keys and reports a

@@ -1290,6 +1290,27 @@ describe("prompt-identifiers-ai-sdk", () => {
       );
     });
 
+    test("a placeholder carrying $ reaches the instruction as the model will see it", async () => {
+      // String.replace reads $ patterns in a string replacement, so $$000$$ would arrive as $000$
+      const middleware = createMiddleware({
+        config: { inputFormat: "UUID", outputFormat: { template: "$${i:03}$$" } },
+        instruction: "Identifiers look like {format}.",
+      });
+
+      const result = await middleware.transformParams({
+        params: createParams([
+          systemMessage("System prompt."),
+          userMessage("Find user 123e4567-e89b-42d3-a456-426655440000"),
+        ]),
+        type: "generate",
+        model: mockModel,
+      });
+
+      expect(getSystemContent(result.prompt)).toBe(
+        "System prompt.\n\nIdentifiers look like $$000$$."
+      );
+    });
+
     test("replaces every {format} in the instruction", async () => {
       const middleware = createMiddleware({
         config: defaultConfig,
@@ -1786,5 +1807,118 @@ describe("prompt-identifiers-ai-sdk", () => {
         expect(result.warnings).toBeUndefined();
       }
     );
+  });
+  describe("An answer cut off mid-placeholder", () => {
+    // A format with an opener and no closer cannot tell a cut-off placeholder from a short one
+    const prefixOnly: EncodeConfig = {
+      inputFormat: "UUID",
+      outputFormat: { template: "ID_{i:04}" },
+    };
+    const uuid = "123e4567-e89b-42d3-a456-426655440000";
+
+    async function warningsFromGenerate(text: string, unified: "stop" | "length") {
+      const onDecode = vi.fn();
+      const middleware = createMiddleware({ config: prefixOnly, onDecode });
+      const transformedParams = await middleware.transformParams({
+        params: createParams([userMessage(`Look up ${uuid}`)]),
+        type: "generate",
+        model: mockModel,
+      });
+
+      await middleware.wrapGenerate({
+        doGenerate: vi.fn().mockResolvedValue({
+          content: [{ type: "text", text }],
+          finishReason: { unified, raw: unified },
+          usage: mockUsage(),
+          warnings: [],
+        } satisfies LanguageModelV4GenerateResult),
+        doStream: vi.fn(),
+        params: transformedParams,
+        model: mockModel,
+      });
+
+      return onDecode.mock.calls[0][0].warnings ?? [];
+    }
+
+    test("the token limit cut the last placeholder in half, so it is not an invented one", async () => {
+      // ID_0000 arrived as ID_000. Nothing closes the placeholder, so the scan reads the
+      // shortened digit run as a whole one, though the format never writes a body that short.
+      expect(await warningsFromGenerate("The record is ID_000", "length")).toEqual([]);
+    });
+
+    test("the same token in an answer that finished is still reported", async () => {
+      expect(await warningsFromGenerate("The record is ID_000", "stop")).toEqual([
+        { type: "unknown_placeholder", value: "ID_000", source: "text" },
+      ]);
+    });
+
+    test("only the token the cut created is spared, not one earlier in the answer", async () => {
+      expect(await warningsFromGenerate("ID_0009 then ID_000", "length")).toEqual([
+        { type: "unknown_placeholder", value: "ID_0009", source: "text" },
+      ]);
+    });
+
+    test("a truncated answer still reports a token that no placeholder could have been cut into", async () => {
+      // The call minted ID_0000 .. ID_0059. ID_9999 starts none of them, so no cut produced it.
+      const ids = Array.from(
+        { length: 60 },
+        (_, i) => `123e4567-e89b-42d3-a456-${String(i).padStart(12, "0")}`
+      );
+
+      const onDecode = vi.fn();
+      const middleware = createMiddleware({ config: prefixOnly, onDecode });
+      const transformedParams = await middleware.transformParams({
+        params: createParams([userMessage(`Look up ${ids.join(" ")}`)]),
+        type: "generate",
+        model: mockModel,
+      });
+
+      await middleware.wrapGenerate({
+        doGenerate: vi.fn().mockResolvedValue({
+          content: [{ type: "text", text: "The record is ID_9999" }],
+          finishReason: { unified: "length", raw: "length" },
+          usage: mockUsage(),
+          warnings: [],
+        } satisfies LanguageModelV4GenerateResult),
+        doStream: vi.fn(),
+        params: transformedParams,
+        model: mockModel,
+      });
+
+      expect(onDecode.mock.calls[0][0].warnings ?? []).toEqual([
+        { type: "unknown_placeholder", value: "ID_9999", source: "text" },
+      ]);
+    });
+
+    test("a stream that stops at the token limit reports no invented placeholder", async () => {
+      const onDecode = vi.fn();
+      const middleware = createMiddleware({ config: prefixOnly, onDecode });
+      const transformedParams = await middleware.transformParams({
+        params: createParams([userMessage(`Look up ${uuid}`)]),
+        type: "stream",
+        model: mockModel,
+      });
+
+      const result = await middleware.wrapStream({
+        doStream: vi.fn().mockResolvedValue({
+          stream: createMockStream([
+            { type: "text-delta", id: "1", delta: "The record is ID_" },
+            { type: "text-delta", id: "1", delta: "000" },
+            {
+              type: "finish",
+              finishReason: { unified: "length", raw: "length" },
+              usage: mockUsage(),
+            },
+          ] as LanguageModelV4StreamPart[]),
+        }),
+        doGenerate: vi.fn(),
+        params: transformedParams,
+        model: mockModel,
+      });
+
+      await collectStreamText(result.stream);
+
+      expect(onDecode.mock.calls[0][0].warnings ?? []).toEqual([]);
+    });
   });
 });
