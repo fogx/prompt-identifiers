@@ -389,7 +389,7 @@ describe("prompt-identifiers-ai-sdk", () => {
       // Simulate placeholder split across chunks: ~0 | 00~
       const mockStreamResult = createMockStreamResult([
         { type: "text-delta", id: "1", delta: "User ~0" },
-        { type: "text-delta", id: "2", delta: "00~ found." },
+        { type: "text-delta", id: "1", delta: "00~ found." },
       ]);
       const doStream = vi.fn().mockResolvedValue(mockStreamResult);
       const doGenerate = vi.fn();
@@ -1808,6 +1808,83 @@ describe("prompt-identifiers-ai-sdk", () => {
       }
     );
   });
+  describe("Work nobody asked for", () => {
+    const config: EncodeConfig = { inputFormat: "UUID", outputFormat: "SafeNumeric" };
+    const ids = Array.from(
+      { length: 20 },
+      (_, i) => `123e4567-e89b-42d3-a456-${String(i).padStart(12, "0")}`
+    );
+
+    test("the warning scan does not run when nothing is listening for it", async () => {
+      async function regexpsBuiltWith(onDecode?: () => void) {
+        const middleware = createMiddleware({ config, ...(onDecode && { onDecode }) });
+        const transformedParams = await middleware.transformParams({
+          params: createParams([userMessage(`Look up ${ids.join(" ")}`)]),
+          type: "generate",
+          model: mockModel,
+        });
+
+        const RealRegExp = globalThis.RegExp;
+        let built = 0;
+        globalThis.RegExp = new Proxy(RealRegExp, {
+          construct(target, args: ConstructorParameters<typeof RegExp>) {
+            built++;
+            return new target(...args);
+          },
+        });
+        try {
+          await middleware.wrapGenerate({
+            doGenerate: vi.fn().mockResolvedValue({
+              content: [{ type: "text", text: "~000~ and ~001~" }],
+              finishReason: mockFinishReason(),
+              usage: mockUsage(),
+              warnings: [],
+            } satisfies LanguageModelV4GenerateResult),
+            doStream: vi.fn(),
+            params: transformedParams,
+            model: mockModel,
+          });
+        } finally {
+          globalThis.RegExp = RealRegExp;
+        }
+        return built;
+      }
+
+      // The scan builds one RegExp per bare index, and only a listener can ever see the result
+      const listening = await regexpsBuiltWith(vi.fn());
+      const silent = await regexpsBuiltWith();
+
+      expect(listening - silent).toBe(ids.length);
+    });
+
+    test("a mapping too large to spread does not crash the streaming decoder", async () => {
+      const many = Array.from(
+        { length: 150_000 },
+        (_, i) => `123e4567-e89b-42d3-a456-${String(i).padStart(12, "0")}`
+      );
+      const middleware = createMiddleware({ config });
+      const transformedParams = await middleware.transformParams({
+        params: createParams([userMessage(many.join(" "))]),
+        type: "stream",
+        model: mockModel,
+      });
+
+      const result = await middleware.wrapStream({
+        doStream: vi.fn().mockResolvedValue({
+          stream: createMockStream([
+            { type: "text-delta", id: "1", delta: "found ~000~" },
+            { type: "text-end", id: "1" },
+          ] as LanguageModelV4StreamPart[]),
+        }),
+        doGenerate: vi.fn(),
+        params: transformedParams,
+        model: mockModel,
+      });
+
+      await expect(collectStreamText(result.stream)).resolves.toBe(`found ${many[0]}`);
+    });
+  });
+
   describe("An answer cut off mid-placeholder", () => {
     // A format with an opener and no closer cannot tell a cut-off placeholder from a short one
     const prefixOnly: EncodeConfig = {
