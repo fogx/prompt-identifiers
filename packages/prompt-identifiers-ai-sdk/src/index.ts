@@ -428,7 +428,12 @@ function createStreamingDecoder(mapping: Record<string, string>) {
       growable.add(placeholder.slice(0, length));
     }
   }
-  const longestTail = Math.max(...placeholders.map((p) => p.length)) - 1;
+  // Spreading the lengths into Math.max overflows the call stack past ~130,000 placeholders
+  let longest = 0;
+  for (const placeholder of placeholders) {
+    if (placeholder.length > longest) longest = placeholder.length;
+  }
+  const longestTail = longest - 1;
 
   // Matches what decode matches, longest placeholder first, so both agree on where one ends
   const pattern = new RegExp(
@@ -603,13 +608,15 @@ export function promptIdentifiersMiddleware(
       });
 
       const durationMs = debug ? performance.now() - startTime : 0;
-      const warnings = detectDecodeWarnings(
-        decodedText,
-        decodedToolCalls,
-        mapping,
-        config,
-        result.finishReason?.unified === "length"
-      );
+      const warnings = onDecode
+        ? detectDecodeWarnings(
+            decodedText,
+            decodedToolCalls,
+            mapping,
+            config,
+            result.finishReason?.unified === "length"
+          )
+        : [];
 
       onDecode?.({
         output: decodedText,
@@ -635,16 +642,14 @@ export function promptIdentifiersMiddleware(
         return { stream, ...rest };
       }
 
-      const textDecoder = createStreamingDecoder(mapping);
-      // Reasoning arrives as its own delta stream, so it needs a buffer of its own
-      const reasoningDecoder = createStreamingDecoder(mapping);
-      // Each streaming tool input is a separate JSON document with its own buffer
+      // A provider can run several text, reasoning and tool input blocks at once, and a placeholder
+      // split across one block's chunks must not be completed by another block's text
+      const textDecoders = new Map<string, ReturnType<typeof createStreamingDecoder>>();
+      const reasoningDecoders = new Map<string, ReturnType<typeof createStreamingDecoder>>();
       const toolInputDecoders = new Map<string, ReturnType<typeof createStreamingDecoder>>();
 
       let accDecodedText = "";
       const accDecodedToolCalls: DecodedToolCall[] = [];
-      let lastTextId = "";
-      let lastReasoningId = "";
 
       // Debug-only accumulation state
       let streamStartTime = 0;
@@ -661,16 +666,19 @@ export function promptIdentifiersMiddleware(
 
         // A stream that ended without a closing chunk leaves the buffer unflushed;
         // it is too late to emit it, but the callback should still see it.
-        accDecodedText += textDecoder.flush();
+        for (const decoder of textDecoders.values()) accDecodedText += decoder.flush();
+        textDecoders.clear();
 
         const durationMs = debug && streamStarted ? performance.now() - streamStartTime : 0;
-        const warnings = detectDecodeWarnings(
-          accDecodedText,
-          accDecodedToolCalls,
-          mapping,
-          config,
-          streamFinishReason === undefined || streamFinishReason === "length"
-        );
+        const warnings = onDecode
+          ? detectDecodeWarnings(
+              accDecodedText,
+              accDecodedToolCalls,
+              mapping,
+              config,
+              streamFinishReason === undefined || streamFinishReason === "length"
+            )
+          : [];
 
         onDecode?.({
           output: accDecodedText,
@@ -688,6 +696,34 @@ export function promptIdentifiersMiddleware(
       }
 
       // Transform the stream to decode placeholders in text and tool calls
+      // A provider may skip the opening chunk or repeat it, and either way the id needs the one
+      // decoder that holds this block's tail
+      type Decoders = Map<string, ReturnType<typeof createStreamingDecoder>>;
+      function decoderFor(decoders: Decoders, id: string) {
+        let decoder = decoders.get(id);
+        if (!decoder) {
+          decoder = createStreamingDecoder(mapping);
+          decoders.set(id, decoder);
+        }
+        return decoder;
+      }
+
+      // Drains every block still holding a tail, each onto its own block
+      function flushAll(
+        decoders: Decoders,
+        type: "text-delta" | "reasoning-delta",
+        emit: (part: LanguageModelV4StreamPart) => void
+      ) {
+        for (const [id, decoder] of decoders) {
+          const remaining = decoder.flush();
+          if (remaining) {
+            if (type === "text-delta") accDecodedText += remaining;
+            emit({ type, id, delta: remaining } as LanguageModelV4StreamPart);
+          }
+        }
+        decoders.clear();
+      }
+
       const transformedStream = new TransformStream<
         LanguageModelV4StreamPart,
         LanguageModelV4StreamPart
@@ -696,27 +732,34 @@ export function promptIdentifiersMiddleware(
           // A closing chunk is the last chance to emit what a decoder still holds:
           // anything enqueued from flush() arrives after the stream has finished,
           // with no open block to attach to, and is dropped from the assembled message.
-          if (chunk.type === "text-end" || chunk.type === "finish") {
-            const remaining = textDecoder.flush();
+          if (chunk.type === "text-end") {
+            const remaining = textDecoders.get(chunk.id)?.flush();
             if (remaining) {
               accDecodedText += remaining;
               controller.enqueue({
                 type: "text-delta",
-                id: lastTextId,
+                id: chunk.id,
                 delta: remaining,
               } as LanguageModelV4StreamPart);
             }
+            textDecoders.delete(chunk.id);
           }
 
-          if (chunk.type === "reasoning-end" || chunk.type === "finish") {
-            const remaining = reasoningDecoder.flush();
+          if (chunk.type === "reasoning-end") {
+            const remaining = reasoningDecoders.get(chunk.id)?.flush();
             if (remaining) {
               controller.enqueue({
                 type: "reasoning-delta",
-                id: lastReasoningId,
+                id: chunk.id,
                 delta: remaining,
               } as LanguageModelV4StreamPart);
             }
+            reasoningDecoders.delete(chunk.id);
+          }
+
+          if (chunk.type === "finish") {
+            flushAll(textDecoders, "text-delta", (part) => controller.enqueue(part));
+            flushAll(reasoningDecoders, "reasoning-delta", (part) => controller.enqueue(part));
           }
 
           if (chunk.type === "finish") {
@@ -737,7 +780,6 @@ export function promptIdentifiersMiddleware(
 
           // Decode text deltas
           if (chunk.type === "text-delta" && chunk.delta) {
-            lastTextId = chunk.id;
             if (debug) {
               if (!streamStarted) {
                 streamStartTime = performance.now();
@@ -745,7 +787,7 @@ export function promptIdentifiersMiddleware(
               }
               accEncodedText += chunk.delta;
             }
-            const decoded = textDecoder.process(chunk.delta);
+            const decoded = decoderFor(textDecoders, chunk.id).process(chunk.delta);
             if (decoded) {
               accDecodedText += decoded;
               controller.enqueue({ ...chunk, delta: decoded });
@@ -755,8 +797,7 @@ export function promptIdentifiersMiddleware(
 
           // Decode reasoning deltas
           if (chunk.type === "reasoning-delta" && chunk.delta) {
-            lastReasoningId = chunk.id;
-            const decoded = reasoningDecoder.process(chunk.delta);
+            const decoded = decoderFor(reasoningDecoders, chunk.id).process(chunk.delta);
             if (decoded) {
               controller.enqueue({ ...chunk, delta: decoded });
             }
@@ -775,16 +816,16 @@ export function promptIdentifiersMiddleware(
           }
 
           if (chunk.type === "tool-input-start") {
-            toolInputDecoders.set(chunk.id, createStreamingDecoder(mapping));
+            decoderFor(toolInputDecoders, chunk.id);
             controller.enqueue(chunk);
             return;
           }
 
           // Decode tool input deltas (partial JSON strings)
           if (chunk.type === "tool-input-delta" && "delta" in chunk) {
-            const decoder = toolInputDecoders.get(chunk.id);
+            const decoder = decoderFor(toolInputDecoders, chunk.id);
             const rawDelta = (chunk as { delta: string }).delta;
-            const decodedDelta = decoder ? decoder.process(rawDelta) : decode(rawDelta, mapping);
+            const decodedDelta = decoder.process(rawDelta);
             if (decodedDelta) {
               controller.enqueue({ ...chunk, delta: decodedDelta });
             }

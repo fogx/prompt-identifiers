@@ -126,9 +126,10 @@ async function streamAndCollect(
     model: mockModel,
   });
 
-  const streamParts: LanguageModelV4StreamPart[] = chunks.map((delta, i) => ({
+  // Every delta of one block carries that block's id, which is what a provider sends
+  const streamParts: LanguageModelV4StreamPart[] = chunks.map((delta) => ({
     type: partType,
-    id: String(i),
+    id: "block-1",
     delta,
   }));
 
@@ -509,7 +510,7 @@ describe("Streaming decoder: wrapLanguageModel integration", () => {
     const model = createMockModel({
       onStream: () => [
         { type: "text-delta", id: "1", delta: "User [0" },
-        { type: "text-delta", id: "2", delta: "00] found." },
+        { type: "text-delta", id: "1", delta: "00] found." },
       ],
     });
 
@@ -546,7 +547,7 @@ describe("Streaming decoder: wrapLanguageModel integration", () => {
     const model = createMockModel({
       onStream: () => [
         { type: "text-delta", id: "1", delta: "User ~0" },
-        { type: "text-delta", id: "2", delta: "00~ found." },
+        { type: "text-delta", id: "1", delta: "00~ found." },
       ],
     });
 
@@ -659,6 +660,59 @@ describe("Streaming decoder: stream bookkeeping", () => {
     });
     return collectStreamParts(result.stream);
   }
+
+  test("a tool input that never announced itself is still buffered across chunks", async () => {
+    const parts = await streamParts([
+      { type: "tool-input-delta", id: "a", delta: '{"id":"~00' },
+      { type: "tool-input-delta", id: "a", delta: '0~"}' },
+      { type: "tool-input-end", id: "a" },
+    ]);
+
+    const deltas = parts
+      .filter((part) => part.type === "tool-input-delta")
+      .map((part) => ("delta" in part ? part.delta : ""))
+      .join("");
+
+    expect(deltas).toBe(`{"id":"${uuid1}"}`);
+  });
+
+  test("a repeated tool-input-start keeps what the first one was holding", async () => {
+    const parts = await streamParts([
+      { type: "tool-input-start", id: "a", toolName: "one" },
+      { type: "tool-input-delta", id: "a", delta: '{"id":"~00' },
+      { type: "tool-input-start", id: "a", toolName: "one" },
+      { type: "tool-input-delta", id: "a", delta: '0~"}' },
+      { type: "tool-input-end", id: "a" },
+    ]);
+
+    const deltas = parts
+      .filter((part) => part.type === "tool-input-delta")
+      .map((part) => ("delta" in part ? part.delta : ""))
+      .join("");
+
+    expect(deltas).toBe(`{"id":"${uuid1}"}`);
+  });
+
+  test("one block's held tail is not completed by another block's text", async () => {
+    const parts = await streamParts([
+      { type: "text-start", id: "first" },
+      { type: "text-delta", id: "first", delta: "one ~00" },
+      { type: "text-start", id: "second" },
+      { type: "text-delta", id: "second", delta: "two" },
+      { type: "text-delta", id: "first", delta: "0~ end" },
+      { type: "text-end", id: "first" },
+      { type: "text-end", id: "second" },
+    ]);
+
+    const textOf = (id: string) =>
+      parts
+        .filter((part) => part.type === "text-delta" && part.id === id)
+        .map((part) => ("delta" in part ? part.delta : ""))
+        .join("");
+
+    expect(textOf("first")).toBe(`one ${uuid1} end`);
+    expect(textOf("second")).toBe("two");
+  });
 
   test("two tool calls streaming at once keep separate buffers", async () => {
     const parts = await streamParts([
