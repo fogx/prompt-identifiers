@@ -231,9 +231,10 @@ function deepEncode<T>(value: T, ctx: EncodeContext, path: string[] = []): T {
 
   // Handle objects
   if (typeof value === "object") {
-    // Only a plain record can be rebuilt from its entries. A BAML media argument is a native
-    // handle with no own enumerable keys, and a Date, a Map or a class instance keeps its state
-    // somewhere Object.entries cannot see, so walking any of them hands the runtime a husk.
+    // Only a plain record can be rebuilt from its entries. A BAML media argument, a Date, a Map
+    // and a Set keep their state in internal slots that Object.entries cannot see, so rebuilding
+    // one hands the runtime an empty object. A class instance keeps its own fields, but comes
+    // back without its prototype, so its methods and its type are gone.
     if (Object.getPrototypeOf(value) !== Object.prototype) {
       return value;
     }
@@ -298,8 +299,9 @@ function deepDecode<T>(value: T, mapping: Record<string, string>, countRef: { co
 
   // Handle objects
   if (typeof value === "object") {
-    // Only a plain record can be rebuilt from its entries, and a Date or a class instance the
-    // function returned keeps its state somewhere Object.entries cannot see
+    // Only a plain record can be rebuilt from its entries. A Date or a Map the function returned
+    // keeps its state where Object.entries cannot see it, and a class instance comes back without
+    // its prototype
     if (Object.getPrototypeOf(value) !== Object.prototype) {
       return value;
     }

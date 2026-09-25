@@ -153,7 +153,7 @@ Decoding reads keys either way, since a key only changes when it matches a place
 
 ### What is walked
 
-Only plain records are walked. A value whose prototype is not `Object.prototype` is handed through by identity, so a BAML media argument (`image`, `audio`, `pdf`, `video`), a `Date`, a `Map`, a `Set` and a class instance reach the function as themselves. Rebuilding one from its entries would hand the BAML runtime an empty object.
+Only plain records are walked. A value whose prototype is not `Object.prototype` is handed through by identity, so a BAML media argument (`image`, `audio`, `pdf`, `video`), a `Date`, a `Map`, a `Set` and a class instance reach the function as themselves. A media argument, a `Date`, a `Map` and a `Set` rebuilt from their entries would arrive empty, and a class instance would arrive without its prototype.
 
 `encodeObject` takes the same switch as its fourth argument: `encodeObject(obj, config, undefined, true)`.
 
