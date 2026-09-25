@@ -78,7 +78,8 @@ export interface WrapBamlFunctionOptions {
 
   /**
    * Optional callback fired after decoding IDs in the output. A stream fires it once, where its
-   * loop ends, and its counts cover the partials and the final together.
+   * consumption ends: the end of the loop, or `getFinalResponse()` for a consumer that calls it
+   * without iterating. Its counts cover the partials and the final together.
    * When debug is true, receives debugData with input, output, counts, and timing.
    */
   onDecode?: (result: { debugData?: DecodeDebugData }) => void;
