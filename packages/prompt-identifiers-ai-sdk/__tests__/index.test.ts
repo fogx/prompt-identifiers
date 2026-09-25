@@ -1835,6 +1835,125 @@ describe("prompt-identifiers-ai-sdk", () => {
       }
     );
   });
+  describe("A tool the provider ran itself", () => {
+    const config: EncodeConfig = { inputFormat: "UUID", outputFormat: "SafeNumeric" };
+    const uuid = "123e4567-e89b-42d3-a456-426655440000";
+
+    test("its result is decoded and scanned on the generated path", async () => {
+      const onDecode = vi.fn();
+      const middleware = createMiddleware({ config, onDecode });
+      const transformedParams = await middleware.transformParams({
+        params: createParams([userMessage(`Look up ${uuid}`)]),
+        type: "generate",
+        model: mockModel,
+      });
+
+      const result = await middleware.wrapGenerate({
+        doGenerate: vi.fn().mockResolvedValue({
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "call-1",
+              toolName: "web_search",
+              result: { query: "~000~", hits: [{ owner: "~000~", note: "also saw ~777~" }] },
+            },
+          ],
+          finishReason: mockFinishReason(),
+          usage: mockUsage(),
+          warnings: [],
+        }),
+        doStream: vi.fn(),
+        params: transformedParams,
+        model: mockModel,
+      });
+
+      expect(result.content[0]).toMatchObject({
+        result: { query: uuid, hits: [{ owner: uuid, note: `also saw ~777~` }] },
+      });
+      expect(onDecode.mock.calls[0][0].warnings).toEqual([
+        {
+          type: "unknown_placeholder",
+          value: "~777~",
+          source: "tool_result",
+          toolName: "web_search",
+        },
+      ]);
+    });
+
+    test("its result is decoded and scanned on the streamed path", async () => {
+      const onDecode = vi.fn();
+      const middleware = createMiddleware({ config, onDecode });
+      const transformedParams = await middleware.transformParams({
+        params: createParams([userMessage(`Look up ${uuid}`)]),
+        type: "stream",
+        model: mockModel,
+      });
+
+      const streamed = await middleware.wrapStream({
+        doStream: vi.fn().mockResolvedValue({
+          stream: createMockStream([
+            {
+              type: "tool-result",
+              toolCallId: "call-1",
+              toolName: "web_search",
+              result: { query: "~000~", note: "also saw ~777~" },
+            },
+            { type: "finish", finishReason: mockFinishReason(), usage: mockUsage() },
+          ] as LanguageModelV4StreamPart[]),
+        }),
+        doGenerate: vi.fn(),
+        params: transformedParams,
+        model: mockModel,
+      });
+
+      const parts = await collectStreamParts(streamed.stream);
+
+      expect(parts[0]).toMatchObject({ result: { query: uuid, note: "also saw ~777~" } });
+      expect(onDecode.mock.calls[0][0].warnings).toEqual([
+        {
+          type: "unknown_placeholder",
+          value: "~777~",
+          source: "tool_result",
+          toolName: "web_search",
+        },
+      ]);
+    });
+
+    test("a result holding no placeholder is handed back unchanged", async () => {
+      const onDecode = vi.fn();
+      const middleware = createMiddleware({ config, onDecode });
+      const transformedParams = await middleware.transformParams({
+        params: createParams([userMessage(`Look up ${uuid}`)]),
+        type: "generate",
+        model: mockModel,
+      });
+
+      const result = await middleware.wrapGenerate({
+        doGenerate: vi.fn().mockResolvedValue({
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "call-1",
+              toolName: "web_search",
+              result: { count: 3, ok: true, rows: [null, "plain"] },
+            },
+          ],
+          finishReason: mockFinishReason(),
+          usage: mockUsage(),
+          warnings: [],
+        }),
+        doStream: vi.fn(),
+        params: transformedParams,
+        model: mockModel,
+      });
+
+      expect(result.content[0]).toMatchObject({
+        result: { count: 3, ok: true, rows: [null, "plain"] },
+      });
+      expect(onDecode.mock.calls[0][0].warnings).toBeUndefined();
+    });
+  });
+
   describe("Ids inside a JSON payload", () => {
     const config: EncodeConfig = { inputFormat: "UUID", outputFormat: "SafeNumeric" };
     const ids = Array.from(

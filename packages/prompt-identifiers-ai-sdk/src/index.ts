@@ -100,8 +100,8 @@ export interface DecodeWarning {
   /** The problematic value found in the output */
   value: string;
   /** Where it was found */
-  source: "text" | "tool_call";
-  /** The tool whose call arguments contained the value, when source is "tool_call" */
+  source: "text" | "tool_call" | "tool_result";
+  /** The tool the value came from, when source is "tool_call" or "tool_result" */
   toolName?: string;
 }
 
@@ -182,6 +182,7 @@ const CUT_SHORT = new Set(["length", "content-filter", "error"]);
 function detectDecodeWarnings(
   decodedText: string,
   decodedToolCalls: DecodedToolCall[],
+  decodedToolResults: DecodedToolCall[],
   mapping: Record<string, string>,
   config: EncodeConfig,
   isTruncated: boolean
@@ -238,6 +239,9 @@ function detectDecodeWarnings(
   if (decodedText) check(decodedText, { source: "text" });
   for (const { toolName, input } of decodedToolCalls) {
     check(input, { source: "tool_call", toolName });
+  }
+  for (const { toolName, input } of decodedToolResults) {
+    check(input, { source: "tool_result", toolName });
   }
 
   return warnings;
@@ -378,6 +382,26 @@ function encodeJsonValue(
   } finally {
     open.delete(resolved);
   }
+}
+
+/**
+ * Restore every identifier inside a parsed JSON value, in its keys as well as its strings.
+ *
+ * A provider that runs a tool itself is handed the encoded arguments, so the result it sends back
+ * carries the same placeholders, and a model grouping its answer can put one in a key position.
+ */
+function decodeJsonValue(value: unknown, mapping: Record<string, string>): unknown {
+  if (typeof value === "string") return decode(value, mapping);
+  if (typeof value !== "object" || value === null) return value;
+
+  if (Array.isArray(value)) return value.map((item) => decodeJsonValue(item, mapping));
+
+  return Object.fromEntries(
+    Object.entries(value).map(([name, item]) => [
+      decode(name, mapping),
+      decodeJsonValue(item, mapping),
+    ])
+  );
 }
 
 /**
@@ -710,6 +734,7 @@ export function promptIdentifiersMiddleware(
       // Decode text and tool call inputs in content array
       let totalCount = 0;
       const decodedToolCalls: DecodedToolCall[] = [];
+      const decodedToolResults: DecodedToolCall[] = [];
       const decodedContent = result.content.map((item) => {
         if (item.type === "text") {
           const decoded = decode(item.text, mapping);
@@ -729,6 +754,14 @@ export function promptIdentifiersMiddleware(
           decodedToolCalls.push({ toolName: item.toolName, input: decodedInput });
           return { ...item, input: decodedInput };
         }
+        if (item.type === "tool-result" && "result" in item) {
+          const decodedResult = decodeJsonValue(item.result, mapping);
+          decodedToolResults.push({
+            toolName: item.toolName,
+            input: JSON.stringify(decodedResult),
+          });
+          return { ...item, result: decodedResult as typeof item.result };
+        }
         return item;
       });
 
@@ -737,6 +770,7 @@ export function promptIdentifiersMiddleware(
         ? detectDecodeWarnings(
             decodedText,
             decodedToolCalls,
+            decodedToolResults,
             mapping,
             config,
             // The opposite default to the streamed path, deliberately: doGenerate returning at
@@ -778,6 +812,7 @@ export function promptIdentifiersMiddleware(
 
       let accDecodedText = "";
       const accDecodedToolCalls: DecodedToolCall[] = [];
+      const accDecodedToolResults: DecodedToolCall[] = [];
 
       // Debug-only accumulation state
       let streamStartTime = 0;
@@ -802,6 +837,7 @@ export function promptIdentifiersMiddleware(
           ? detectDecodeWarnings(
               accDecodedText,
               accDecodedToolCalls,
+              accDecodedToolResults,
               mapping,
               config,
               // A stream that never reported one did not finish, which is a cut the generate
@@ -942,6 +978,16 @@ export function promptIdentifiersMiddleware(
               ...chunk,
               input: decodedInput,
             });
+            return;
+          }
+
+          if (chunk.type === "tool-result" && "result" in chunk) {
+            const decodedResult = decodeJsonValue(chunk.result, mapping);
+            accDecodedToolResults.push({
+              toolName: chunk.toolName,
+              input: JSON.stringify(decodedResult),
+            });
+            controller.enqueue({ ...chunk, result: decodedResult as typeof chunk.result });
             return;
           }
 
