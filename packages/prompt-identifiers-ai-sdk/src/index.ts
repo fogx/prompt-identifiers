@@ -119,8 +119,9 @@ interface DecodedToolCall {
 const ID_MASK = "\u0001";
 
 /**
- * Indices spread far enough apart that no two of them share a digit position, so a format's
- * padding differs across them and only its literals survive as shared affixes.
+ * Indices spread far enough apart that a format's padding differs across them, so what they share
+ * is its literals. The widest is 16 digits, and a format padded wider keeps some of its padding in
+ * the shared prefix.
  */
 const PROBE_INDICES = [0, 123456789, 987654321, Number.MAX_SAFE_INTEGER];
 
@@ -129,9 +130,9 @@ const PROBE_INDICES = [0, 123456789, 987654321, Number.MAX_SAFE_INTEGER];
  *
  * The affixes are read off the format rather than guessed, by writing a placeholder at several
  * spread-out indices and keeping only what all of them share at each end, so a literal carrying
- * its own digits (`v1_{i:03}`) contributes nothing and neither does padding, which one index alone
- * cannot tell from a delimiter. A format with nothing fixed at either end has no delimiters for a
- * model to strip, which is the case the warning cannot report.
+ * its own digits (`v1_{i:03}`) contributes nothing and neither does padding up to the width of the
+ * widest probe, which one index alone cannot tell from a delimiter. A format with nothing fixed at
+ * either end has no delimiters for a model to strip, which is the case the warning cannot report.
  */
 function placeholderBodies(
   placeholders: string[],
@@ -398,18 +399,32 @@ function encodeJsonValue(
  * A provider that runs a tool itself is handed the encoded arguments, so the result it sends back
  * carries the same placeholders, and a model grouping its answer can put one in a key position.
  */
-function decodeJsonValue(value: unknown, mapping: Record<string, string>): unknown {
+function decodeJsonValue(
+  value: unknown,
+  mapping: Record<string, string>,
+  open: Set<object> = new Set()
+): unknown {
   if (typeof value === "string") return decode(value, mapping);
   if (typeof value !== "object" || value === null) return value;
 
-  if (Array.isArray(value)) return value.map((item) => decodeJsonValue(item, mapping));
+  // The walk reaches a self-reference before the stack runs out, which is the only place that can
+  // say which side of the exchange the payload came from
+  if (open.has(value)) {
+    throw new TypeError("Converting circular structure to JSON in a tool result.");
+  }
+  open.add(value);
+  try {
+    if (Array.isArray(value)) return value.map((item) => decodeJsonValue(item, mapping, open));
 
-  return Object.fromEntries(
-    Object.entries(value).map(([name, item]) => [
-      decode(name, mapping),
-      decodeJsonValue(item, mapping),
-    ])
-  );
+    return Object.fromEntries(
+      Object.entries(value).map(([name, item]) => [
+        decode(name, mapping),
+        decodeJsonValue(item, mapping, open),
+      ])
+    );
+  } finally {
+    open.delete(value);
+  }
 }
 
 /**
@@ -546,8 +561,15 @@ function decodeToolInputString(input: string, mapping: Record<string, string>): 
   return decode(input, jsonSafeMapping(mapping));
 }
 
-/** Escaped mappings, keyed on the mapping they came from so decode keeps its compiled pattern. */
-const jsonSafeMappings = new WeakMap<Record<string, string>, Record<string, string>>();
+/**
+ * Escaped mappings, keyed on the mapping they came from so decode keeps its compiled pattern. The
+ * key list is stored alongside, because a mapping grows in place as a call mints placeholders and
+ * an entry added after the first lookup would otherwise never be escaped.
+ */
+const jsonSafeMappings = new WeakMap<
+  Record<string, string>,
+  { keys: string[]; escaped: Record<string, string> }
+>();
 
 /**
  * The same mapping with every identifier written the way JSON would write it inside a string.
@@ -558,20 +580,27 @@ const jsonSafeMappings = new WeakMap<Record<string, string>, Record<string, stri
  * returned when nothing needs escaping, which keeps decode on its cached pattern.
  */
 function jsonSafeMapping(mapping: Record<string, string>): Record<string, string> {
+  const keys = Object.keys(mapping);
   const known = jsonSafeMappings.get(mapping);
-  if (known) return known;
+  if (known && sameKeys(known.keys, keys)) return known.escaped;
 
   const escaped: Record<string, string> = {};
   let changed = false;
-  for (const [placeholder, id] of Object.entries(mapping)) {
+  for (const placeholder of keys) {
+    const id = mapping[placeholder];
     const safe = JSON.stringify(id).slice(1, -1);
     if (safe !== id) changed = true;
     escaped[placeholder] = safe;
   }
 
   const result = changed ? escaped : mapping;
-  jsonSafeMappings.set(mapping, result);
+  jsonSafeMappings.set(mapping, { keys, escaped: result });
   return result;
+}
+
+function sameKeys(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  return a.every((key, index) => key === b[index]);
 }
 
 // =============================================================================
@@ -792,12 +821,16 @@ export function promptIdentifiersMiddleware(
           decodedToolCalls.push({ toolName: item.toolName, input: decodedInput });
           return { ...item, input: decodedInput };
         }
-        if (item.type === "tool-result" && "result" in item) {
+        if (item.type === "tool-result" && item.result !== undefined) {
           const decodedResult = decodeJsonValue(item.result, mapping);
-          decodedToolResults.push({
-            toolName: item.toolName,
-            input: JSON.stringify(decodedResult),
-          });
+          // A preliminary result is replaced by a final one carrying the same content, so scanning
+          // both reports every anomaly once per preview frame
+          if (!item.preliminary) {
+            decodedToolResults.push({
+              toolName: item.toolName,
+              input: JSON.stringify(decodedResult),
+            });
+          }
           return { ...item, result: decodedResult as typeof item.result };
         }
         return item;
@@ -1019,12 +1052,16 @@ export function promptIdentifiersMiddleware(
             return;
           }
 
-          if (chunk.type === "tool-result" && "result" in chunk) {
+          if (chunk.type === "tool-result" && chunk.result !== undefined) {
             const decodedResult = decodeJsonValue(chunk.result, mapping);
-            accDecodedToolResults.push({
-              toolName: chunk.toolName,
-              input: JSON.stringify(decodedResult),
-            });
+            // A preliminary result is replaced by a final one carrying the same content, so
+            // scanning both reports every anomaly once per preview frame
+            if (!chunk.preliminary) {
+              accDecodedToolResults.push({
+                toolName: chunk.toolName,
+                input: JSON.stringify(decodedResult),
+              });
+            }
             controller.enqueue({ ...chunk, result: decodedResult as typeof chunk.result });
             return;
           }

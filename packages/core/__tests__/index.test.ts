@@ -541,6 +541,12 @@ describe("prompt-identifiers", () => {
       );
     });
 
+    test("an input format matching a single character is fine", () => {
+      const { encoded } = encode("a 7 b", { inputFormat: /\d/g, outputFormat: "SafeNumeric" });
+
+      expect(encoded).toBe("a ~000~ b");
+    });
+
     test("an empty key would match everywhere, so it is refused", () => {
       expect(() => decode("hello", { "": "X" })).toThrow(/empty placeholder key/);
     });
