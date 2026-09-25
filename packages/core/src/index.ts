@@ -275,7 +275,7 @@ function buildPlaceholderShape(format: OutputFormat): PlaceholderShape | undefin
 
   // A template says where its index sits, so its literals are the affixes exactly, at any pad
   // width. Only a bare FormatterFn has to be probed.
-  if (typeof format === "object" && "template" in format) {
+  if (typeof format === "object" && typeof format.template === "string") {
     const slot = format.template.match(/\{i(?::([^}]+))?\}/);
     if (slot) {
       const prefix = format.template.slice(0, slot.index);

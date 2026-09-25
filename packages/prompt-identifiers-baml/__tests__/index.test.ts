@@ -665,6 +665,17 @@ describe("prompt-identifiers-baml", () => {
       expect(mockFn).toHaveBeenCalledWith({ cust_identifier: "~000~", note: "hello" });
     });
 
+    test("an encoded key named __proto__ stays an own property", async () => {
+      const mockFn = vi.fn(async (_input: Record<string, string>) => ({ ok: true }));
+
+      const wrapped = wrapBamlFunction(mockFn, { config: defaultConfig, encodeKeys: true });
+      await wrapped(JSON.parse('{"__proto__": "x", "note": "y"}'));
+
+      const sent = mockFn.mock.calls[0][0];
+      expect(Object.getOwnPropertyNames(sent)).toEqual(["__proto__", "note"]);
+      expect(Object.getPrototypeOf(sent)).toBe(Object.prototype);
+    });
+
     test("two keys that encode to one placeholder are refused", async () => {
       const mockFn = vi.fn(async () => ({ ok: true }));
 

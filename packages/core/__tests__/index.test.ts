@@ -522,6 +522,14 @@ describe("prompt-identifiers", () => {
       expect(Object.keys(mapping)).toHaveLength(2);
     });
 
+    test("a caller with no types still gets an answer, not a throw", () => {
+      // findPlaceholders answers which tokens look like placeholders, so a format it cannot read
+      // is a format with no shape rather than a reason to end the call
+      expect(findPlaceholders("see ~000~", { template: 123 } as unknown as OutputFormat)).toEqual(
+        []
+      );
+    });
+
     test("a template's affixes are its literals at any pad width", () => {
       // A template says where its index sits, so no probe has to outgrow the padding
       const format = { template: "ID{i:020}" };

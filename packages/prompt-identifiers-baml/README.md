@@ -35,7 +35,7 @@ const result = await analyzeUser({
 
 ## How It Works
 
-1. **Before BAML call**: Deep traverses input object and encodes all ID fields
+1. **Before BAML call**: Deep traverses input object and encodes all ID fields, and object keys when `encodeKeys` is on
    - `123e4567-e89b-42d3-a456-426655440000` → `~000~`
 
 2. **After BAML call**: Deep traverses output object and decodes all placeholders
@@ -198,7 +198,7 @@ const result: AnalyzeUserOutput = await analyzeUser({
 
 **Auto-detection mode** (no `encodeFields`):
 
-- Encodes ALL string fields matching the input pattern
+- Encodes ALL string fields matching the input pattern, and object keys too when `encodeKeys` is on
 - Simple to use, works for most cases
 - May encode fields you don't want encoded
 
@@ -207,6 +207,7 @@ const result: AnalyzeUserOutput = await analyzeUser({
 - Only encodes specified fields
 - More precise control
 - Recommended for production use
+- Leaves object keys alone whatever `encodeKeys` says, because a field path names a value. An input keyed by identifier needs auto-detection mode.
 
 ```typescript
 // Auto-detection: all UUIDs encoded

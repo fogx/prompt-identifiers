@@ -143,7 +143,7 @@ function placeholderBodies(
 
   // A template says where its index sits, so its literals are the affixes exactly, at any pad
   // width. Only a bare FormatterFn has to be probed.
-  if (typeof outputFormat === "object" && "template" in outputFormat) {
+  if (typeof outputFormat === "object" && typeof outputFormat.template === "string") {
     const slot = outputFormat.template.match(/\{i(?::[^}]+)?\}/);
     if (slot) {
       return bodiesFrom(

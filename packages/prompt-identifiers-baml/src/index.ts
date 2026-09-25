@@ -25,7 +25,7 @@ export interface EncodeDebugData {
 
 /** Debug data included in onDecode callback when debug is true */
 export interface DecodeDebugData {
-  /** Number of fields containing decoded placeholders */
+  /** Number of fields and keys whose placeholders were decoded */
   decodedCount: number;
   /** Raw output from LLM (encoded) */
   input: unknown;
@@ -217,7 +217,14 @@ function deepEncode<T>(value: T, ctx: EncodeContext, path: string[] = []): T {
             `would be lost. Give the object one key per identifier.`
         );
       }
-      result[encodedKey] = deepEncode(val, ctx, [...path, key]);
+      // Defining the property keeps a key of `__proto__`, which JSON.parse produces as an own
+      // key, off the prototype setter that would drop the field and reshape the object
+      Object.defineProperty(result, encodedKey, {
+        value: deepEncode(val, ctx, [...path, key]),
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
     }
 
     return result as T;
