@@ -263,14 +263,11 @@ function encodeToolResultOutput(
     return { ...typedOutput, value: result.encoded };
   }
 
-  // For json output, stringify → encode → parse
   if (
     (typedOutput.type === "json" || typedOutput.type === "error-json") &&
     typedOutput.value !== undefined
   ) {
-    const stringified = JSON.stringify(typedOutput.value);
-    const result = encode(stringified, config, state);
-    return { ...typedOutput, value: JSON.parse(result.encoded) };
+    return { ...typedOutput, value: encodeJsonValue(typedOutput.value, config, state) };
   }
 
   // For content output, the value is an array of the same text and file parts
@@ -289,15 +286,76 @@ function encodeToolResultOutput(
 }
 
 /**
- * Encode IDs in tool call input (args).
- * Input is an arbitrary object in prompt messages — stringify → encode → parse.
+ * Encode IDs in every string a JSON payload carries, keys included.
+ *
+ * Encoding the serialised document instead would run the ID patterns over JSON's own escapes.
+ * A newline is written as a backslash and an `n`, and both ID patterns open on a word boundary,
+ * so an ID written straight after one is never matched and silently travels uncompressed.
+ */
+function encodeJsonValue(
+  value: unknown,
+  config: EncodeConfig,
+  state: EncodeState,
+  key = "",
+  open: Set<object> = new Set()
+): unknown {
+  const resolved = jsonFormOf(value, key);
+
+  if (typeof resolved === "string") return encode(resolved, config, state).encoded;
+
+  if (typeof resolved !== "object" || resolved === null) return resolved;
+
+  // Serialising the payload is the provider's job and it would report this; the walk reaches it
+  // first and would otherwise run out of stack with nothing to point at
+  if (open.has(resolved)) {
+    throw new TypeError("Converting circular structure to JSON in a tool payload.");
+  }
+  open.add(resolved);
+  try {
+    if (Array.isArray(resolved)) {
+      return resolved.map((item, index) =>
+        encodeJsonValue(item, config, state, String(index), open)
+      );
+    }
+
+    return Object.fromEntries(
+      Object.entries(resolved).map(([name, item]) => [
+        encode(name, config, state).encoded,
+        encodeJsonValue(item, config, state, name, open),
+      ])
+    );
+  } finally {
+    open.delete(resolved);
+  }
+}
+
+/**
+ * What `JSON.stringify` would serialise in this value's place, asked for exactly once.
+ *
+ * The provider stringifies the payload after the middleware has encoded it. Walking a value as it
+ * stands would encode fields the provider then discards and leave what `toJSON` returns untouched,
+ * so a `Date` reaches the model as `{}` and an identifier behind a `toJSON` reaches it raw.
+ */
+function jsonFormOf(value: unknown, key: string): unknown {
+  if (value === null || typeof value !== "object") return value;
+
+  const withToJson = value as { toJSON?: (key: string) => unknown };
+  if (typeof withToJson.toJSON === "function") return withToJson.toJSON(key);
+
+  if (value instanceof String) return String(value);
+  if (value instanceof Number) return Number(value);
+  if (value instanceof Boolean) return Boolean(value);
+
+  return value;
+}
+
+/**
+ * Encode IDs in tool call input (args), which is an arbitrary JSON value.
  */
 function encodeToolCallInput(input: unknown, config: EncodeConfig, state: EncodeState): unknown {
   if (input == null) return input;
 
-  const stringified = JSON.stringify(input);
-  const result = encode(stringified, config, state);
-  return JSON.parse(result.encoded);
+  return encodeJsonValue(input, config, state);
 }
 
 /**
@@ -428,7 +486,7 @@ function createStreamingDecoder(mapping: Record<string, string>) {
       growable.add(placeholder.slice(0, length));
     }
   }
-  // Spreading the lengths into Math.max overflows the call stack past ~130,000 placeholders
+  // Spreading the lengths into Math.max overflows the call stack past roughly 120,000 placeholders
   let longest = 0;
   for (const placeholder of placeholders) {
     if (placeholder.length > longest) longest = placeholder.length;
@@ -528,6 +586,19 @@ export function promptIdentifiersMiddleware(
         "system message, or false to send none."
     );
   }
+  // A tool payload reaches the model as JSON and comes back as JSON text the decoder scans without
+  // parsing, so a placeholder JSON has to escape is written one way and read another
+  const example =
+    config.outputFormat === "Passthrough" ? "" : createFormatter(config.outputFormat)(0);
+  const unsafe = example.match(/["\\\u0000-\u001f]/);
+  if (unsafe) {
+    throw new Error(
+      `promptIdentifiersMiddleware: the output format writes ${JSON.stringify(example)}, which ` +
+        `carries ${JSON.stringify(unsafe[0])}. JSON escapes that character, so the placeholder ` +
+        `would not survive a tool call. Choose a format without it.`
+    );
+  }
+
   // Passthrough encodes nothing, so there is no format to name and nothing to instruct about
   const builtInstruction =
     instruction === false || config.outputFormat === "Passthrough"

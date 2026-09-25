@@ -8,4 +8,4 @@ A tool input whose `tool-input-start` never arrived is buffered instead of decod
 
 The decode warning scan only runs when an `onDecode` callback is registered to receive it. It masks every ID across the whole answer, which is the dominant cost of a large response, and nothing could read the result.
 
-A mapping above roughly 130,000 placeholders no longer throws `RangeError: Maximum call stack size exceeded` when a stream starts. The longest placeholder was measured by spreading every length into `Math.max`.
+A mapping above roughly 120,000 placeholders no longer throws `RangeError: Maximum call stack size exceeded` when a stream starts. The longest placeholder was measured by spreading every length into `Math.max`.
