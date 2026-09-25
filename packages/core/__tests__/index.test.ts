@@ -527,6 +527,19 @@ describe("prompt-identifiers", () => {
       expect(findPlaceholders("see 000 and 7", { template: "{i:03}" })).toEqual([]);
     });
 
+    test("a formatter padded past the widest probe keeps only what starts with its padding", () => {
+      // The probes all carry the pad's leading zeros, so those read as prefix. The real
+      // placeholder still matches and an invention that does not begin with them does not.
+      const format = (index: number) => `ID${String(index).padStart(20, "0")}`;
+      const text = "see ID00000000000000000007 and ID99999999999999999999";
+
+      expect(findPlaceholders(text, format)).toEqual(["ID00000000000000000007"]);
+      expect(findPlaceholders(text, { template: "ID{i:020}" })).toEqual([
+        "ID00000000000000000007",
+        "ID99999999999999999999",
+      ]);
+    });
+
     test("a formatter padded wider than nine digits is probed wide enough", () => {
       // A bare function cannot be read, so its affixes come from probes, and a narrow set of them
       // would share the padding and pass it off as a delimiter

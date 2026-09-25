@@ -108,7 +108,9 @@ Return the distinct tokens in `text` that carry the output format's delimiters a
 
 **Returns:** The tokens found. Any that are not keys of the mapping are candidates the model invented, and that includes a body the format would have written differently, such as `~5~` against `~005~`. A doubled delimiter, as in markdown strikethrough (`~~120~~`), does not count. `Numeric`, `IdToken` and `Passthrough` always return `[]`, since their placeholders look like ordinary numbers and words.
 
-A template is read for the literals around its index, so its affixes are exact at any pad width. A formatter function cannot be read, so it is probed at four spread indices, the widest 16 digits. One padded wider than that counts its own leading zeros as a delimiter and returns `[]`, and so does one that throws on those indices. `{ template: 'ID{i:020}' }` and `(i) => 'ID' + String(i).padStart(20, '0')` write the same placeholders and only the first is found.
+A template is read for the literals around its index, so its affixes are exact at any pad width. A formatter function cannot be read, so it is probed at four spread indices, the widest 16 digits, and one that throws on those indices returns `[]`.
+
+One padded wider than 16 digits counts its own leading zeros into the prefix. It still finds a token that starts with them and misses one whose index is long enough not to, which is the invention the scan is for. Against `ID00000000000000000007` and `ID99999999999999999999`, `{ template: 'ID{i:020}' }` returns both and `(i) => 'ID' + String(i).padStart(20, '0')` returns only the first.
 
 **Example:**
 
