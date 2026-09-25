@@ -8,11 +8,13 @@ Complete technical reference for `prompt-identifiers`.
   - [encode](#encode)
   - [decode](#decode)
   - [findPlaceholders](#findplaceholders)
+  - [createEncodeState](#createencodestate)
 - [Types](#types)
   - [InputFormat](#inputformat)
   - [OutputFormat](#outputformat)
   - [EncodeConfig](#encodeconfig)
   - [EncodeResult](#encoderesult)
+  - [EncodeState](#encodestate)
   - [TemplateFormat](#templateformat)
   - [FormatterFn](#formatterfn)
 - [Input Format Details](#input-format-details)
@@ -39,7 +41,7 @@ Complete technical reference for `prompt-identifiers`.
 ### encode
 
 ```typescript
-function encode(text: string, config: EncodeConfig): EncodeResult;
+function encode(text: string, config: EncodeConfig, state?: EncodeState): EncodeResult;
 ```
 
 Replace identifiers in text with short placeholders.
@@ -48,8 +50,9 @@ Replace identifiers in text with short placeholders.
 
 - `text` - Input text containing identifiers
 - `config` - Configuration object specifying input and output formats
+- `state` - Optional shared state, so several calls number their placeholders in one sequence and give one identifier the same placeholder everywhere. See [createEncodeState](#createencodestate).
 
-**Returns:** `EncodeResult` with encoded text and mapping
+**Returns:** `EncodeResult` with encoded text and mapping. When `state` is passed, `mapping` is the shared mapping and carries every identifier seen so far, not only the ones in `text`.
 
 **Example:**
 
@@ -111,6 +114,32 @@ Return the distinct tokens in `text` that carry the output format's delimiters a
 // mapping came from encode()
 const invented = findPlaceholders(llmResponse, "SafeNumeric").filter((p) => !(p in mapping));
 // ["~053~"]
+```
+
+---
+
+### createEncodeState
+
+```typescript
+function createEncodeState(): EncodeState;
+```
+
+Create the state that lets several `encode` calls share one numbering and one mapping. Encoding a conversation message by message without it restarts at index 0 each time, so the same identifier gets a different placeholder in each message and one placeholder stands for different identifiers.
+
+**Returns:** `EncodeState` to pass to every `encode` call that belongs together
+
+**Example:**
+
+```typescript
+const state = createEncodeState();
+
+const first = encode("User 123e4567-e89b-42d3-a456-426655440000 logged in", config, state);
+const second = encode("User 123e4567-e89b-42d3-a456-426655440000 paid", config, state);
+// first.encoded:  "User 000 logged in"
+// second.encoded: "User 000 paid"
+// state.mapping:  { "000": "123e4567-e89b-42d3-a456-426655440000" }
+
+decode(second.encoded, state.mapping);
 ```
 
 ---
@@ -181,6 +210,19 @@ Result of the `encode` function.
 | --------- | --------------------------------------------------- |
 | `encoded` | Text with identifiers replaced by placeholders      |
 | `mapping` | Object mapping placeholders to original identifiers |
+
+---
+
+### EncodeState
+
+```typescript
+interface EncodeState {
+  idToPlaceholder: Map<string, string>;
+  mapping: Record<string, string>;
+}
+```
+
+The shared numbering and mapping behind a run of `encode` calls. Create it with [createEncodeState](#createencodestate) and treat its fields as read-only; `encode` writes to them.
 
 ---
 
@@ -458,6 +500,33 @@ encode(text, {
 ### Invalid RegExp
 
 If a custom RegExp is invalid, the JavaScript engine throws a `SyntaxError` at RegExp construction time (before `encode` is called).
+
+### Empty Input Match
+
+An input format that can match the empty string is refused, because it matches between every pair of characters.
+
+```typescript
+encode("ab12cd", { inputFormat: /\d*/g, outputFormat: "SafeNumeric" });
+// Throws: Error: The input format /\d*/g matched the empty string. An input format has to match at least one character.
+```
+
+### Empty Placeholder
+
+An output format that returns an empty string, or anything that is not a string, is refused, because the identifier would vanish from the prompt and its mapping key would match everywhere.
+
+```typescript
+encode(text, { inputFormat: "UUID", outputFormat: () => "" });
+// Throws: Error: The output format returned "" for index 0. A placeholder must be a non-empty string.
+```
+
+### Empty Mapping Key
+
+`decode` refuses a mapping with an empty key, for the same reason.
+
+```typescript
+decode("hello", { "": "X" });
+// Throws: Error: The mapping has an empty placeholder key, which matches at every position.
+```
 
 ### Unknown Format Specifier
 
