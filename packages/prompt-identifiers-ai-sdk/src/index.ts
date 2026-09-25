@@ -428,9 +428,11 @@ function jsonFormOf(value: unknown, key: string): unknown {
   const resolved = typeof withToJson.toJSON === "function" ? withToJson.toJSON(key) : value;
   if (resolved === null || typeof resolved !== "object") return resolved;
 
-  if (resolved instanceof String) return String(resolved);
-  if (resolved instanceof Number) return Number(resolved);
-  if (resolved instanceof Boolean) return Boolean(resolved);
+  // valueOf, not the wrapper's own conversion: Boolean(new Boolean(false)) is true, because the
+  // box is an object before it is a false
+  if (resolved instanceof String) return resolved.valueOf();
+  if (resolved instanceof Number) return resolved.valueOf();
+  if (resolved instanceof Boolean) return resolved.valueOf();
 
   return resolved;
 }

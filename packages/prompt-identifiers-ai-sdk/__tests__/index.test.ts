@@ -2117,6 +2117,9 @@ describe("prompt-identifiers-ai-sdk", () => {
         '{"v":"~000~"}',
       ],
       ["a toJSON returning a boxed number", { v: { toJSON: () => new Number(42) } }, '{"v":42}'],
+      ["a boxed false", { v: new Boolean(false) }, '{"v":false}'],
+      ["a boxed empty string", { v: new String("") }, '{"v":""}'],
+      ["a boxed zero", { v: new Number(0) }, '{"v":0}'],
       ["a property holding a function", { v: () => ids[0], n: 1 }, '{"n":1}'],
     ])("%s serialises the way the provider would", async (_label, input, expected) => {
       expect(await toolCallInputOnTheWire(input)).toBe(expected);
