@@ -120,11 +120,17 @@ const streamAnalysis = wrapBamlStreamingFunction(b.stream.AnalyzeUser, {
   config: { inputFormat: "UUID", outputFormat: "SafeNumeric" },
 });
 
+const stream = streamAnalysis({ user_id: uuid });
+
 // IDs are decoded in real-time as partials arrive
-for await (const partial of streamAnalysis({ user_id: uuid })) {
+for await (const partial of stream) {
   console.log(partial);
 }
+
+const final = await stream.getFinalResponse();
 ```
+
+The wrapper mirrors what it was given: pass `b.stream.<Fn>`, which returns a `BamlStream`, and you get a stream back with the same `getFinalResponse()`. Pass a plain async generator and you get an async generator, whose return value is the decoded final.
 
 ## Utility Functions
 
@@ -144,6 +150,10 @@ const wrapped = wrapBamlFunction(b.AnalyzeUsers, {
 It is off by default because nothing at runtime tells a map key from a class's own field name, so a custom input format matching a field name would rewrite the class's shape. It is ignored when `encodeFields` is given, because a field path names a value. Two keys that encode to one placeholder are refused rather than collapsed.
 
 Decoding reads keys either way, since a key only changes when it matches a placeholder the call minted.
+
+### What is walked
+
+Only plain records are walked. A value whose prototype is not `Object.prototype` is handed through by identity, so a BAML media argument (`image`, `audio`, `pdf`, `video`), a `Date`, a `Map`, a `Set` and a class instance reach the function as themselves. Rebuilding one from its entries would hand the BAML runtime an empty object.
 
 `encodeObject` takes the same switch as its fourth argument: `encodeObject(obj, config, undefined, true)`.
 

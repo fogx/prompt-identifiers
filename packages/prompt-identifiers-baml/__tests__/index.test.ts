@@ -631,6 +631,53 @@ describe("prompt-identifiers-baml", () => {
     });
   });
 
+  describe("A value that is not a plain record", () => {
+    // A BAML media argument is a native handle: prototype null, no own enumerable keys, all state
+    // behind the handle. Rebuilding one from its entries hands the runtime an empty object.
+    test.each([
+      ["a native handle", Object.create(null)],
+      ["a Date", new Date("2026-01-02T03:04:05.000Z")],
+      ["a Map", new Map([["k", "v"]])],
+      ["a Set", new Set(["v"])],
+      [
+        "a class instance",
+        new (class Box {
+          held = "x";
+        })(),
+      ],
+    ])("%s reaches the function by identity", async (_label, value) => {
+      const mockFn = vi.fn(async (_input: { arg: unknown }) => ({ ok: true }));
+
+      const wrapped = wrapBamlFunction(mockFn, { config: defaultConfig });
+      await wrapped({ arg: value });
+
+      expect(mockFn.mock.calls[0][0].arg).toBe(value);
+    });
+
+    test("one in a result comes back by identity too", async () => {
+      const when = new Date("2026-01-02T03:04:05.000Z");
+      const mockFn = vi.fn(async () => ({ when, note: "~000~" }));
+
+      const wrapped = wrapBamlFunction(mockFn, { config: defaultConfig });
+      const result = await wrapped({ id: uuid1 });
+
+      expect(result.when).toBe(when);
+      expect(result.note).toBe(uuid1);
+    });
+
+    test("a plain record beside it is still encoded", async () => {
+      const handle = Object.create(null);
+      const mockFn = vi.fn(async (_input: { img: unknown; meta: { id: string } }) => ({
+        ok: true,
+      }));
+
+      const wrapped = wrapBamlFunction(mockFn, { config: defaultConfig });
+      await wrapped({ img: handle, meta: { id: uuid1 } });
+
+      expect(mockFn.mock.calls[0][0]).toEqual({ img: handle, meta: { id: "~000~" } });
+    });
+  });
+
   describe("An identifier in an object key", () => {
     test("a map keyed by identifier is encoded when the caller asks", async () => {
       const mockFn = vi.fn(async (input: { byId: Record<string, string> }) => ({
@@ -746,6 +793,93 @@ describe("prompt-identifiers-baml", () => {
       await wrapped({ id: uuid1 });
 
       expect(onDecode.mock.calls[0][0].debugData.decodedCount).toBe(1);
+    });
+  });
+
+  describe("A core too old to serve this package", () => {
+    test("is refused where the wrapper is built", async () => {
+      // Every export this package uses exists on 0.1.4, so nothing fails to link and nothing reads
+      // undefined. What changed in 0.2.0 is behaviour, so the probe has to be behavioural.
+      const core = await import("prompt-identifiers");
+      const real = core.encode;
+      Object.defineProperty(core, "encode", {
+        value: (text: string, config: unknown, state?: unknown) => {
+          const result = real(text.toLowerCase(), config as never, state as never);
+          return result;
+        },
+        configurable: true,
+      });
+      try {
+        expect(() => wrapBamlFunction(async () => ({}), { config: defaultConfig })).toThrow(
+          /prompt-identifiers 0\.2\.0 or later/
+        );
+      } finally {
+        Object.defineProperty(core, "encode", { value: real, configurable: true });
+      }
+    });
+
+    test("a current core is accepted", () => {
+      expect(() => wrapBamlFunction(async () => ({}), { config: defaultConfig })).not.toThrow();
+    });
+  });
+
+  describe("A BAML stream, which is not a generator", () => {
+    // b.stream.<Fn>(input) returns a BamlStream: async iterable, no next, and its final value
+    // behind getFinalResponse
+    function bamlStream(partials: unknown[], final: unknown) {
+      return {
+        async *[Symbol.asyncIterator]() {
+          for (const partial of partials) yield partial;
+        },
+        async getFinalResponse() {
+          return final;
+        },
+      };
+    }
+
+    test("its partials and its final response are both decoded", async () => {
+      const wrapped = wrapBamlStreamingFunction(
+        () =>
+          bamlStream([{ text: "~000~ first" }, { text: "~000~ second" }], { text: "~000~ done" }),
+        { config: defaultConfig }
+      );
+
+      const stream = wrapped({ id: uuid1 });
+      const seen: unknown[] = [];
+      for await (const partial of stream) seen.push(partial);
+
+      expect(seen).toEqual([{ text: `${uuid1} first` }, { text: `${uuid1} second` }]);
+      expect(await stream.getFinalResponse()).toEqual({ text: `${uuid1} done` });
+    });
+
+    test("its final response is reported to onDecode", async () => {
+      const onDecode = vi.fn();
+      const wrapped = wrapBamlStreamingFunction(
+        () => bamlStream([{ text: "~000~ first" }], { text: "~000~ done" }),
+        { config: defaultConfig, debug: true, onDecode }
+      );
+
+      const stream = wrapped({ id: uuid1 });
+      for await (const _partial of stream) void _partial;
+      await stream.getFinalResponse();
+
+      expect(onDecode.mock.calls[0][0].debugData.decodedCount).toBe(2);
+    });
+
+    test("its input is encoded the same way", async () => {
+      const seen: unknown[] = [];
+      const wrapped = wrapBamlStreamingFunction(
+        (input: unknown) => {
+          seen.push(input);
+          return bamlStream([], {});
+        },
+        { config: defaultConfig }
+      );
+
+      const stream = wrapped({ id: uuid1 });
+      for await (const _partial of stream) void _partial;
+
+      expect(seen[0]).toEqual({ id: "~000~" });
     });
   });
 

@@ -2686,6 +2686,18 @@ describe("prompt-identifiers-ai-sdk", () => {
       expect(wire).not.toContain(ids[0]);
     });
 
+    test("two keys that encode to one placeholder are refused", async () => {
+      // One entry standing for two is data lost before the model sees it, and the payload is the
+      // caller's, so the caller is the one who can fix it
+      await expect(
+        toolCallInputOnTheWire({ [ids[0]]: "a", [ids[0].toUpperCase()]: "b" })
+      ).rejects.toThrow(/same placeholder/i);
+
+      await expect(toolCallInputOnTheWire({ [ids[0]]: "a", "~000~": "b" })).rejects.toThrow(
+        /same placeholder/i
+      );
+    });
+
     test("a payload that reaches the same object twice is not a cycle", async () => {
       const shared = { note: `see ${ids[0]}` };
 

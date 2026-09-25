@@ -86,10 +86,40 @@ export interface WrapBamlFunctionOptions {
 /** A BAML function type (sync or async) */
 export type BamlFunction<TInput, TOutput> = (input: TInput) => Promise<TOutput>;
 
+/** What `b.stream.<Fn>(input)` returns: async iterable partials, final response on demand */
+export interface BamlStream<TPartial, TFinal> extends AsyncIterable<TPartial> {
+  getFinalResponse(): Promise<TFinal>;
+}
+
 /** A BAML streaming function type */
 export type BamlStreamingFunction<TInput, TPartial, TFinal> = (
   input: TInput
 ) => AsyncGenerator<TPartial, TFinal, unknown>;
+
+/** A streaming function as the generated BAML client writes it */
+export type BamlStreamFunction<TInput, TPartial, TFinal> = (
+  input: TInput
+) => BamlStream<TPartial, TFinal>;
+
+/**
+ * Refuse a `prompt-identifiers` older than the one that writes an identifier back in the case it
+ * was written in.
+ *
+ * A peer range is a warning rather than a wall, and every export this package uses exists on the
+ * older versions too, so nothing fails to link and nothing reads undefined. What changed is
+ * behaviour, so the probe is behavioural: an uppercase ULID that comes back lowercased is a core
+ * that would hand the caller an identifier no case-sensitive lookup finds.
+ */
+function requireCurrentCore() {
+  const probe = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+  const { mapping } = encode(probe, { inputFormat: "ULID", outputFormat: "SafeNumeric" });
+  if (!Object.values(mapping).includes(probe)) {
+    throw new Error(
+      "prompt-identifiers-baml needs prompt-identifiers 0.2.0 or later. The installed copy " +
+        "lowercases identifiers, so a ULID does not survive a round trip."
+    );
+  }
+}
 
 // =============================================================================
 // Field Path Matching
@@ -201,6 +231,13 @@ function deepEncode<T>(value: T, ctx: EncodeContext, path: string[] = []): T {
 
   // Handle objects
   if (typeof value === "object") {
+    // Only a plain record can be rebuilt from its entries. A BAML media argument is a native
+    // handle with no own enumerable keys, and a Date, a Map or a class instance keeps its state
+    // somewhere Object.entries cannot see, so walking any of them hands the runtime a husk.
+    if (Object.getPrototypeOf(value) !== Object.prototype) {
+      return value;
+    }
+
     const result: Record<string, unknown> = {};
 
     for (const [key, val] of Object.entries(value)) {
@@ -261,6 +298,12 @@ function deepDecode<T>(value: T, mapping: Record<string, string>, countRef: { co
 
   // Handle objects
   if (typeof value === "object") {
+    // Only a plain record can be rebuilt from its entries, and a Date or a class instance the
+    // function returned keeps its state somewhere Object.entries cannot see
+    if (Object.getPrototypeOf(value) !== Object.prototype) {
+      return value;
+    }
+
     const result: Record<string, unknown> = {};
 
     for (const [key, val] of Object.entries(value)) {
@@ -314,6 +357,7 @@ export function wrapBamlFunction<TInput, TOutput>(
   fn: BamlFunction<TInput, TOutput>,
   options: WrapBamlFunctionOptions
 ): BamlFunction<TInput, TOutput> {
+  requireCurrentCore();
   const { config, encodeFields, encodeKeys = false, onEncode, onDecode, debug } = options;
 
   // Pre-parse field paths if provided
@@ -381,22 +425,35 @@ export function wrapBamlFunction<TInput, TOutput>(
  *   config: { inputFormat: 'UUID', outputFormat: 'SafeNumeric' },
  * });
  *
- * for await (const partial of streamAnalysis({ user_id: '123e4567-e89b-42d3-a456-426655440000' })) {
+ * const stream = streamAnalysis({ user_id: '123e4567-e89b-42d3-a456-426655440000' });
+ *
+ * for await (const partial of stream) {
  *   console.log(partial); // IDs decoded in real-time
  * }
+ *
+ * const final = await stream.getFinalResponse();
  * ```
  */
 export function wrapBamlStreamingFunction<TInput, TPartial, TFinal>(
+  fn: BamlStreamFunction<TInput, TPartial, TFinal>,
+  options: WrapBamlFunctionOptions
+): BamlStreamFunction<TInput, TPartial, TFinal>;
+export function wrapBamlStreamingFunction<TInput, TPartial, TFinal>(
   fn: BamlStreamingFunction<TInput, TPartial, TFinal>,
   options: WrapBamlFunctionOptions
-): BamlStreamingFunction<TInput, TPartial, TFinal> {
+): BamlStreamingFunction<TInput, TPartial, TFinal>;
+export function wrapBamlStreamingFunction<TInput, TPartial, TFinal>(
+  fn:
+    BamlStreamFunction<TInput, TPartial, TFinal> | BamlStreamingFunction<TInput, TPartial, TFinal>,
+  options: WrapBamlFunctionOptions
+): (input: TInput) => BamlStream<TPartial, TFinal> | AsyncGenerator<TPartial, TFinal, unknown> {
+  requireCurrentCore();
   const { config, encodeFields, encodeKeys = false, onEncode, onDecode, debug } = options;
 
   // Pre-parse field paths if provided
   const fieldPaths = encodeFields ? encodeFields.map(parseFieldPath) : null;
 
-  return async function* (input: TInput): AsyncGenerator<TPartial, TFinal, unknown> {
-    // Encode input
+  function encodeInput(input: TInput) {
     const ctx: EncodeContext = {
       config,
       fieldPaths,
@@ -420,47 +477,80 @@ export function wrapBamlStreamingFunction<TInput, TPartial, TFinal>(
       }),
     });
 
-    // Call the original streaming function
-    const generator = fn(encodedInput);
+    return { ctx, encodedInput };
+  }
+
+  return function (input: TInput) {
+    const { ctx, encodedInput } = encodeInput(input);
+    const source = fn(encodedInput);
     let totalDecoded = 0;
     const startDecode = debug ? performance.now() : 0;
 
-    // A consumer that breaks out of its loop, or throws inside it, returns this generator and
-    // nothing else tells the wrapped one to stop, which would leave the stream open
-    try {
-      while (true) {
-        const { value, done } = await generator.next();
-
-        if (done) {
-          // Final value
-          const countRef = { count: 0 };
-          const decodedValue = deepDecode(value, ctx.state.mapping, countRef);
-          totalDecoded += countRef.count;
-          const decodeDurationMs = debug ? performance.now() - startDecode : 0;
-
-          onDecode?.({
-            ...(debug && {
-              debugData: {
-                decodedCount: totalDecoded,
-                input: value,
-                output: decodedValue,
-                durationMs: decodeDurationMs,
-              },
-            }),
-          });
-          return decodedValue;
-        }
-
-        // Partial value
-        const countRef = { count: 0 };
-        const decodedValue = deepDecode(value, ctx.state.mapping, countRef);
-        totalDecoded += countRef.count;
-        yield decodedValue;
-      }
-    } finally {
-      await generator.return?.(undefined as TFinal);
+    function decodePart<T>(value: T): T {
+      const countRef = { count: 0 };
+      const decoded = deepDecode(value, ctx.state.mapping, countRef);
+      totalDecoded += countRef.count;
+      return decoded;
     }
+
+    function reportFinal(input: unknown, output: unknown) {
+      onDecode?.({
+        ...(debug && {
+          debugData: {
+            decodedCount: totalDecoded,
+            input,
+            output,
+            durationMs: performance.now() - startDecode,
+          },
+        }),
+      });
+    }
+
+    // The generated BAML client hands back a stream rather than a generator: it iterates, and its
+    // final response is a separate call the consumer makes when it wants one
+    if (isBamlStream<TPartial, TFinal>(source)) {
+      return {
+        async *[Symbol.asyncIterator](): AsyncGenerator<TPartial, void, unknown> {
+          for await (const partial of source) {
+            yield decodePart(partial);
+          }
+        },
+        async getFinalResponse() {
+          const final = await source.getFinalResponse();
+          const decoded = decodePart(final);
+          reportFinal(final, decoded);
+          return decoded;
+        },
+      };
+    }
+
+    const generator = source;
+    return (async function* (): AsyncGenerator<TPartial, TFinal, unknown> {
+      // A consumer that breaks out of its loop, or throws inside it, returns this generator and
+      // nothing else tells the wrapped one to stop, which would leave the stream open
+      try {
+        while (true) {
+          const { value, done } = await generator.next();
+
+          if (done) {
+            const decodedValue = decodePart(value);
+            reportFinal(value, decodedValue);
+            return decodedValue;
+          }
+
+          yield decodePart(value);
+        }
+      } finally {
+        await generator.return?.(undefined as TFinal);
+      }
+    })();
   };
+}
+
+function isBamlStream<TPartial, TFinal>(
+  source: AsyncGenerator<TPartial, TFinal, unknown> | BamlStream<TPartial, TFinal>
+): source is BamlStream<TPartial, TFinal> {
+  return typeof (source as BamlStream<TPartial, TFinal>).getFinalResponse === "function";
 }
 
 /**
@@ -484,6 +574,7 @@ export function encodeObject<T>(
   encodeFields?: string[],
   encodeKeys = false
 ): { encoded: T; mapping: Record<string, string> } {
+  requireCurrentCore();
   const fieldPaths = encodeFields ? encodeFields.map(parseFieldPath) : null;
 
   const ctx: EncodeContext = {

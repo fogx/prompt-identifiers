@@ -402,16 +402,24 @@ function encodeJsonValue(
       );
     }
 
-    return Object.fromEntries(
-      Object.entries(resolved)
-        // A function is not JSON, and carrying one through would hand the provider a `toJSON` that
-        // runs on the encoded payload and writes an identifier the encoder never saw
-        .filter(([, item]) => typeof item !== "function")
-        .map(([name, item]) => [
-          encode(name, config, state).encoded,
-          encodeJsonValue(item, config, state, name, open),
-        ])
-    );
+    const encoded: Record<string, unknown> = {};
+    for (const [name, item] of Object.entries(resolved)) {
+      // A function is not JSON, and carrying one through would hand the provider a `toJSON` that
+      // runs on the encoded payload and writes an identifier the encoder never saw
+      if (typeof item === "function") continue;
+
+      const encodedName = encode(name, config, state).encoded;
+      // One identifier written two ways, or a key already spelled like a placeholder this call
+      // mints, would otherwise leave one entry standing for two
+      if (Object.prototype.hasOwnProperty.call(encoded, encodedName)) {
+        throw new Error(
+          `Two keys in a tool payload encode to the same placeholder ${JSON.stringify(encodedName)}, ` +
+            `so one of them would be lost. Give the object one key per identifier.`
+        );
+      }
+      encoded[encodedName] = encodeJsonValue(item, config, state, name, open);
+    }
+    return encoded;
   } finally {
     open.delete(resolved);
   }
