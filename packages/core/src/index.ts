@@ -236,7 +236,9 @@ export function createFormatter(format: OutputFormat): FormatterFn {
 
 // These three differ in their first and last character, in decimal and in base62, so whatever all
 // three formatted placeholders share is delimiter
-const PLACEHOLDER_PROBE_INDICES = [0, 123456789, 987654321];
+// The widest index is there so a format padded past nine digits still differs across probes,
+// which is what keeps its padding out of the fixed prefix
+const PLACEHOLDER_PROBE_INDICES = [0, 123456789, 987654321, Number.MAX_SAFE_INTEGER];
 
 const builtInShapeCache = new Map<string, PlaceholderShape | undefined>();
 const customShapeCache = new WeakMap<object, PlaceholderShape | undefined>();
@@ -418,6 +420,15 @@ export function encode(text: string, config: EncodeConfig, state?: EncodeState):
   const mapping = state?.mapping ?? {};
 
   const encoded = text.replace(pattern, (match) => {
+    // An input format able to match the empty string matches between every pair of characters,
+    // which mints a placeholder standing for nothing and writes it into every gap in the prompt
+    if (match.length === 0) {
+      throw new Error(
+        `The input format ${String(config.inputFormat)} matched the empty string. An input ` +
+          `format has to match at least one character.`
+      );
+    }
+
     // One identifier written in two cases is one identifier, so deduplication ignores case. What
     // goes in the mapping is the text as it was written, because decode puts it back into the
     // caller's hands and a ULID that comes back lowercased misses a case-sensitive lookup.

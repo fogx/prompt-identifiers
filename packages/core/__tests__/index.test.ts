@@ -522,6 +522,25 @@ describe("prompt-identifiers", () => {
       expect(Object.keys(mapping)).toHaveLength(2);
     });
 
+    test("a format padded wider than a probe still has its padding read as body", () => {
+      // Probing only nine-digit indices leaves every probe sharing the leading zeros of a wider
+      // pad, which would read the padding as part of the fixed prefix
+      const format = { template: "ID{i:012}" };
+
+      expect(findPlaceholders("see ID000000000007 and ID999999999999", format)).toEqual([
+        "ID000000000007",
+        "ID999999999999",
+      ]);
+    });
+
+    test("an input format that matches nothing at all is refused", () => {
+      // /\d*/ matches the empty string between every pair of characters, which would mint a
+      // placeholder with nothing behind it and stuff one into every gap in the prompt
+      expect(() => encode("ab12cd", { inputFormat: /\d*/g, outputFormat: "SafeNumeric" })).toThrow(
+        /empty/i
+      );
+    });
+
     test("an empty key would match everywhere, so it is refused", () => {
       expect(() => decode("hello", { "": "X" })).toThrow(/empty placeholder key/);
     });

@@ -119,12 +119,19 @@ interface DecodedToolCall {
 const ID_MASK = "\u0001";
 
 /**
+ * Indices spread far enough apart that no two of them share a digit position, so a format's
+ * padding differs across them and only its literals survive as shared affixes.
+ */
+const PROBE_INDICES = [0, 123456789, 987654321, Number.MAX_SAFE_INTEGER];
+
+/**
  * The bodies of a call's placeholders: each one with the format's fixed prefix and suffix removed.
  *
- * The affixes are read off the format rather than guessed, by writing two placeholders far apart
- * and keeping what they share at each end, so a literal carrying its own digits (`v1_{i:03}`)
- * contributes nothing and a body split by a literal is still found. A format with nothing fixed at
- * either end has no delimiters for a model to strip, which is the case the warning cannot report.
+ * The affixes are read off the format rather than guessed, by writing a placeholder at several
+ * spread-out indices and keeping only what all of them share at each end, so a literal carrying
+ * its own digits (`v1_{i:03}`) contributes nothing and neither does padding, which one index alone
+ * cannot tell from a delimiter. A format with nothing fixed at either end has no delimiters for a
+ * model to strip, which is the case the warning cannot report.
  */
 function placeholderBodies(
   placeholders: string[],
@@ -133,25 +140,26 @@ function placeholderBodies(
   const bodies = new Set<string>();
   if (outputFormat === "Passthrough") return bodies;
 
-  let low: string;
-  let high: string;
+  let probes: string[];
   try {
     const formatter = createFormatter(outputFormat);
-    low = formatter(0);
-    high = formatter(123456789);
+    probes = PROBE_INDICES.map(formatter);
   } catch {
     // A formatter that refuses an index cannot be probed, so report nothing rather than guess
     return bodies;
   }
+  if (!probes.every((probe) => typeof probe === "string" && probe.length > 0)) return bodies;
+
+  const [low] = probes;
+  const shortest = Math.min(...probes.map((probe) => probe.length));
 
   let prefix = 0;
-  while (prefix < low.length && prefix < high.length && low[prefix] === high[prefix]) prefix++;
+  while (prefix < shortest && probes.every((probe) => probe[prefix] === low[prefix])) prefix++;
 
   let suffix = 0;
   while (
-    suffix < low.length - prefix &&
-    suffix < high.length - prefix &&
-    low[low.length - 1 - suffix] === high[high.length - 1 - suffix]
+    suffix < shortest - prefix &&
+    probes.every((probe) => probe[probe.length - 1 - suffix] === low[low.length - 1 - suffix])
   ) {
     suffix++;
   }

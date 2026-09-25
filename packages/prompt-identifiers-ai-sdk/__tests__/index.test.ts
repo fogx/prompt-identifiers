@@ -1416,6 +1416,14 @@ describe("prompt-identifiers-ai-sdk", () => {
       ]);
     });
 
+    test("a format padded wider than a probe reports the whole stripped body", async () => {
+      // A probe pair that both carry the pad's leading zeros would read them as the affix and
+      // leave the reported body short of what the model actually wrote
+      expect(await warningsFor({ template: "ID{i:012}" }, '{"ref": "000000000000"}')).toEqual([
+        ["stripped_delimiter", "000000000000"],
+      ]);
+    });
+
     test("a formatter that refuses a high index still decodes the answer", async () => {
       // The probe asks a custom formatter for an index far past anything the call minted, and a
       // lookup table that runs out throws there. Decoding is not the place to surface that.
