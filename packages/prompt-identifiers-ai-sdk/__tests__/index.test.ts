@@ -2698,6 +2698,25 @@ describe("prompt-identifiers-ai-sdk", () => {
       );
     });
 
+    test("a payload key named __proto__ stays an own key on the wire", async () => {
+      // JSON.parse produces `__proto__` as an own key, and plain assignment would hand it to the
+      // prototype setter instead: the field never reaches the model and the payload's prototype
+      // becomes whatever was under it
+      const wire = await toolCallInputOnTheWire(
+        JSON.parse(`{"note":"see ${ids[0]}","__proto__":{"id":"${ids[0]}"}}`)
+      );
+
+      expect(wire).toBe('{"note":"see ~000~","__proto__":{"id":"~000~"}}');
+    });
+
+    test("a payload key named toString is not read as a collision", async () => {
+      // Every object inherits one, so a membership test that walks the prototype chain refuses a
+      // payload that is perfectly well formed
+      expect(await toolCallInputOnTheWire({ toString: "x", note: `see ${ids[0]}` })).toBe(
+        '{"toString":"x","note":"see ~000~"}'
+      );
+    });
+
     test("a payload that reaches the same object twice is not a cycle", async () => {
       const shared = { note: `see ${ids[0]}` };
 

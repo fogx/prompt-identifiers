@@ -417,7 +417,14 @@ function encodeJsonValue(
             `so one of them would be lost. Give the object one key per identifier.`
         );
       }
-      encoded[encodedName] = encodeJsonValue(item, config, state, name, open);
+      // Defining the property keeps a key of `__proto__`, which JSON.parse produces as an own
+      // key, off the prototype setter that would drop the field and reshape the payload
+      Object.defineProperty(encoded, encodedName, {
+        value: encodeJsonValue(item, config, state, name, open),
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
     }
     return encoded;
   } finally {
