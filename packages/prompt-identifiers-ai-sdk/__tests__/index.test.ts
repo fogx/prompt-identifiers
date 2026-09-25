@@ -3014,7 +3014,9 @@ describe("prompt-identifiers-ai-sdk", () => {
       });
 
       await expect(collectStreamText(result.stream)).resolves.toBe(`found ${many[0]}`);
-    });
+      // 150,000 ids is what it takes to pass the spread limit, and encoding them runs about 2.5s
+      // on a quiet machine, which leaves nothing against vitest's default on a loaded one
+    }, 20_000);
   });
 
   describe("An answer cut off mid-placeholder", () => {

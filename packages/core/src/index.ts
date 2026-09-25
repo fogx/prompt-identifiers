@@ -279,11 +279,20 @@ function buildPlaceholderShape(format: OutputFormat): PlaceholderShape | undefin
 
   // A template says where its index sits, so its literals are the affixes exactly, at any pad
   // width. Only a bare FormatterFn has to be probed.
-  if (typeof format === "object" && typeof format.template === "string") {
-    const slot = format.template.match(/\{i(?::([^}]+))?\}/);
+  let template: unknown;
+  try {
+    template = typeof format === "object" ? format.template : undefined;
+  } catch {
+    // A format whose own accessor throws says nothing about its shape, and the caller asked
+    // which tokens look like placeholders, not for the accessor's error
+    return undefined;
+  }
+
+  if (typeof template === "string") {
+    const slot = template.match(/\{i(?::([^}]+))?\}/);
     if (slot) {
-      const prefix = format.template.slice(0, slot.index);
-      const suffix = format.template.slice(slot.index! + slot[0].length);
+      const prefix = template.slice(0, slot.index);
+      const suffix = template.slice(slot.index! + slot[0].length);
       if (prefix || suffix) {
         const body = slot[1] === "base62" ? "[0-9A-Za-z]+" : "\\d+";
         return {

@@ -6,6 +6,7 @@ import {
   wrapBamlFunction,
   wrapBamlStreamingFunction,
 } from "../src/index";
+import type { BamlStreamFunction } from "../src/index";
 
 describe("prompt-identifiers-baml", () => {
   const defaultConfig: EncodeConfig = {
@@ -650,14 +651,21 @@ describe("prompt-identifiers-baml", () => {
       expect(mockFn.mock.calls[0][0].arg).toBe(value);
     });
 
-    test("one in a result comes back by identity too", async () => {
-      const when = new Date("2026-01-02T03:04:05.000Z");
-      const mockFn = vi.fn(async () => ({ when, note: "~000~" }));
+    // The same rows on the way back, because the decode side carries the same rule
+    test.each([
+      ["a native handle", Object.create(null)],
+      ["a Date", new Date("2026-01-02T03:04:05.000Z")],
+      ["a Map", new Map([["k", "v"]])],
+      ["a Set", new Set(["v"])],
+      ["a RegExp", /x/g],
+      ["a typed array", new Uint8Array([1, 2, 3])],
+    ])("%s in a result comes back by identity too", async (_label, value) => {
+      const mockFn = vi.fn(async () => ({ held: value, note: "~000~" }));
 
       const wrapped = wrapBamlFunction(mockFn, { config: defaultConfig });
       const result = await wrapped({ id: uuid1 });
 
-      expect(result.when).toBe(when);
+      expect(result.held).toBe(value);
       expect(result.note).toBe(uuid1);
     });
 
@@ -1001,6 +1009,27 @@ describe("prompt-identifiers-baml", () => {
       for await (const _partial of stream) void _partial;
 
       expect(seen[0]).toEqual({ id: "~000~" });
+    });
+  });
+
+  describe("A wrapped streaming function that returns something else", () => {
+    // A consumer putting anything in front of the call writes `async (input) => { await
+    // authorise(); return b.stream.F(input); }`, which hands back a promise and used to die on
+    // the first iteration with `generator.next is not a function`, the error this wrapper exists
+    // to stop
+    test.each([
+      ["a promise", () => Promise.resolve({})],
+      ["undefined", () => undefined],
+      ["a string", () => "nope"],
+    ])("%s is refused where the call is made", (_label, fn) => {
+      // The types forbid all three, which is the point: this is the shape a JavaScript consumer
+      // reaches the wrapper with
+      const wrapped = wrapBamlStreamingFunction(
+        fn as unknown as BamlStreamFunction<{ id: string }, unknown, unknown>,
+        { config: defaultConfig }
+      );
+
+      expect(() => wrapped({ id: uuid1 })).toThrow(/returns the stream itself/);
     });
   });
 
