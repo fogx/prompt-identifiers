@@ -234,10 +234,9 @@ export function createFormatter(format: OutputFormat): FormatterFn {
   }
 }
 
-// These three differ in their first and last character, in decimal and in base62, so whatever all
-// three formatted placeholders share is delimiter
-// The widest index is there so a format padded past nine digits still differs across probes,
-// which is what keeps its padding out of the fixed prefix
+// These differ from each other in their first and last character, in decimal and in base62, so
+// whatever every formatted placeholder shares is delimiter. The widest of them is what keeps a
+// format padded past nine digits from passing its leading zeros off as part of the prefix.
 const PLACEHOLDER_PROBE_INDICES = [0, 123456789, 987654321, Number.MAX_SAFE_INTEGER];
 
 const builtInShapeCache = new Map<string, PlaceholderShape | undefined>();
