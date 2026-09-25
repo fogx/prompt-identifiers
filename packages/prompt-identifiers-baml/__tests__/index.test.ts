@@ -926,9 +926,9 @@ describe("prompt-identifiers-baml", () => {
     });
 
     test("a consumer that only iterates is told what was decoded", async () => {
-      // The generator branch reports at the end of its loop, because the generator protocol hands
-      // the final value back there. A stream keeps its final behind a second call, and a consumer
-      // that never makes one was told nothing at all
+      // The generator protocol hands the final value back at the end of the loop, so that branch
+      // reports there. A stream keeps its final behind a second call, which a consumer that only
+      // iterates never makes
       const onDecode = vi.fn();
       const wrapped = wrapBamlStreamingFunction(
         () => bamlStream([{ text: "~000~ first" }], { text: "~000~ done" }),
@@ -1014,9 +1014,9 @@ describe("prompt-identifiers-baml", () => {
 
   describe("A wrapped streaming function that returns something else", () => {
     // A consumer putting anything in front of the call writes `async (input) => { await
-    // authorise(); return b.stream.F(input); }`, which hands back a promise and used to die on
-    // the first iteration with `generator.next is not a function`, the error this wrapper exists
-    // to stop
+    // authorise(); return b.stream.F(input); }`, which hands back a promise. It is neither a
+    // stream nor a generator, so it is refused where the call is made rather than on the first
+    // iteration
     test.each([
       ["a promise", () => Promise.resolve({})],
       ["undefined", () => undefined],

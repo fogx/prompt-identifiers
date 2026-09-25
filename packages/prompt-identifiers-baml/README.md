@@ -132,7 +132,7 @@ const final = await stream.getFinalResponse();
 
 The wrapper mirrors what it was given: pass `b.stream.<Fn>`, which returns a `BamlStream`, and you get a stream back with the same `getFinalResponse()` and the same `toStreamable()`, whose newline-delimited JSON carries the decoded partials and the decoded final. Pass a plain async generator and you get an async generator, whose return value is the decoded final.
 
-`getFinalResponse()` decodes once however often it is called, and `onDecode` fires once per stream: at the end of the loop, which is also where the final is decoded, so a consumer that never asks for the final still learns what was decoded.
+`getFinalResponse()` decodes once however often it is called, and `onDecode` fires once per stream, where the consumption ends: at the end of the loop, or at `getFinalResponse()` for a consumer that calls it without iterating. Either way the final is decoded and counted with the partials.
 
 ## Utility Functions
 
@@ -155,7 +155,7 @@ Decoding reads keys either way, since a key only changes when it matches a place
 
 ### What is walked
 
-Only plain records are walked. A value whose prototype is not `Object.prototype` is handed through by identity, so a BAML media argument (`image`, `audio`, `pdf`, `video`), a `Date`, a `Map`, a `Set` and a class instance reach the function as themselves. A media argument, a `Date`, a `Map` and a `Set` rebuilt from their entries would arrive empty, and a class instance would arrive without its prototype.
+A value is walked when its state is in its own enumerable keys. A BAML media argument (`image`, `audio`, `pdf`, `video`), a `Date`, a `Map`, a `Set`, a `RegExp` and a `Promise` have none, so rebuilding one would hand the runtime an empty object, and a typed array's own keys are its bytes. All of them reach the function as themselves, and an identifier inside one reaches the model as it is written and is not in the mapping. Everything else is walked and rebuilt on its own prototype, so a class instance and a record built with no prototype have their identifiers encoded and keep their methods and their type.
 
 `encodeObject` takes the same switch as its fourth argument: `encodeObject(obj, config, undefined, true)`.
 
