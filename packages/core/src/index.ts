@@ -337,9 +337,11 @@ function escapeRegExp(s: string): string {
 function getPattern(inputFormat: InputFormat): RegExp {
   // Custom RegExp
   if (inputFormat instanceof RegExp) {
-    // Ensure global flag is set, preserve other flags
-    const flags = inputFormat.flags.includes("g") ? inputFormat.flags : inputFormat.flags + "g";
-    return new RegExp(inputFormat.source, flags);
+    // The global flag goes on and the sticky flag comes off, for the same reason: this RegExp
+    // describes an identifier to look for anywhere in the text, and sticky anchors every match at
+    // lastIndex, which finds at most the run starting where the last one ended.
+    const kept = inputFormat.flags.replace(/y/g, "");
+    return new RegExp(inputFormat.source, kept.includes("g") ? kept : kept + "g");
   }
 
   // Built-in formats - return new instance to reset lastIndex
