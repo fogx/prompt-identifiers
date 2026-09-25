@@ -195,7 +195,11 @@ function deepEncode<T>(value: T, ctx: EncodeContext, path: string[] = []): T {
     const result: Record<string, unknown> = {};
 
     for (const [key, val] of Object.entries(value)) {
-      result[key] = deepEncode(val, ctx, [...path, key]);
+      // A map keyed by identifier sends the whole id to the model unless the key is encoded too.
+      // An explicit field path names a value, so keys are left alone when one is given.
+      const encodedKey =
+        ctx.fieldPaths === null ? encode(key, ctx.config, ctx.state).encoded : key;
+      result[encodedKey] = deepEncode(val, ctx, [...path, key]);
     }
 
     return result as T;

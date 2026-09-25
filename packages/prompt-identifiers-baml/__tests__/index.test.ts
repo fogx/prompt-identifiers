@@ -631,6 +631,43 @@ describe("prompt-identifiers-baml", () => {
     });
   });
 
+  describe("An identifier in an object key", () => {
+    test("a map keyed by identifier is encoded on the way out", async () => {
+      const mockFn = vi.fn(async (input: { byId: Record<string, string> }) => ({
+        seen: Object.keys(input.byId).join(" "),
+      }));
+
+      const wrapped = wrapBamlFunction(mockFn, { config: defaultConfig });
+      await wrapped({ byId: { [uuid1]: "active", [uuid2]: "idle" } });
+
+      expect(mockFn).toHaveBeenCalledWith({ byId: { "~000~": "active", "~001~": "idle" } });
+    });
+
+    test("one identifier in a key and in a value shares a placeholder", async () => {
+      const mockFn = vi.fn(async () => ({ ok: true }));
+
+      const wrapped = wrapBamlFunction(mockFn, { config: defaultConfig });
+      await wrapped({ byId: { [uuid1]: `owner ${uuid1}` } });
+
+      expect(mockFn).toHaveBeenCalledWith({ byId: { "~000~": "owner ~000~" } });
+    });
+
+    test("an explicit encodeFields leaves keys alone, since a path names a value", async () => {
+      const mockFn = vi.fn(async () => ({ ok: true }));
+
+      const wrapped = wrapBamlFunction(mockFn, {
+        config: defaultConfig,
+        encodeFields: ["note"],
+      });
+      await wrapped({ byId: { [uuid1]: "active" }, note: `owner ${uuid1}` });
+
+      expect(mockFn).toHaveBeenCalledWith({
+        byId: { [uuid1]: "active" },
+        note: "owner ~000~",
+      });
+    });
+  });
+
   describe("A placeholder in an object key", () => {
     test("a result grouped by id is decoded in its keys", async () => {
       const mockFn = vi.fn(async (input: { ids: string }) => ({

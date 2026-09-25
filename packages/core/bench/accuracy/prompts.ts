@@ -93,10 +93,11 @@ CRITICAL REQUIREMENTS:
     outputFormat,
   });
 
-  // Build reverse mapping for quick lookup
+  // Build reverse mapping for quick lookup. The mapping holds each identifier as the prompt wrote
+  // it, so the key is lowercased on the way in and every lookup matches whatever case it is given.
   const uuidToPlaceholder = new Map<string, string>();
   for (const [placeholder, uuid] of Object.entries(mapping)) {
-    uuidToPlaceholder.set(uuid, placeholder);
+    uuidToPlaceholder.set(uuid.toLowerCase(), placeholder);
   }
 
   // Build the item list with encoded class_ids

@@ -141,6 +141,20 @@ function placeholderBodies(
   const bodies = new Set<string>();
   if (outputFormat === "Passthrough") return bodies;
 
+  // A template says where its index sits, so its literals are the affixes exactly, at any pad
+  // width. Only a bare FormatterFn has to be probed.
+  if (typeof outputFormat === "object" && "template" in outputFormat) {
+    const slot = outputFormat.template.match(/\{i(?::[^}]+)?\}/);
+    if (slot) {
+      return bodiesFrom(
+        placeholders,
+        slot.index!,
+        outputFormat.template.length - slot.index! - slot[0].length,
+        bodies
+      );
+    }
+  }
+
   let probes: string[];
   try {
     const formatter = createFormatter(outputFormat);
@@ -165,6 +179,16 @@ function placeholderBodies(
     suffix++;
   }
 
+  return bodiesFrom(placeholders, prefix, suffix, bodies);
+}
+
+/** Each placeholder with the format's fixed prefix and suffix cut off. */
+function bodiesFrom(
+  placeholders: string[],
+  prefix: number,
+  suffix: number,
+  bodies: Set<string>
+): Set<string> {
   if (prefix === 0 && suffix === 0) return bodies;
 
   for (const placeholder of placeholders) {
@@ -824,8 +848,9 @@ export function promptIdentifiersMiddleware(
         if (item.type === "tool-result" && item.result !== undefined) {
           const decodedResult = decodeJsonValue(item.result, mapping);
           // A preliminary result is replaced by a final one carrying the same content, so scanning
-          // both reports every anomaly once per preview frame
-          if (!item.preliminary) {
+          // both reports every anomaly once per preview frame. Serialising is the scan's own cost
+          // and a provider-run tool returns whole documents, so nothing pays it unheard.
+          if (onDecode && !item.preliminary) {
             decodedToolResults.push({
               toolName: item.toolName,
               input: JSON.stringify(decodedResult),
@@ -939,7 +964,10 @@ export function promptIdentifiersMiddleware(
       function decoderFor(decoders: Decoders, id: string) {
         let decoder = decoders.get(id);
         if (!decoder) {
-          decoder = createStreamingDecoder(mapping);
+          // Tool input arrives as serialised JSON rewritten in place, the same as the assembled
+          // tool call, so its identifiers have to go back escaped or the deltas stop parsing
+          const forBlock = decoders === toolInputDecoders ? jsonSafeMapping(mapping) : mapping;
+          decoder = createStreamingDecoder(forBlock);
           decoders.set(id, decoder);
         }
         return decoder;
@@ -1055,8 +1083,9 @@ export function promptIdentifiersMiddleware(
           if (chunk.type === "tool-result" && chunk.result !== undefined) {
             const decodedResult = decodeJsonValue(chunk.result, mapping);
             // A preliminary result is replaced by a final one carrying the same content, so
-            // scanning both reports every anomaly once per preview frame
-            if (!chunk.preliminary) {
+            // scanning both reports every anomaly once per preview frame. Serialising is the
+            // scan's own cost and a provider-run tool returns whole documents.
+            if (onDecode && !chunk.preliminary) {
               accDecodedToolResults.push({
                 toolName: chunk.toolName,
                 input: JSON.stringify(decodedResult),

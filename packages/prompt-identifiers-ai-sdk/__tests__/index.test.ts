@@ -1416,6 +1416,12 @@ describe("prompt-identifiers-ai-sdk", () => {
       ]);
     });
 
+    test("a template's affixes are its literals at any pad width", async () => {
+      expect(
+        await warningsFor({ template: "ID{i:020}" }, '{"ref": "00000000000000000000"}')
+      ).toEqual([["stripped_delimiter", "00000000000000000000"]]);
+    });
+
     test("a format padded wider than a probe reports the whole stripped body", async () => {
       // A probe pair that both carry the pad's leading zeros would read them as the affix and
       // leave the reported body short of what the model actually wrote
@@ -1881,6 +1887,50 @@ describe("prompt-identifiers-ai-sdk", () => {
       expect(JSON.parse(input)).toEqual({ id: identifier });
     });
 
+    test("the streamed deltas reassemble to what the tool call carries", async () => {
+      const middleware = createMiddleware({ config });
+      const transformedParams = await middleware.transformParams({
+        params: createParams([userMessage(`Look up ${identifier}`)]),
+        type: "stream",
+        model: mockModel,
+      });
+
+      const wire = '{"id":"~000~"}';
+      const streamed = await middleware.wrapStream({
+        doStream: vi.fn().mockResolvedValue({
+          stream: createMockStream([
+            { type: "tool-input-start", id: "call-1", toolName: "lookup" },
+            ...wire.split("").map((piece) => ({
+              type: "tool-input-delta" as const,
+              id: "call-1",
+              delta: piece,
+            })),
+            { type: "tool-input-end", id: "call-1" },
+            {
+              type: "tool-call",
+              toolCallId: "call-1",
+              toolName: "lookup",
+              input: wire,
+            },
+            { type: "finish", finishReason: mockFinishReason(), usage: mockUsage() },
+          ] as LanguageModelV4StreamPart[]),
+        }),
+        doGenerate: vi.fn(),
+        params: transformedParams,
+        model: mockModel,
+      });
+
+      const parts = await collectStreamParts(streamed.stream);
+      const reassembled = parts
+        .filter((part) => part.type === "tool-input-delta")
+        .map((part) => (part as { delta: string }).delta)
+        .join("");
+      const call = parts.find((part) => part.type === "tool-call") as { input: string };
+
+      expect(JSON.parse(reassembled)).toEqual({ id: identifier });
+      expect(reassembled).toBe(call.input);
+    });
+
     test("an identifier JSON carries unchanged is written unchanged", async () => {
       const plain: EncodeConfig = { inputFormat: "UUID", outputFormat: "SafeNumeric" };
       const uuid = "123e4567-e89b-42d3-a456-426655440000";
@@ -2140,6 +2190,50 @@ describe("prompt-identifiers-ai-sdk", () => {
           model: mockModel,
         })
       ).rejects.toThrow(/circular/i);
+    });
+
+    test("a large result is not serialised when nothing is listening", async () => {
+      async function stringifyCalls(onDecode?: () => void) {
+        const middleware = createMiddleware({ config, ...(onDecode && { onDecode }) });
+        const transformedParams = await middleware.transformParams({
+          params: createParams([userMessage(`Look up ${uuid}`)]),
+          type: "generate",
+          model: mockModel,
+        });
+
+        const realStringify = JSON.stringify;
+        let calls = 0;
+        JSON.stringify = ((...args: Parameters<typeof JSON.stringify>) => {
+          calls++;
+          return realStringify(...args);
+        }) as typeof JSON.stringify;
+        try {
+          await middleware.wrapGenerate({
+            doGenerate: vi.fn().mockResolvedValue({
+              content: [
+                {
+                  type: "tool-result",
+                  toolCallId: "call-1",
+                  toolName: "web_search",
+                  result: { note: "~000~" },
+                },
+              ],
+              finishReason: mockFinishReason(),
+              usage: mockUsage(),
+              warnings: [],
+            }),
+            doStream: vi.fn(),
+            params: transformedParams,
+            model: mockModel,
+          });
+        } finally {
+          JSON.stringify = realStringify;
+        }
+        return calls;
+      }
+
+      expect(await stringifyCalls()).toBe(0);
+      expect(await stringifyCalls(vi.fn())).toBeGreaterThan(0);
     });
 
     test("a result holding no placeholder is handed back unchanged", async () => {

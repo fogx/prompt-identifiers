@@ -273,6 +273,25 @@ function getPlaceholderShape(format: OutputFormat): PlaceholderShape | undefined
 function buildPlaceholderShape(format: OutputFormat): PlaceholderShape | undefined {
   if (format === "Passthrough") return undefined;
 
+  // A template says where its index sits, so its literals are the affixes exactly, at any pad
+  // width. Only a bare FormatterFn has to be probed.
+  if (typeof format === "object" && "template" in format) {
+    const slot = format.template.match(/\{i(?::([^}]+))?\}/);
+    if (slot) {
+      const prefix = format.template.slice(0, slot.index);
+      const suffix = format.template.slice(slot.index! + slot[0].length);
+      if (prefix || suffix) {
+        const body = slot[1] === "base62" ? "[0-9A-Za-z]+" : "\\d+";
+        return {
+          pattern: new RegExp(escapeRegExp(prefix) + body + escapeRegExp(suffix), "g"),
+          prefix,
+          suffix,
+        };
+      }
+      return undefined;
+    }
+  }
+
   let probes: string[];
   try {
     probes = PLACEHOLDER_PROBE_INDICES.map(createFormatter(format));

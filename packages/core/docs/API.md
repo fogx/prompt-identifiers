@@ -449,6 +449,15 @@ Deduplication ignores case, and the mapping holds each identifier as it was writ
 - `123E4567-...` and `123e4567-...` map to the same placeholder
 - Decoded text carries the casing the first occurrence used, so a ULID comes back uppercase
 
+A reverse map built from `Object.values(mapping)` now holds the identifier as it was written, so lowercase it when the map is built rather than when it is read:
+
+```typescript
+const placeholderFor = new Map<string, string>();
+for (const [placeholder, id] of Object.entries(result.mapping)) {
+  placeholderFor.set(id.toLowerCase(), placeholder);
+}
+```
+
 ```typescript
 const result = encode("ID: 123E4567-E89B-42D3-A456-426655440000", {
   inputFormat: "UUID",

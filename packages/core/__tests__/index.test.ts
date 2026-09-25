@@ -522,6 +522,15 @@ describe("prompt-identifiers", () => {
       expect(Object.keys(mapping)).toHaveLength(2);
     });
 
+    test("a template's affixes are its literals at any pad width", () => {
+      // A template says where its index sits, so no probe has to outgrow the padding
+      const format = { template: "ID{i:020}" };
+
+      expect(
+        findPlaceholders("see ID00000000000000000007 and ID99999999999999999999", format)
+      ).toEqual(["ID00000000000000000007", "ID99999999999999999999"]);
+    });
+
     test("a format padded wider than a probe still has its padding read as body", () => {
       // Probing only nine-digit indices leaves every probe sharing the leading zeros of a wider
       // pad, which would read the padding as part of the fixed prefix
