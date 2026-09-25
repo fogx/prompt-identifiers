@@ -906,6 +906,76 @@ describe("prompt-identifiers-baml", () => {
       expect(onDecode.mock.calls[0][0].debugData.decodedCount).toBe(2);
     });
 
+    test("a consumer that only iterates is told what was decoded", async () => {
+      // The generator branch reports at the end of its loop, because the generator protocol hands
+      // the final value back there. A stream keeps its final behind a second call, and a consumer
+      // that never makes one was told nothing at all
+      const onDecode = vi.fn();
+      const wrapped = wrapBamlStreamingFunction(
+        () => bamlStream([{ text: "~000~ first" }], { text: "~000~ done" }),
+        { config: defaultConfig, debug: true, onDecode }
+      );
+
+      for await (const _partial of wrapped({ id: uuid1 })) void _partial;
+
+      expect(onDecode).toHaveBeenCalledTimes(1);
+      expect(onDecode.mock.calls[0][0].debugData.decodedCount).toBe(2);
+    });
+
+    test("asking for the final response twice decodes and reports it once", async () => {
+      const onDecode = vi.fn();
+      const wrapped = wrapBamlStreamingFunction(() => bamlStream([], { text: "~000~ done" }), {
+        config: defaultConfig,
+        debug: true,
+        onDecode,
+      });
+
+      const stream = wrapped({ id: uuid1 });
+      const first = await stream.getFinalResponse();
+      const second = await stream.getFinalResponse();
+
+      expect(second).toEqual(first);
+      expect(onDecode).toHaveBeenCalledTimes(1);
+      expect(onDecode.mock.calls[0][0].debugData.decodedCount).toBe(1);
+    });
+
+    test("a final response that throws still reaches the consumer that asked for it", async () => {
+      const wrapped = wrapBamlStreamingFunction(
+        () => ({
+          async *[Symbol.asyncIterator]() {
+            yield { text: "~000~ first" };
+          },
+          async getFinalResponse(): Promise<{ text: string }> {
+            throw new Error("coercion failed");
+          },
+        }),
+        { config: defaultConfig }
+      );
+
+      const stream = wrapped({ id: uuid1 });
+      for await (const _partial of stream) void _partial;
+
+      await expect(stream.getFinalResponse()).rejects.toThrow("coercion failed");
+    });
+
+    test("toStreamable writes decoded NDJSON", async () => {
+      // The Next.js path. Forwarding the source's own would serialise the partials and the final
+      // as the model wrote them, placeholders and all
+      const wrapped = wrapBamlStreamingFunction(
+        () => bamlStream([{ text: "~000~ first" }], { text: "~000~ done" }),
+        { config: defaultConfig }
+      );
+
+      const body = await new Response(wrapped({ id: uuid1 }).toStreamable()).text();
+
+      expect(
+        body
+          .trimEnd()
+          .split("\n")
+          .map((entry) => JSON.parse(entry))
+      ).toEqual([{ partial: { text: `${uuid1} first` } }, { final: { text: `${uuid1} done` } }]);
+    });
+
     test("its input is encoded the same way", async () => {
       const seen: unknown[] = [];
       const wrapped = wrapBamlStreamingFunction(

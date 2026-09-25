@@ -130,7 +130,9 @@ for await (const partial of stream) {
 const final = await stream.getFinalResponse();
 ```
 
-The wrapper mirrors what it was given: pass `b.stream.<Fn>`, which returns a `BamlStream`, and you get a stream back with the same `getFinalResponse()`. Pass a plain async generator and you get an async generator, whose return value is the decoded final.
+The wrapper mirrors what it was given: pass `b.stream.<Fn>`, which returns a `BamlStream`, and you get a stream back with the same `getFinalResponse()` and the same `toStreamable()`, whose newline-delimited JSON carries the decoded partials and the decoded final. Pass a plain async generator and you get an async generator, whose return value is the decoded final.
+
+`getFinalResponse()` decodes once however often it is called, and `onDecode` fires once per stream: at the end of the loop, which is also where the final is decoded, so a consumer that never asks for the final still learns what was decoded.
 
 ## Utility Functions
 
