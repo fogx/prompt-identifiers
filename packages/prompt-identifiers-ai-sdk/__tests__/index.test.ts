@@ -1,5 +1,6 @@
 import { describe, test, expect, vi } from "vitest";
 import type {
+  LanguageModelV4FinishReason,
   LanguageModelV4GenerateResult,
   LanguageModelV4Message,
   LanguageModelV4StreamPart,
@@ -2014,7 +2015,10 @@ describe("prompt-identifiers-ai-sdk", () => {
     };
     const uuid = "123e4567-e89b-42d3-a456-426655440000";
 
-    async function warningsFromGenerate(text: string, unified: "stop" | "length") {
+    async function warningsFromGenerate(
+      text: string,
+      unified: LanguageModelV4FinishReason["unified"]
+    ) {
       const onDecode = vi.fn();
       const middleware = createMiddleware({ config: prefixOnly, onDecode });
       const transformedParams = await middleware.transformParams({
@@ -2046,6 +2050,25 @@ describe("prompt-identifiers-ai-sdk", () => {
 
     test("the same token in an answer that finished is still reported", async () => {
       expect(await warningsFromGenerate("The record is ID_000", "stop")).toEqual([
+        { type: "unknown_placeholder", value: "ID_000", source: "text" },
+      ]);
+    });
+
+    test.each([
+      ["a content filter", "content-filter"],
+      ["an error", "error"],
+    ] as const)(
+      "%s stopping the model mid-placeholder is a cut, not an invention",
+      async (_l, unified) => {
+        expect(await warningsFromGenerate("The record is ID_000", unified)).toEqual([]);
+      }
+    );
+
+    test.each([
+      ["the model finished", "stop"],
+      ["the model called a tool", "tool-calls"],
+    ] as const)("%s, so a half-written placeholder is the model's own", async (_l, unified) => {
+      expect(await warningsFromGenerate("The record is ID_000", unified)).toEqual([
         { type: "unknown_placeholder", value: "ID_000", source: "text" },
       ]);
     });

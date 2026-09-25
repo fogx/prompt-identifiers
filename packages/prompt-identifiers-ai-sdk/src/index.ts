@@ -118,6 +118,9 @@ interface DecodedToolCall {
 /** Stand-in for a restored ID while scanning decoded output for anomalies. */
 const ID_MASK = "\u0001";
 
+/** Finish reasons that stop the model partway through what it was writing. */
+const CUT_SHORT = new Set(["length", "content-filter", "error"]);
+
 /**
  * Detect decode anomalies in the decoded output.
  *
@@ -686,7 +689,10 @@ export function promptIdentifiersMiddleware(
             decodedToolCalls,
             mapping,
             config,
-            result.finishReason?.unified === "length"
+            // The opposite default to the streamed path, deliberately: doGenerate returning at
+            // all means the answer is complete, so a result with no finishReason is a
+            // malformed complete answer rather than a cut one
+            CUT_SHORT.has(result.finishReason?.unified ?? "")
           )
         : [];
 
@@ -748,7 +754,9 @@ export function promptIdentifiersMiddleware(
               accDecodedToolCalls,
               mapping,
               config,
-              streamFinishReason === undefined || streamFinishReason === "length"
+              // A stream that never reported one did not finish, which is a cut the generate
+              // path cannot have
+              streamFinishReason === undefined || CUT_SHORT.has(streamFinishReason)
             )
           : [];
 

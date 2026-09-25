@@ -497,6 +497,18 @@ describe("prompt-identifiers", () => {
       expect(built).toBe(0);
     });
 
+    // A sticky regex anchors every match at lastIndex, which reads the text as a cursor rather
+    // than scanning it, so it finds at most the run that starts at index 0
+    test.each(["y", "gy", "iy"])("a /%s regex still encodes every match", (flags) => {
+      const { encoded, mapping } = encode("see user-100001 and user-100002 here", {
+        inputFormat: new RegExp("user-\\d{6}", flags),
+        outputFormat: "SafeNumeric",
+      });
+
+      expect(encoded).toBe("see ~000~ and ~001~ here");
+      expect(Object.keys(mapping)).toHaveLength(2);
+    });
+
     test("an empty key would match everywhere, so it is refused", () => {
       expect(() => decode("hello", { "": "X" })).toThrow(/empty placeholder key/);
     });
