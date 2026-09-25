@@ -1968,6 +1968,9 @@ describe("prompt-identifiers-ai-sdk", () => {
         return built;
       }
 
+      // core memoises a format's shape pattern on first use, so measure only once it is warm
+      await regexpsBuiltWith(vi.fn());
+
       // The scan builds one RegExp per bare index, and only a listener can ever see the result
       const listening = await regexpsBuiltWith(vi.fn());
       const silent = await regexpsBuiltWith();
@@ -2047,7 +2050,8 @@ describe("prompt-identifiers-ai-sdk", () => {
       ]);
     });
 
-    test("only the token the cut created is spared, not one earlier in the answer", async () => {
+    test("a longer invention alongside a cut token is still reported", async () => {
+      // ID_000 starts the minted ID_0000, so a cut could have made it. ID_0009 starts nothing.
       expect(await warningsFromGenerate("ID_0009 then ID_000", "length")).toEqual([
         { type: "unknown_placeholder", value: "ID_0009", source: "text" },
       ]);
@@ -2083,6 +2087,43 @@ describe("prompt-identifiers-ai-sdk", () => {
       expect(onDecode.mock.calls[0][0].warnings ?? []).toEqual([
         { type: "unknown_placeholder", value: "ID_9999", source: "text" },
       ]);
+    });
+
+    test("two blocks cut by the same stop report neither half-written placeholder", async () => {
+      const first = "123e4567-e89b-42d3-a456-426655440000";
+      const second = "987fcdeb-51a2-43f7-8d9c-0123456789ab";
+
+      const onDecode = vi.fn();
+      const middleware = createMiddleware({ config: prefixOnly, onDecode });
+      const transformedParams = await middleware.transformParams({
+        params: createParams([userMessage(`Look up ${first} and ${second}`)]),
+        type: "stream",
+        model: mockModel,
+      });
+
+      // Both blocks are holding half of a placeholder when the token limit ends the stream
+      const result = await middleware.wrapStream({
+        doStream: vi.fn().mockResolvedValue({
+          stream: createMockStream([
+            { type: "text-start", id: "a" },
+            { type: "text-delta", id: "a", delta: "alpha ID_00" },
+            { type: "text-start", id: "b" },
+            { type: "text-delta", id: "b", delta: "beta ID_000" },
+            {
+              type: "finish",
+              finishReason: { unified: "length", raw: "length" },
+              usage: mockUsage(),
+            },
+          ] as LanguageModelV4StreamPart[]),
+        }),
+        doGenerate: vi.fn(),
+        params: transformedParams,
+        model: mockModel,
+      });
+
+      await collectStreamText(result.stream);
+
+      expect(onDecode.mock.calls[0][0].warnings ?? []).toEqual([]);
     });
 
     test("a stream that stops at the token limit reports no invented placeholder", async () => {

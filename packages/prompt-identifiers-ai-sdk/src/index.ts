@@ -172,8 +172,9 @@ function detectDecodeWarnings(
     for (const token of findPlaceholders(masked, config.outputFormat)) {
       if (mapping[token] !== undefined) continue;
 
-      // Only the token at the cut can be half a placeholder, and only if a longer one starts with it
-      if (isTruncated && masked.endsWith(token) && startsAPlaceholder(token)) continue;
+      // A cut leaves half a placeholder behind, and an answer carrying several blocks has one per
+      // block, so position says nothing about which of them the cut made
+      if (isTruncated && startsAPlaceholder(token)) continue;
 
       warnings.push({ type: "unknown_placeholder", value: token, ...source });
     }
