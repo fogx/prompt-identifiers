@@ -676,14 +676,16 @@ describe("prompt-identifiers-baml", () => {
       expect(Object.getPrototypeOf(sent)).toBe(Object.prototype);
     });
 
-    test("two keys that encode to one placeholder are refused", async () => {
+    test.each([
+      ["one identifier in two cases", { [uuid1]: "a", [uuid1.toUpperCase()]: "b" }],
+      ["a key already shaped like the placeholder", { [uuid1]: "a", "~000~": "b" }],
+      ["that key first", { "~000~": "b", [uuid1]: "a" }],
+    ])("two keys that encode to one placeholder are refused: %s", async (_label, byId) => {
       const mockFn = vi.fn(async () => ({ ok: true }));
 
       const wrapped = wrapBamlFunction(mockFn, { config: defaultConfig, encodeKeys: true });
 
-      await expect(wrapped({ byId: { [uuid1]: "a", [uuid1.toUpperCase()]: "b" } })).rejects.toThrow(
-        /same placeholder/i
-      );
+      await expect(wrapped({ byId })).rejects.toThrow(/same placeholder/i);
     });
 
     test("an explicit encodeFields leaves keys alone, since a path names a value", async () => {

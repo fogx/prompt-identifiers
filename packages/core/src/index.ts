@@ -264,6 +264,10 @@ function getPlaceholderShape(format: OutputFormat): PlaceholderShape | undefined
     }
     return builtInShapeCache.get(format);
   }
+  // Only an object or a function can key the cache, and anything else is a format with no shape
+  if (format === null || (typeof format !== "object" && typeof format !== "function")) {
+    return undefined;
+  }
   if (!customShapeCache.has(format)) {
     customShapeCache.set(format, buildPlaceholderShape(format));
   }

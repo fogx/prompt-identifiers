@@ -211,7 +211,7 @@ function deepEncode<T>(value: T, ctx: EncodeContext, path: string[] = []): T {
       const encodedKey = encodeThisKey ? encode(key, ctx.config, ctx.state).encoded : key;
       // Two keys holding one identifier in different cases, or a key already shaped like the
       // placeholder, would otherwise leave one entry standing for both
-      if (encodeThisKey && encodedKey !== key && encodedKey in result) {
+      if (encodeThisKey && Object.prototype.hasOwnProperty.call(result, encodedKey)) {
         throw new Error(
           `Two keys encode to the same placeholder ${JSON.stringify(encodedKey)}, so one of them ` +
             `would be lost. Give the object one key per identifier.`
@@ -465,6 +465,10 @@ export function wrapBamlStreamingFunction<TInput, TPartial, TFinal>(
 
 /**
  * Utility function to encode a plain object (useful for manual encoding).
+ *
+ * `encodeKeys` encodes identifiers sitting in object keys, for an object keyed by identifier. It
+ * is off by default because nothing at runtime tells such a key from a class's own field name, and
+ * it is ignored when `encodeFields` is given, because a field path names a value.
  *
  * @example
  * ```typescript

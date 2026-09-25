@@ -145,6 +145,8 @@ It is off by default because nothing at runtime tells a map key from a class's o
 
 Decoding reads keys either way, since a key only changes when it matches a placeholder the call minted.
 
+`encodeObject` takes the same switch as its fourth argument: `encodeObject(obj, config, undefined, true)`.
+
 ### encodeObject
 
 Manually encode an object (useful for custom integrations):

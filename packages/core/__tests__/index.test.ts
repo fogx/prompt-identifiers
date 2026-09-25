@@ -551,12 +551,19 @@ describe("prompt-identifiers", () => {
       ]);
     });
 
-    test("a caller with no types still gets an answer, not a throw", () => {
-      // findPlaceholders answers which tokens look like placeholders, so a format it cannot read
-      // is a format with no shape rather than a reason to end the call
-      expect(findPlaceholders("see ~000~", { template: 123 } as unknown as OutputFormat)).toEqual(
-        []
-      );
+    // findPlaceholders answers which tokens look like placeholders, so a format it cannot read is
+    // a format with no shape rather than a reason to end the call
+    test.each([
+      ["a template that is not a string", { template: 123 }],
+      ["null", null],
+      ["undefined", undefined],
+      ["a number", 42],
+      ["a boolean", true],
+      ["an array", []],
+      ["an unknown name", "Nope"],
+      ["an object with no template", {}],
+    ])("a caller with no types gets an answer, not a throw: %s", (_label, format) => {
+      expect(findPlaceholders("see ~000~", format as unknown as OutputFormat)).toEqual([]);
     });
 
     test("a template's affixes are its literals at any pad width", () => {
