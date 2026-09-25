@@ -402,17 +402,17 @@ const result = encode("User ABC logged in. User ABC logged out.", {
 
 ### Case Normalization
 
-All identifiers are normalized to lowercase in the mapping. This ensures:
+Deduplication ignores case, and the mapping holds each identifier as it was written:
 
 - `123E4567-...` and `123e4567-...` map to the same placeholder
-- Decoded text uses lowercase identifiers
+- Decoded text carries the casing the first occurrence used, so a ULID comes back uppercase
 
 ```typescript
 const result = encode("ID: 123E4567-E89B-42D3-A456-426655440000", {
   inputFormat: "UUID",
   outputFormat: "Numeric",
 });
-// result.mapping: { "000": "123e4567-e89b-42d3-a456-426655440000" }
+// result.mapping: { "000": "123E4567-E89B-42D3-A456-426655440000" }
 ```
 
 ---

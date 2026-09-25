@@ -498,7 +498,7 @@ describe("prompt-identifiers-baml", () => {
       const result = await wrapped({ id: ulid });
 
       expect(mockFn).toHaveBeenCalledWith({ id: "~000~" });
-      expect(result.result).toBe(ulid.toLowerCase()); // ULIDs are normalized to lowercase
+      expect(result.result).toBe(ulid);
     });
   });
 

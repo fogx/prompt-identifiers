@@ -251,12 +251,26 @@ describe("prompt-identifiers", () => {
   });
 
   describe("UUID case handling", () => {
-    test("uppercase UUIDs are normalized to lowercase", () => {
+    test("an uppercase UUID is written back as the caller wrote it", () => {
       const prompt = "ID: 123E4567-E89B-42D3-A456-426655440000";
 
-      const { mapping } = encode(prompt, UUID_NUMERIC_CONFIG);
-      // Should store lowercase version
-      expect(mapping["000"]).toBe("123e4567-e89b-42d3-a456-426655440000");
+      const { encoded, mapping } = encode(prompt, UUID_NUMERIC_CONFIG);
+
+      expect(mapping["000"]).toBe("123E4567-E89B-42D3-A456-426655440000");
+      expect(decode(encoded, mapping)).toBe(prompt);
+    });
+
+    test("a ULID survives a round trip in the case it was written in", () => {
+      // Crockford base32 is written in upper case, and a lowercased ULID misses a case-sensitive
+      // lookup, so the identifier the caller gets back has to be the one it handed over
+      const prompt = "Order 01ARZ3NDEKTSV4RRFFQ69G5FAV shipped";
+
+      const { encoded, mapping } = encode(prompt, {
+        inputFormat: "ULID",
+        outputFormat: "Numeric",
+      });
+
+      expect(decode(encoded, mapping)).toBe(prompt);
     });
 
     test("mixed case UUIDs deduplicate correctly", () => {
@@ -264,9 +278,10 @@ describe("prompt-identifiers", () => {
         "ID: 123e4567-e89b-42d3-a456-426655440000 and 123E4567-E89B-42D3-A456-426655440000";
 
       const { encoded, mapping } = encode(prompt, UUID_NUMERIC_CONFIG);
-      // Both should map to same placeholder
+      // Both map to the same placeholder, and the casing seen first is the one written back
       expect(encoded).toBe("ID: 000 and 000");
       expect(Object.keys(mapping).length).toBe(1);
+      expect(mapping["000"]).toBe("123e4567-e89b-42d3-a456-426655440000");
     });
   });
 
@@ -290,9 +305,7 @@ describe("prompt-identifiers", () => {
         outputFormat: "Numeric",
       });
 
-      const decoded = decode(encoded, mapping);
-      // IDs are lowercased, surrounding text preserved
-      expect(decoded).toBe("Order ord-abc-123 shipped to customer cust-xyz-789");
+      expect(decode(encoded, mapping)).toBe(prompt);
     });
 
     test("custom regex without global flag gets global added", () => {

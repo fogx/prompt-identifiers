@@ -418,7 +418,9 @@ export function encode(text: string, config: EncodeConfig, state?: EncodeState):
   const mapping = state?.mapping ?? {};
 
   const encoded = text.replace(pattern, (match) => {
-    // Normalize to lowercase for consistent deduplication
+    // One identifier written in two cases is one identifier, so deduplication ignores case. What
+    // goes in the mapping is the text as it was written, because decode puts it back into the
+    // caller's hands and a ULID that comes back lowercased misses a case-sensitive lookup.
     const id = match.toLowerCase();
 
     // Reuse existing placeholder for duplicate IDs
@@ -436,7 +438,7 @@ export function encode(text: string, config: EncodeConfig, state?: EncodeState):
       );
     }
     idToPlaceholder.set(id, placeholder);
-    mapping[placeholder] = id;
+    mapping[placeholder] = match;
     return placeholder;
   });
 

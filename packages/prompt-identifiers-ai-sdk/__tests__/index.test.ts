@@ -1835,6 +1835,77 @@ describe("prompt-identifiers-ai-sdk", () => {
       }
     );
   });
+  describe("An identifier JSON escapes", () => {
+    // A custom input format can match anything, including characters JSON writes with a backslash.
+    // Tool input is rewritten as serialised text, so a raw one would break the JSON the SDK parses.
+    const config: EncodeConfig = {
+      inputFormat: /REF\\[a-z]+/g,
+      outputFormat: "SafeNumeric",
+    };
+    const identifier = "REF\\qbeta";
+
+    async function decodedToolInput(input: string) {
+      const middleware = createMiddleware({ config });
+      const transformedParams = await middleware.transformParams({
+        params: createParams([userMessage(`Look up ${identifier}`)]),
+        type: "generate",
+        model: mockModel,
+      });
+
+      const result = await middleware.wrapGenerate({
+        doGenerate: vi.fn().mockResolvedValue({
+          content: [{ type: "tool-call", toolCallId: "call-1", toolName: "lookup", input }],
+          finishReason: mockFinishReason(),
+          usage: mockUsage(),
+          warnings: [],
+        }),
+        doStream: vi.fn(),
+        params: transformedParams,
+        model: mockModel,
+      });
+
+      return (result.content[0] as { input: string }).input;
+    }
+
+    test("it is escaped back into tool call input, which stays parseable", async () => {
+      const input = await decodedToolInput('{"id":"~000~"}');
+
+      expect(JSON.parse(input)).toEqual({ id: identifier });
+    });
+
+    test("an identifier JSON carries unchanged is written unchanged", async () => {
+      const plain: EncodeConfig = { inputFormat: "UUID", outputFormat: "SafeNumeric" };
+      const uuid = "123e4567-e89b-42d3-a456-426655440000";
+      const middleware = createMiddleware({ config: plain });
+      const transformedParams = await middleware.transformParams({
+        params: createParams([userMessage(`Look up ${uuid}`)]),
+        type: "generate",
+        model: mockModel,
+      });
+
+      const result = await middleware.wrapGenerate({
+        doGenerate: vi.fn().mockResolvedValue({
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call-1",
+              toolName: "lookup",
+              input: '{"id":"~000~"}',
+            },
+          ],
+          finishReason: mockFinishReason(),
+          usage: mockUsage(),
+          warnings: [],
+        }),
+        doStream: vi.fn(),
+        params: transformedParams,
+        model: mockModel,
+      });
+
+      expect((result.content[0] as { input: string }).input).toBe(`{"id":"${uuid}"}`);
+    });
+  });
+
   describe("A tool the provider ran itself", () => {
     const config: EncodeConfig = { inputFormat: "UUID", outputFormat: "SafeNumeric" };
     const uuid = "123e4567-e89b-42d3-a456-426655440000";

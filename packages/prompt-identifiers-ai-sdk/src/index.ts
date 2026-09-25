@@ -533,7 +533,35 @@ function countPlaceholders(text: string, mapping: Record<string, string>): numbe
  * The input is always a stringified JSON in tool calls.
  */
 function decodeToolInputString(input: string, mapping: Record<string, string>): string {
-  return decode(input, mapping);
+  return decode(input, jsonSafeMapping(mapping));
+}
+
+/** Escaped mappings, keyed on the mapping they came from so decode keeps its compiled pattern. */
+const jsonSafeMappings = new WeakMap<Record<string, string>, Record<string, string>>();
+
+/**
+ * The same mapping with every identifier written the way JSON would write it inside a string.
+ *
+ * Tool input is serialised JSON rewritten as text rather than parsed, so an identifier carrying a
+ * quote, a backslash or a control character has to arrive escaped or the SDK can no longer parse
+ * what the tool is called with. A built-in format matches none of those, and the mapping itself is
+ * returned when nothing needs escaping, which keeps decode on its cached pattern.
+ */
+function jsonSafeMapping(mapping: Record<string, string>): Record<string, string> {
+  const known = jsonSafeMappings.get(mapping);
+  if (known) return known;
+
+  const escaped: Record<string, string> = {};
+  let changed = false;
+  for (const [placeholder, id] of Object.entries(mapping)) {
+    const safe = JSON.stringify(id).slice(1, -1);
+    if (safe !== id) changed = true;
+    escaped[placeholder] = safe;
+  }
+
+  const result = changed ? escaped : mapping;
+  jsonSafeMappings.set(mapping, result);
+  return result;
 }
 
 // =============================================================================
