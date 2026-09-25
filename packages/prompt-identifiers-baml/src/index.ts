@@ -56,6 +56,14 @@ export interface WrapBamlFunctionOptions {
   encodeFields?: string[];
 
   /**
+   * Encode identifiers sitting in object keys, for an input keyed by identifier such as a BAML
+   * `map<string, T>`. Off by default: nothing at runtime tells such a key from a class's own field
+   * name, so a custom input format that matches a field name would rewrite the class's shape.
+   * Ignored when `encodeFields` is given, because a field path names a value.
+   */
+  encodeKeys?: boolean;
+
+  /**
    * Enable debug mode to populate debugData in callbacks with
    * input/output snapshots, counts, and timing information.
    */
@@ -158,6 +166,7 @@ function matchesFieldPath(currentPath: string[], targetSegments: string[]): bool
 interface EncodeContext {
   config: EncodeConfig;
   fieldPaths: string[][] | null; // null means auto-detect mode
+  encodeKeys: boolean;
   state: EncodeState;
 }
 
@@ -195,10 +204,19 @@ function deepEncode<T>(value: T, ctx: EncodeContext, path: string[] = []): T {
     const result: Record<string, unknown> = {};
 
     for (const [key, val] of Object.entries(value)) {
-      // A map keyed by identifier sends the whole id to the model unless the key is encoded too.
-      // An explicit field path names a value, so keys are left alone when one is given.
-      const encodedKey =
-        ctx.fieldPaths === null ? encode(key, ctx.config, ctx.state).encoded : key;
+      // A key is only a candidate when the caller says the object is keyed by identifier. Nothing
+      // at runtime tells a map key from a class's own field name, and rewriting a field name calls
+      // the BAML function with an object its class does not describe.
+      const encodeThisKey = ctx.encodeKeys && ctx.fieldPaths === null;
+      const encodedKey = encodeThisKey ? encode(key, ctx.config, ctx.state).encoded : key;
+      // Two keys holding one identifier in different cases, or a key already shaped like the
+      // placeholder, would otherwise leave one entry standing for both
+      if (encodeThisKey && encodedKey !== key && encodedKey in result) {
+        throw new Error(
+          `Two keys encode to the same placeholder ${JSON.stringify(encodedKey)}, so one of them ` +
+            `would be lost. Give the object one key per identifier.`
+        );
+      }
       result[encodedKey] = deepEncode(val, ctx, [...path, key]);
     }
 
@@ -289,7 +307,7 @@ export function wrapBamlFunction<TInput, TOutput>(
   fn: BamlFunction<TInput, TOutput>,
   options: WrapBamlFunctionOptions
 ): BamlFunction<TInput, TOutput> {
-  const { config, encodeFields, onEncode, onDecode, debug } = options;
+  const { config, encodeFields, encodeKeys = false, onEncode, onDecode, debug } = options;
 
   // Pre-parse field paths if provided
   const fieldPaths = encodeFields ? encodeFields.map(parseFieldPath) : null;
@@ -299,6 +317,7 @@ export function wrapBamlFunction<TInput, TOutput>(
     const ctx: EncodeContext = {
       config,
       fieldPaths,
+      encodeKeys,
       state: createEncodeState(),
     };
 
@@ -364,7 +383,7 @@ export function wrapBamlStreamingFunction<TInput, TPartial, TFinal>(
   fn: BamlStreamingFunction<TInput, TPartial, TFinal>,
   options: WrapBamlFunctionOptions
 ): BamlStreamingFunction<TInput, TPartial, TFinal> {
-  const { config, encodeFields, onEncode, onDecode, debug } = options;
+  const { config, encodeFields, encodeKeys = false, onEncode, onDecode, debug } = options;
 
   // Pre-parse field paths if provided
   const fieldPaths = encodeFields ? encodeFields.map(parseFieldPath) : null;
@@ -374,6 +393,7 @@ export function wrapBamlStreamingFunction<TInput, TPartial, TFinal>(
     const ctx: EncodeContext = {
       config,
       fieldPaths,
+      encodeKeys,
       state: createEncodeState(),
     };
 
@@ -450,13 +470,15 @@ export function wrapBamlStreamingFunction<TInput, TPartial, TFinal>(
 export function encodeObject<T>(
   obj: T,
   config: EncodeConfig,
-  encodeFields?: string[]
+  encodeFields?: string[],
+  encodeKeys = false
 ): { encoded: T; mapping: Record<string, string> } {
   const fieldPaths = encodeFields ? encodeFields.map(parseFieldPath) : null;
 
   const ctx: EncodeContext = {
     config,
     fieldPaths,
+    encodeKeys,
     state: createEncodeState(),
   };
 

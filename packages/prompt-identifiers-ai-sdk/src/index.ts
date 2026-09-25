@@ -825,7 +825,9 @@ export function promptIdentifiersMiddleware(
       // Decode text and tool call inputs in content array
       let totalCount = 0;
       const decodedToolCalls: DecodedToolCall[] = [];
-      const decodedToolResults: DecodedToolCall[] = [];
+      // Keyed by tool call, because a preliminary result is replaced by the next one for that
+      // call and only the last of them is the content the answer was built from
+      const decodedToolResults = new Map<string, DecodedToolCall>();
       const decodedContent = result.content.map((item) => {
         if (item.type === "text") {
           const decoded = decode(item.text, mapping);
@@ -847,11 +849,10 @@ export function promptIdentifiersMiddleware(
         }
         if (item.type === "tool-result" && item.result !== undefined) {
           const decodedResult = decodeJsonValue(item.result, mapping);
-          // A preliminary result is replaced by a final one carrying the same content, so scanning
-          // both reports every anomaly once per preview frame. Serialising is the scan's own cost
-          // and a provider-run tool returns whole documents, so nothing pays it unheard.
-          if (onDecode && !item.preliminary) {
-            decodedToolResults.push({
+          // Serialising is the warning scan's own cost and a provider-run tool returns whole
+          // documents, so nothing pays it unheard
+          if (onDecode) {
+            decodedToolResults.set(item.toolCallId, {
               toolName: item.toolName,
               input: JSON.stringify(decodedResult),
             });
@@ -866,7 +867,7 @@ export function promptIdentifiersMiddleware(
         ? detectDecodeWarnings(
             decodedText,
             decodedToolCalls,
-            decodedToolResults,
+            [...decodedToolResults.values()],
             mapping,
             config,
             // The opposite default to the streamed path, deliberately: doGenerate returning at
@@ -908,7 +909,9 @@ export function promptIdentifiersMiddleware(
 
       let accDecodedText = "";
       const accDecodedToolCalls: DecodedToolCall[] = [];
-      const accDecodedToolResults: DecodedToolCall[] = [];
+      // Keyed by tool call, because a preliminary result is replaced by the next one for that
+      // call and only the last of them is the content the answer was built from
+      const accDecodedToolResults = new Map<string, DecodedToolCall>();
 
       // Debug-only accumulation state
       let streamStartTime = 0;
@@ -933,7 +936,7 @@ export function promptIdentifiersMiddleware(
           ? detectDecodeWarnings(
               accDecodedText,
               accDecodedToolCalls,
-              accDecodedToolResults,
+              [...accDecodedToolResults.values()],
               mapping,
               config,
               // A stream that never reported one did not finish, which is a cut the generate
@@ -1082,11 +1085,10 @@ export function promptIdentifiersMiddleware(
 
           if (chunk.type === "tool-result" && chunk.result !== undefined) {
             const decodedResult = decodeJsonValue(chunk.result, mapping);
-            // A preliminary result is replaced by a final one carrying the same content, so
-            // scanning both reports every anomaly once per preview frame. Serialising is the
-            // scan's own cost and a provider-run tool returns whole documents.
-            if (onDecode && !chunk.preliminary) {
-              accDecodedToolResults.push({
+            // Serialising is the warning scan's own cost and a provider-run tool returns whole
+            // documents, so nothing pays it unheard
+            if (onDecode) {
+              accDecodedToolResults.set(chunk.toolCallId, {
                 toolName: chunk.toolName,
                 input: JSON.stringify(decodedResult),
               });

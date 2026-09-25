@@ -2159,6 +2159,129 @@ describe("prompt-identifiers-ai-sdk", () => {
       ]);
     });
 
+    test("a preliminary result with no final one still reports", async () => {
+      const onDecode = vi.fn();
+      const middleware = createMiddleware({ config, onDecode });
+      const transformedParams = await middleware.transformParams({
+        params: createParams([userMessage(`Look up ${uuid}`)]),
+        type: "stream",
+        model: mockModel,
+      });
+
+      // The stream ends before the final result the provider promised
+      const streamed = await middleware.wrapStream({
+        doStream: vi.fn().mockResolvedValue({
+          stream: createMockStream([
+            {
+              type: "tool-result",
+              toolCallId: "call-1",
+              toolName: "web_search",
+              result: { note: "saw ~777~" },
+              preliminary: true,
+            },
+          ] as LanguageModelV4StreamPart[]),
+        }),
+        doGenerate: vi.fn(),
+        params: transformedParams,
+        model: mockModel,
+      });
+
+      await collectStreamParts(streamed.stream);
+
+      expect(onDecode.mock.calls[0][0].warnings).toEqual([
+        {
+          type: "unknown_placeholder",
+          value: "~777~",
+          source: "tool_result",
+          toolName: "web_search",
+        },
+      ]);
+    });
+
+    test("a generated preliminary result and its replacement report one warning", async () => {
+      const onDecode = vi.fn();
+      const middleware = createMiddleware({ config, onDecode });
+      const transformedParams = await middleware.transformParams({
+        params: createParams([userMessage(`Look up ${uuid}`)]),
+        type: "generate",
+        model: mockModel,
+      });
+
+      await middleware.wrapGenerate({
+        doGenerate: vi.fn().mockResolvedValue({
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "call-1",
+              toolName: "web_search",
+              result: { note: "saw ~777~" },
+              preliminary: true,
+            },
+            {
+              type: "tool-result",
+              toolCallId: "call-1",
+              toolName: "web_search",
+              result: { note: "saw ~777~" },
+            },
+          ],
+          finishReason: mockFinishReason(),
+          usage: mockUsage(),
+          warnings: [],
+        }),
+        doStream: vi.fn(),
+        params: transformedParams,
+        model: mockModel,
+      });
+
+      expect(onDecode.mock.calls[0][0].warnings).toEqual([
+        {
+          type: "unknown_placeholder",
+          value: "~777~",
+          source: "tool_result",
+          toolName: "web_search",
+        },
+      ]);
+    });
+
+    test("a generated answer carrying only a preliminary result still reports", async () => {
+      const onDecode = vi.fn();
+      const middleware = createMiddleware({ config, onDecode });
+      const transformedParams = await middleware.transformParams({
+        params: createParams([userMessage(`Look up ${uuid}`)]),
+        type: "generate",
+        model: mockModel,
+      });
+
+      await middleware.wrapGenerate({
+        doGenerate: vi.fn().mockResolvedValue({
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "call-1",
+              toolName: "web_search",
+              result: { note: "saw ~777~" },
+              preliminary: true,
+            },
+          ],
+          finishReason: mockFinishReason(),
+          usage: mockUsage(),
+          warnings: [],
+        }),
+        doStream: vi.fn(),
+        params: transformedParams,
+        model: mockModel,
+      });
+
+      expect(onDecode.mock.calls[0][0].warnings).toEqual([
+        {
+          type: "unknown_placeholder",
+          value: "~777~",
+          source: "tool_result",
+          toolName: "web_search",
+        },
+      ]);
+    });
+
     test("a tool result that references itself says so", async () => {
       const middleware = createMiddleware({ config });
       const transformedParams = await middleware.transformParams({

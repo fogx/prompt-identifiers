@@ -128,6 +128,23 @@ for await (const partial of streamAnalysis({ user_id: uuid })) {
 
 ## Utility Functions
 
+### Keys
+
+An input keyed by identifier, such as a BAML `map<string, T>`, sends the whole id to the model unless the key is encoded too. Pass `encodeKeys: true` to encode keys:
+
+```typescript
+const wrapped = wrapBamlFunction(b.AnalyzeUsers, {
+  config: { inputFormat: "UUID", outputFormat: "SafeNumeric" },
+  encodeKeys: true,
+});
+// { byId: { "123e4567-e89b-42d3-a456-426655440000": "active" } }
+//   reaches the model as { byId: { "~000~": "active" } }
+```
+
+It is off by default because nothing at runtime tells a map key from a class's own field name, so a custom input format matching a field name would rewrite the class's shape. It is ignored when `encodeFields` is given, because a field path names a value. Two keys that encode to one placeholder are refused rather than collapsed.
+
+Decoding reads keys either way, since a key only changes when it matches a placeholder the call minted.
+
 ### encodeObject
 
 Manually encode an object (useful for custom integrations):

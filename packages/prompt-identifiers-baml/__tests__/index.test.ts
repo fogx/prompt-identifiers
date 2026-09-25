@@ -632,12 +632,12 @@ describe("prompt-identifiers-baml", () => {
   });
 
   describe("An identifier in an object key", () => {
-    test("a map keyed by identifier is encoded on the way out", async () => {
+    test("a map keyed by identifier is encoded when the caller asks", async () => {
       const mockFn = vi.fn(async (input: { byId: Record<string, string> }) => ({
         seen: Object.keys(input.byId).join(" "),
       }));
 
-      const wrapped = wrapBamlFunction(mockFn, { config: defaultConfig });
+      const wrapped = wrapBamlFunction(mockFn, { config: defaultConfig, encodeKeys: true });
       await wrapped({ byId: { [uuid1]: "active", [uuid2]: "idle" } });
 
       expect(mockFn).toHaveBeenCalledWith({ byId: { "~000~": "active", "~001~": "idle" } });
@@ -646,10 +646,33 @@ describe("prompt-identifiers-baml", () => {
     test("one identifier in a key and in a value shares a placeholder", async () => {
       const mockFn = vi.fn(async () => ({ ok: true }));
 
-      const wrapped = wrapBamlFunction(mockFn, { config: defaultConfig });
+      const wrapped = wrapBamlFunction(mockFn, { config: defaultConfig, encodeKeys: true });
       await wrapped({ byId: { [uuid1]: `owner ${uuid1}` } });
 
       expect(mockFn).toHaveBeenCalledWith({ byId: { "~000~": "owner ~000~" } });
+    });
+
+    test("a field name is left alone unless the caller asks for keys", async () => {
+      // A custom format can match a class's own field names, and rewriting one calls the BAML
+      // function with an object its class does not describe
+      const mockFn = vi.fn(async () => ({ ok: true }));
+
+      const wrapped = wrapBamlFunction(mockFn, {
+        config: { inputFormat: /cust_[a-z0-9]+/g, outputFormat: "SafeNumeric" },
+      });
+      await wrapped({ cust_identifier: "cust_abc123", note: "hello" });
+
+      expect(mockFn).toHaveBeenCalledWith({ cust_identifier: "~000~", note: "hello" });
+    });
+
+    test("two keys that encode to one placeholder are refused", async () => {
+      const mockFn = vi.fn(async () => ({ ok: true }));
+
+      const wrapped = wrapBamlFunction(mockFn, { config: defaultConfig, encodeKeys: true });
+
+      await expect(wrapped({ byId: { [uuid1]: "a", [uuid1.toUpperCase()]: "b" } })).rejects.toThrow(
+        /same placeholder/i
+      );
     });
 
     test("an explicit encodeFields leaves keys alone, since a path names a value", async () => {
@@ -657,6 +680,7 @@ describe("prompt-identifiers-baml", () => {
 
       const wrapped = wrapBamlFunction(mockFn, {
         config: defaultConfig,
+        encodeKeys: true,
         encodeFields: ["note"],
       });
       await wrapped({ byId: { [uuid1]: "active" }, note: `owner ${uuid1}` });
