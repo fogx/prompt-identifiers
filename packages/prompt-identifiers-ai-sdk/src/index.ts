@@ -366,10 +366,14 @@ function encodeJsonValue(
     }
 
     return Object.fromEntries(
-      Object.entries(resolved).map(([name, item]) => [
-        encode(name, config, state).encoded,
-        encodeJsonValue(item, config, state, name, open),
-      ])
+      Object.entries(resolved)
+        // A function is not JSON, and carrying one through would hand the provider a `toJSON` that
+        // runs on the encoded payload and writes an identifier the encoder never saw
+        .filter(([, item]) => typeof item !== "function")
+        .map(([name, item]) => [
+          encode(name, config, state).encoded,
+          encodeJsonValue(item, config, state, name, open),
+        ])
     );
   } finally {
     open.delete(resolved);
@@ -387,13 +391,16 @@ function jsonFormOf(value: unknown, key: string): unknown {
   if (value === null || typeof value !== "object") return value;
 
   const withToJson = value as { toJSON?: (key: string) => unknown };
-  if (typeof withToJson.toJSON === "function") return withToJson.toJSON(key);
+  // `toJSON` speaks for the slot once. What it hands back is serialised as it stands, so a `toJSON`
+  // on the result is an ordinary property from here on and never a second conversion
+  const resolved = typeof withToJson.toJSON === "function" ? withToJson.toJSON(key) : value;
+  if (resolved === null || typeof resolved !== "object") return resolved;
 
-  if (value instanceof String) return String(value);
-  if (value instanceof Number) return Number(value);
-  if (value instanceof Boolean) return Boolean(value);
+  if (resolved instanceof String) return String(resolved);
+  if (resolved instanceof Number) return Number(resolved);
+  if (resolved instanceof Boolean) return Boolean(resolved);
 
-  return value;
+  return resolved;
 }
 
 /**
