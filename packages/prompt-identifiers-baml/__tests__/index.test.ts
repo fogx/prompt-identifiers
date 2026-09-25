@@ -1041,6 +1041,29 @@ describe("prompt-identifiers-baml", () => {
       expect(onDecode.mock.calls[0][0].debugData.output).toEqual({ text: `${uuid1} first` });
     });
 
+    test("a consumer that reads the stream twice is still told once", async () => {
+      // Each loop ends where the final is asked for, and on a stream whose final fails there is
+      // no memoised answer to stop the second loop reporting again
+      const onDecode = vi.fn();
+      const wrapped = wrapBamlStreamingFunction(
+        () => ({
+          async *[Symbol.asyncIterator]() {
+            yield { text: "~000~ first" };
+          },
+          async getFinalResponse(): Promise<{ text: string }> {
+            throw new Error("coercion failed");
+          },
+        }),
+        { config: defaultConfig, debug: true, onDecode }
+      );
+
+      const stream = wrapped({ id: uuid1 });
+      for await (const _partial of stream) void _partial;
+      for await (const _partial of stream) void _partial;
+
+      expect(onDecode).toHaveBeenCalledTimes(1);
+    });
+
     test("an error frame carries what the error itself carries", async () => {
       // A BAML validation error names the prompt and the output it could not coerce, and a reader
       // written against the client reads those fields off the frame
