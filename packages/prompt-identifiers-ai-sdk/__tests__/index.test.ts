@@ -1808,6 +1808,124 @@ describe("prompt-identifiers-ai-sdk", () => {
       }
     );
   });
+  describe("Ids inside a JSON payload", () => {
+    const config: EncodeConfig = { inputFormat: "UUID", outputFormat: "SafeNumeric" };
+    const ids = Array.from(
+      { length: 5 },
+      (_, i) => `123e4567-e89b-42d3-a456-${String(i).padStart(12, "0")}`
+    );
+
+    // JSON.stringify writes a newline as a backslash and an 'n'. The id patterns open on a word
+    // boundary, and 'n' is a word character, so encoding the serialised text loses the boundary.
+    test.each([
+      ["a newline", "\n"],
+      ["a tab", "\t"],
+      ["a carriage return", "\r"],
+    ])("a tool result separated by %s compresses every id", async (_label, separator) => {
+      const middleware = createMiddleware({ config });
+
+      const result = await middleware.transformParams({
+        params: createParams([
+          userMessage("Here are the records."),
+          toolMessage("call-1", "lookup", { type: "json", value: { list: ids.join(separator) } }),
+        ]),
+        type: "generate",
+        model: mockModel,
+      });
+
+      const wire = JSON.stringify(result.prompt);
+      for (const id of ids) expect(wire).not.toContain(id);
+    });
+
+    async function toolCallInputOnTheWire(input: unknown) {
+      const middleware = createMiddleware({ config });
+      const result = await middleware.transformParams({
+        params: createParams([
+          {
+            role: "assistant",
+            content: [{ type: "tool-call", toolCallId: "call-1", toolName: "lookup", input }],
+          } as LanguageModelV4Message,
+        ]),
+        type: "generate",
+        model: mockModel,
+      });
+
+      const part = (result.prompt[0] as { content: { input: unknown }[] }).content[0];
+      // The provider serialises what it is handed, so this is what the model sees
+      return JSON.stringify(part.input);
+    }
+
+    test("a payload that references itself says so", async () => {
+      const input: Record<string, unknown> = { note: `see ${ids[0]}` };
+      input.self = input;
+
+      await expect(toolCallInputOnTheWire(input)).rejects.toThrow(/circular/i);
+    });
+
+    test("a value behind toJSON is encoded, not carried past the encoder", async () => {
+      const wire = await toolCallInputOnTheWire({
+        note: { toJSON: () => `see ${ids[0]}` },
+      });
+
+      expect(wire).not.toContain(ids[0]);
+    });
+
+    test("a Date survives as the string the provider would have written", async () => {
+      const when = new Date("2026-01-02T03:04:05.000Z");
+
+      expect(await toolCallInputOnTheWire({ when })).toBe('{"when":"2026-01-02T03:04:05.000Z"}');
+    });
+
+    test("a tool call input separated by a newline compresses every id", async () => {
+      const middleware = createMiddleware({ config });
+      const params = createParams([
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call-1",
+              toolName: "lookup",
+              input: { list: ids.join("\n") },
+            },
+          ],
+        } as LanguageModelV4Message,
+      ]);
+
+      const result = await middleware.transformParams({
+        params,
+        type: "generate",
+        model: mockModel,
+      });
+
+      const wire = JSON.stringify(result.prompt);
+      for (const id of ids) expect(wire).not.toContain(id);
+    });
+  });
+
+  describe("An output format JSON cannot carry", () => {
+    test.each([
+      ["a double quote", '"{i:03}"'],
+      ["a backslash", "\\\\{i:03}"],
+    ])("%s in a placeholder is refused when the middleware is built", (_label, template) => {
+      expect(() =>
+        promptIdentifiersMiddleware({
+          config: { inputFormat: "UUID", outputFormat: { template } },
+          instruction: false,
+        })
+      ).toThrow(/tool call/i);
+    });
+
+    test("a format JSON carries unchanged is accepted", () => {
+      expect(() =>
+        promptIdentifiersMiddleware({
+          config: { inputFormat: "UUID", outputFormat: { template: "[ID:{i:03}]" } },
+          instruction: false,
+        })
+      ).not.toThrow();
+    });
+  });
+
   describe("Work nobody asked for", () => {
     const config: EncodeConfig = { inputFormat: "UUID", outputFormat: "SafeNumeric" };
     const ids = Array.from(
