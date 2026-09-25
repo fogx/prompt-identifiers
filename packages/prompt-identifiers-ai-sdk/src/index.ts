@@ -118,6 +118,53 @@ interface DecodedToolCall {
 /** Stand-in for a restored ID while scanning decoded output for anomalies. */
 const ID_MASK = "\u0001";
 
+/**
+ * The bodies of a call's placeholders: each one with the format's fixed prefix and suffix removed.
+ *
+ * The affixes are read off the format rather than guessed, by writing two placeholders far apart
+ * and keeping what they share at each end, so a literal carrying its own digits (`v1_{i:03}`)
+ * contributes nothing and a body split by a literal is still found. A format with nothing fixed at
+ * either end has no delimiters for a model to strip, which is the case the warning cannot report.
+ */
+function placeholderBodies(
+  placeholders: string[],
+  outputFormat: EncodeConfig["outputFormat"]
+): Set<string> {
+  const bodies = new Set<string>();
+  if (outputFormat === "Passthrough") return bodies;
+
+  let low: string;
+  let high: string;
+  try {
+    const formatter = createFormatter(outputFormat);
+    low = formatter(0);
+    high = formatter(123456789);
+  } catch {
+    // A formatter that refuses an index cannot be probed, so report nothing rather than guess
+    return bodies;
+  }
+
+  let prefix = 0;
+  while (prefix < low.length && prefix < high.length && low[prefix] === high[prefix]) prefix++;
+
+  let suffix = 0;
+  while (
+    suffix < low.length - prefix &&
+    suffix < high.length - prefix &&
+    low[low.length - 1 - suffix] === high[high.length - 1 - suffix]
+  ) {
+    suffix++;
+  }
+
+  if (prefix === 0 && suffix === 0) return bodies;
+
+  for (const placeholder of placeholders) {
+    const body = placeholder.slice(prefix, placeholder.length - suffix);
+    if (body) bodies.add(body);
+  }
+  return bodies;
+}
+
 /** Finish reasons that stop the model partway through what it was writing. */
 const CUT_SHORT = new Set(["length", "content-filter", "error"]);
 
@@ -149,12 +196,8 @@ function detectDecodeWarnings(
   const startsAPlaceholder = (token: string) =>
     placeholders.some((p) => p.length > token.length && p.startsWith(token));
 
-  // Extract bare indices from placeholders (e.g., "~000~" -> "000")
-  const bareIndices = new Set<string>();
-  for (const placeholder of placeholders) {
-    const match = placeholder.match(/^[^\d]*(\d+)[^\d]*$/);
-    if (match) bareIndices.add(match[1]);
-  }
+  // What a placeholder looks like with the format's own prefix and suffix stripped off
+  const bareIndices = placeholderBodies(placeholders, config.outputFormat);
 
   function check(text: string, source: Pick<DecodeWarning, "source" | "toolName">) {
     // Mask out the restored IDs first. Non-delimited placeholders are bare digits

@@ -1403,6 +1403,19 @@ describe("prompt-identifiers-ai-sdk", () => {
       ]);
     });
 
+    test("a format whose literal part carries a digit still reports a stripped body", async () => {
+      // The digit in the literal is not an index, but the body between the affixes is
+      expect(await warningsFor({ template: "<v2:{i:03}>" }, '{"page": "000"}')).toEqual([
+        ["stripped_delimiter", "000"],
+      ]);
+      expect(await warningsFor({ template: "v1_{i:03}" }, '{"orderId": "000"}')).toEqual([
+        ["stripped_delimiter", "000"],
+      ]);
+      expect(await warningsFor({ template: "<1:{i:03}:2>" }, '{"ref": "000"}')).toEqual([
+        ["stripped_delimiter", "000"],
+      ]);
+    });
+
     test("detects stripped delimiters in tool call arguments via wrapGenerate", async () => {
       const onDecode = vi.fn();
       const middleware = createMiddleware({ config: defaultConfig, onDecode });
