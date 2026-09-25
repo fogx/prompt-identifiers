@@ -837,22 +837,33 @@ describe("prompt-identifiers-baml", () => {
   });
 
   describe("A core too old to serve this package", () => {
-    test("is refused where the wrapper is built", async () => {
-      // Every export this package uses exists on 0.1.4, so nothing fails to link and nothing reads
-      // undefined. What changed in 0.2.0 is behaviour, so the probe has to be behavioural.
+    // Every export this package uses exists on 0.1.4, so nothing fails to link and nothing reads
+    // undefined. What changed in 0.2.0 is behaviour, so the probe has to be behavioural, and it
+    // sits on every entrance a consumer can come through
+    test.each([
+      ["wrapBamlFunction", () => wrapBamlFunction(async () => ({}), { config: defaultConfig })],
+      [
+        "wrapBamlStreamingFunction",
+        () =>
+          wrapBamlStreamingFunction(
+            // eslint-disable-next-line require-yield
+            async function* (): AsyncGenerator<unknown, unknown, unknown> {
+              return {};
+            },
+            { config: defaultConfig }
+          ),
+      ],
+      ["encodeObject", () => encodeObject({ id: uuid1 }, defaultConfig)],
+    ])("is refused by %s", async (_label, build) => {
       const core = await import("prompt-identifiers");
       const real = core.encode;
       Object.defineProperty(core, "encode", {
-        value: (text: string, config: unknown, state?: unknown) => {
-          const result = real(text.toLowerCase(), config as never, state as never);
-          return result;
-        },
+        value: (text: string, config: unknown, state?: unknown) =>
+          real(text.toLowerCase(), config as never, state as never),
         configurable: true,
       });
       try {
-        expect(() => wrapBamlFunction(async () => ({}), { config: defaultConfig })).toThrow(
-          /prompt-identifiers 0\.2\.0 or later/
-        );
+        expect(build).toThrow(/prompt-identifiers 0\.2\.0 or later/);
       } finally {
         Object.defineProperty(core, "encode", { value: real, configurable: true });
       }

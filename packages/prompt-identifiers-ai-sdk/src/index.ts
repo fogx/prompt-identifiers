@@ -414,7 +414,8 @@ function encodeJsonValue(
       if (Object.prototype.hasOwnProperty.call(encoded, encodedName)) {
         throw new Error(
           `Two keys in a tool payload encode to the same placeholder ${JSON.stringify(encodedName)}, ` +
-            `so one of them would be lost. Give the object one key per identifier.`
+            `so one of them would be lost. Give the object one key per identifier, or choose an ` +
+            `output format whose placeholders an ordinary key cannot spell.`
         );
       }
       // Defining the property keeps a key of `__proto__`, which JSON.parse produces as an own

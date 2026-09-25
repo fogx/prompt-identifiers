@@ -2185,6 +2185,90 @@ describe("prompt-identifiers-ai-sdk", () => {
       ]);
     });
 
+    test("two calls to one tool each report their own result", async () => {
+      // Keyed by tool name rather than by call, the second call's result would stand for both and
+      // the first call's warning would never be reported
+      const onDecode = vi.fn();
+      const middleware = createMiddleware({ config, onDecode });
+      const transformedParams = await middleware.transformParams({
+        params: createParams([userMessage(`Look up ${uuid}`)]),
+        type: "stream",
+        model: mockModel,
+      });
+
+      const streamed = await middleware.wrapStream({
+        doStream: vi.fn().mockResolvedValue({
+          stream: createMockStream([
+            {
+              type: "tool-result",
+              toolCallId: "call-1",
+              toolName: "web_search",
+              result: { note: "saw ~777~" },
+            },
+            {
+              type: "tool-result",
+              toolCallId: "call-2",
+              toolName: "web_search",
+              result: { note: "saw ~888~" },
+            },
+            { type: "finish", finishReason: mockFinishReason(), usage: mockUsage() },
+          ] as LanguageModelV4StreamPart[]),
+        }),
+        doGenerate: vi.fn(),
+        params: transformedParams,
+        model: mockModel,
+      });
+
+      await collectStreamParts(streamed.stream);
+
+      expect(onDecode.mock.calls[0][0].warnings.map((w: { value: string }) => w.value)).toEqual([
+        "~777~",
+        "~888~",
+      ]);
+    });
+
+    test("a replaced preliminary result reports the content it was replaced with", async () => {
+      // A preview is not the content the answer was built from, so the last result for a call is
+      // the one that speaks for it
+      const onDecode = vi.fn();
+      const middleware = createMiddleware({ config, onDecode });
+      const transformedParams = await middleware.transformParams({
+        params: createParams([userMessage(`Look up ${uuid}`)]),
+        type: "stream",
+        model: mockModel,
+      });
+
+      const streamed = await middleware.wrapStream({
+        doStream: vi.fn().mockResolvedValue({
+          stream: createMockStream([
+            {
+              type: "tool-result",
+              toolCallId: "call-1",
+              toolName: "web_search",
+              result: { note: "saw ~777~" },
+              preliminary: true,
+            },
+            {
+              type: "tool-result",
+              toolCallId: "call-1",
+              toolName: "web_search",
+              result: { note: "saw ~888~" },
+            },
+            { type: "finish", finishReason: mockFinishReason(), usage: mockUsage() },
+          ] as LanguageModelV4StreamPart[]),
+        }),
+        doGenerate: vi.fn(),
+        params: transformedParams,
+        model: mockModel,
+      });
+
+      await collectStreamParts(streamed.stream);
+
+      expect(onDecode.mock.calls[0][0].warnings.map((w: { value: string }) => w.value)).toEqual([
+        "~888~",
+      ]);
+    });
+
     test("a preliminary result with no final one still reports", async () => {
       const onDecode = vi.fn();
       const middleware = createMiddleware({ config, onDecode });
@@ -2715,6 +2799,35 @@ describe("prompt-identifiers-ai-sdk", () => {
       expect(await toolCallInputOnTheWire({ toString: "x", note: `see ${ids[0]}` })).toBe(
         '{"toString":"x","note":"see ~000~"}'
       );
+    });
+
+    test("an ordinary key spelled like a bare placeholder is refused too", async () => {
+      // Numeric mints `000` and IdToken mints `0`, so a counter map or an array serialised as an
+      // object holds a key the call is about to mint. The delimited formats have no such pair
+      const middleware = createMiddleware({
+        config: { inputFormat: "UUID", outputFormat: "Numeric" },
+      });
+      const wire = () =>
+        middleware.transformParams({
+          params: createParams([
+            {
+              role: "assistant",
+              content: [
+                {
+                  type: "tool-call",
+                  toolCallId: "call-1",
+                  toolName: "lookup",
+                  input: { "000": 1, [ids[0]]: 2 },
+                },
+              ],
+            } as LanguageModelV4Message,
+          ]),
+          type: "generate",
+          model: mockModel,
+        });
+
+      await expect(wire()).rejects.toThrow(/same placeholder "000"/);
+      expect(await toolCallInputOnTheWire({ "000": 1, [ids[0]]: 2 })).toBe('{"000":1,"~000~":2}');
     });
 
     test("a payload that reaches the same object twice is not a cycle", async () => {
