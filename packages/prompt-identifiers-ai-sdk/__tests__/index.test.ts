@@ -1416,6 +1416,19 @@ describe("prompt-identifiers-ai-sdk", () => {
       ]);
     });
 
+    test("a formatter that refuses a high index still decodes the answer", async () => {
+      // The probe asks a custom formatter for an index far past anything the call minted, and a
+      // lookup table that runs out throws there. Decoding is not the place to surface that.
+      const table = ["<<zero>>", "<<one>>"];
+      const outputFormat = (index: number) => {
+        if (index >= table.length) throw new RangeError("no entry for that index");
+        return table[index];
+      };
+
+      expect(await warningsFor(outputFormat, "the record is <<zero>>")).toEqual([]);
+      expect(await warningsFor(outputFormat, 'the record is "zero"')).toEqual([]);
+    });
+
     test("detects stripped delimiters in tool call arguments via wrapGenerate", async () => {
       const onDecode = vi.fn();
       const middleware = createMiddleware({ config: defaultConfig, onDecode });
@@ -1948,6 +1961,7 @@ describe("prompt-identifiers-ai-sdk", () => {
     test.each([
       ["a double quote", '"{i:03}"'],
       ["a backslash", "\\\\{i:03}"],
+      ["a control character", "\u0001{i:03}"],
     ])("%s in a placeholder is refused when the middleware is built", (_label, template) => {
       expect(() =>
         promptIdentifiersMiddleware({
@@ -2150,6 +2164,100 @@ describe("prompt-identifiers-ai-sdk", () => {
       expect(onDecode.mock.calls[0][0].warnings ?? []).toEqual([
         { type: "unknown_placeholder", value: "ID_9999", source: "text" },
       ]);
+    });
+
+    test("a stream ending at finish with no text-end still emits the held tail", async () => {
+      const onDecode = vi.fn();
+      const middleware = createMiddleware({ config: prefixOnly, onDecode });
+      const transformedParams = await middleware.transformParams({
+        params: createParams([userMessage(`Look up ${uuid}`)]),
+        type: "stream",
+        model: mockModel,
+      });
+
+      // The buffer holds ID_00 back because it could still grow into ID_0000, and only the block
+      // ending releases it. A provider that closes on finish alone never sends that ending.
+      const result = await middleware.wrapStream({
+        doStream: vi.fn().mockResolvedValue({
+          stream: createMockStream([
+            { type: "text-start", id: "a" },
+            { type: "text-delta", id: "a", delta: "alpha ID_00" },
+            {
+              type: "finish",
+              finishReason: { unified: "length", raw: "length" },
+              usage: mockUsage(),
+            },
+          ] as LanguageModelV4StreamPart[]),
+        }),
+        doGenerate: vi.fn(),
+        params: transformedParams,
+        model: mockModel,
+      });
+
+      const parts = await collectStreamParts(result.stream);
+
+      expect(parts.filter((part) => part.type === "reasoning-delta")).toEqual([]);
+      expect(
+        parts
+          .filter((part) => part.type === "text-delta")
+          .map((part) => (part as { delta: string }).delta)
+          .join("")
+      ).toBe("alpha ID_00");
+      expect(onDecode.mock.calls[0][0].output).toBe("alpha ID_00");
+    });
+
+    test("a generated answer with no finish reason is read as complete", async () => {
+      const onDecode = vi.fn();
+      const middleware = createMiddleware({ config: prefixOnly, onDecode });
+      const transformedParams = await middleware.transformParams({
+        params: createParams([userMessage(`Look up ${uuid}`)]),
+        type: "generate",
+        model: mockModel,
+      });
+
+      // A provider that omits the reason has still handed back the whole answer it means to send
+      await middleware.wrapGenerate({
+        doGenerate: vi.fn().mockResolvedValue({
+          content: [{ type: "text", text: "The record is ID_000" }],
+          usage: mockUsage(),
+          warnings: [],
+        }),
+        doStream: vi.fn(),
+        params: transformedParams,
+        model: mockModel,
+      });
+
+      expect(onDecode.mock.calls[0][0].warnings ?? []).toEqual([
+        { type: "unknown_placeholder", value: "ID_000", source: "text" },
+      ]);
+    });
+
+    test("a stream that ends without a finish part is read as cut", async () => {
+      const onDecode = vi.fn();
+      const middleware = createMiddleware({ config: prefixOnly, onDecode });
+      const transformedParams = await middleware.transformParams({
+        params: createParams([userMessage(`Look up ${uuid}`)]),
+        type: "stream",
+        model: mockModel,
+      });
+
+      // A stream that stops without saying why stopped somewhere the model did not choose
+      const result = await middleware.wrapStream({
+        doStream: vi.fn().mockResolvedValue({
+          stream: createMockStream([
+            { type: "text-start", id: "a" },
+            { type: "text-delta", id: "a", delta: "The record is ID_000" },
+            { type: "text-end", id: "a" },
+          ] as LanguageModelV4StreamPart[]),
+        }),
+        doGenerate: vi.fn(),
+        params: transformedParams,
+        model: mockModel,
+      });
+
+      await collectStreamText(result.stream);
+
+      expect(onDecode.mock.calls[0][0].warnings ?? []).toEqual([]);
     });
 
     test("two blocks cut by the same stop report neither half-written placeholder", async () => {
