@@ -137,6 +137,8 @@ for await (const chunk of result.textStream) {
 
 `unknown_placeholder` needs a delimited output format such as `SafeNumeric` or a template. With `Numeric` or `IdToken`, a placeholder cannot be told apart from an ordinary number or word, so nothing is reported.
 
+The same spelling collides in a tool payload's keys. A payload that holds an identifier in a key position alongside an ordinary key spelled like a bare index, such as `"000"` under `Numeric` or `"0"` under `IdToken`, has two keys landing on one, and the call is refused rather than losing one of them. A delimited format has no such pair.
+
 ```typescript
 onDecode: ({ warnings }) => {
   for (const warning of warnings ?? []) {
