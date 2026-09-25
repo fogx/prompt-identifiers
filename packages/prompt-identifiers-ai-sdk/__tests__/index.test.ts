@@ -1884,6 +1884,33 @@ describe("prompt-identifiers-ai-sdk", () => {
       expect(wire).not.toContain(ids[0]);
     });
 
+    test("a payload that reaches the same object twice is not a cycle", async () => {
+      const shared = { note: `see ${ids[0]}` };
+
+      expect(await toolCallInputOnTheWire({ from: shared, to: shared })).toBe(
+        '{"from":{"note":"see ~000~"},"to":{"note":"see ~000~"}}'
+      );
+    });
+
+    // The provider stringifies what the walk hands back, so anything the walk leaves behind is
+    // serialised a second time by rules the walk has already applied
+    test.each([
+      [
+        "a toJSON whose result carries its own toJSON",
+        { v: { toJSON: () => ({ toJSON: () => `see ${ids[0]}` }) } },
+        '{"v":{}}',
+      ],
+      [
+        "a toJSON returning a boxed string",
+        { v: { toJSON: () => new String(ids[0]) } },
+        '{"v":"~000~"}',
+      ],
+      ["a toJSON returning a boxed number", { v: { toJSON: () => new Number(42) } }, '{"v":42}'],
+      ["a property holding a function", { v: () => ids[0], n: 1 }, '{"n":1}'],
+    ])("%s serialises the way the provider would", async (_label, input, expected) => {
+      expect(await toolCallInputOnTheWire(input)).toBe(expected);
+    });
+
     test("a Date survives as the string the provider would have written", async () => {
       const when = new Date("2026-01-02T03:04:05.000Z");
 
