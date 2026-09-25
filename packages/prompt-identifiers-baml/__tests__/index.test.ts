@@ -1018,6 +1018,57 @@ describe("prompt-identifiers-baml", () => {
       ).toEqual([{ partial: { text: `${uuid1} first` } }, { final: { text: `${uuid1} done` } }]);
     });
 
+    test("a consumer that only iterates is told what was decoded even when the final fails", async () => {
+      // BamlValidationError is an ordinary end to a generation, and the consumer that never asked
+      // for the final still decoded every partial
+      const onDecode = vi.fn();
+      const wrapped = wrapBamlStreamingFunction(
+        () => ({
+          async *[Symbol.asyncIterator]() {
+            yield { text: "~000~ first" };
+          },
+          async getFinalResponse(): Promise<{ text: string }> {
+            throw new Error("coercion failed");
+          },
+        }),
+        { config: defaultConfig, debug: true, onDecode }
+      );
+
+      for await (const _partial of wrapped({ id: uuid1 })) void _partial;
+
+      expect(onDecode).toHaveBeenCalledTimes(1);
+      expect(onDecode.mock.calls[0][0].debugData.decodedCount).toBe(1);
+      expect(onDecode.mock.calls[0][0].debugData.output).toEqual({ text: `${uuid1} first` });
+    });
+
+    test("an error frame carries what the error itself carries", async () => {
+      // A BAML validation error names the prompt and the output it could not coerce, and a reader
+      // written against the client reads those fields off the frame
+      const wrapped = wrapBamlStreamingFunction(
+        () => ({
+          async *[Symbol.asyncIterator]() {},
+          async getFinalResponse(): Promise<{ text: string }> {
+            throw Object.assign(new Error("failed to parse"), {
+              type: "BamlValidationError",
+              raw_output: "~000~ half",
+            });
+          },
+        }),
+        { config: defaultConfig }
+      );
+
+      const body = await new Response(wrapped({ id: uuid1 }).toStreamable()).text();
+
+      expect(JSON.parse(body.trim())).toEqual({
+        error: {
+          type: "BamlValidationError",
+          message: "failed to parse",
+          prompt: "",
+          raw_output: "~000~ half",
+        },
+      });
+    });
+
     test("toStreamable writes an error frame when the generation fails", async () => {
       // The only signal a reader on the other end of the NDJSON has that the answer is not coming
       const wrapped = wrapBamlStreamingFunction(
@@ -1071,6 +1122,14 @@ describe("prompt-identifiers-baml", () => {
       ["a promise", () => Promise.resolve({})],
       ["undefined", () => undefined],
       ["a string", () => "nope"],
+      [
+        "an async iterable with no final",
+        () => ({
+          async *[Symbol.asyncIterator]() {
+            yield { text: "~000~" };
+          },
+        }),
+      ],
     ])("%s is refused where the call is made", (_label, fn) => {
       // The types forbid all three, which is the point: this is the shape a JavaScript consumer
       // reaches the wrapper with

@@ -507,13 +507,15 @@ export function wrapBamlStreamingFunction<TInput, TPartial, TFinal>(
     const { ctx, encodedInput } = encodeInput(input);
     const source = fn(encodedInput);
 
-    // A stream and a generator are both objects and neither is thenable. A consumer who puts a
-    // step in front of the call hands back a promise, which would reach the generator branch and
-    // die on the first iteration with the error this wrapper exists to stop
+    // A stream answers getFinalResponse and a generator answers next. Anything else, including
+    // the promise a consumer hands back when they put a step in front of the call, would reach
+    // the generator branch and die on the first iteration with the error this wrapper stops
     if (
       source === null ||
       typeof source !== "object" ||
-      typeof (source as { then?: unknown }).then === "function"
+      typeof (source as { then?: unknown }).then === "function" ||
+      (typeof (source as BamlStream<TPartial, TFinal>).getFinalResponse !== "function" &&
+        typeof (source as AsyncGenerator<TPartial, TFinal, unknown>).next !== "function")
     ) {
       throw new TypeError(
         "wrapBamlStreamingFunction needs a function that returns the stream itself, as " +
@@ -531,7 +533,10 @@ export function wrapBamlStreamingFunction<TInput, TPartial, TFinal>(
       return decoded;
     }
 
+    let reported = false;
     function reportFinal(input: unknown, output: unknown) {
+      if (reported) return;
+      reported = true;
       onDecode?.({
         ...(debug && {
           debugData: {
@@ -564,14 +569,21 @@ export function wrapBamlStreamingFunction<TInput, TPartial, TFinal>(
 
       const stream: WrappedBamlStream<TPartial, TFinal> = {
         async *[Symbol.asyncIterator](): AsyncGenerator<TPartial, void, unknown> {
+          let lastPartial: TPartial | undefined;
+          let lastDecoded: TPartial | undefined;
+
           for await (const partial of bamlSource) {
-            yield decodePart(partial);
+            lastPartial = partial;
+            lastDecoded = decodePart(partial);
+            yield lastDecoded;
           }
+
           // The generator branch reports where its loop ends, because that is where the final
           // value arrives. Here the final is a second call, and a consumer that only iterates
           // never makes it, so the end of the loop makes it once on their behalf. A final that
-          // throws belongs to the consumer that asked for it, and this one did not
-          await finalOnce().catch(() => {});
+          // throws belongs to the consumer that asked for it, and this one did not, so what it
+          // gets told about is the last partial it did read
+          await finalOnce().catch(() => reportFinal(lastPartial, lastDecoded));
         },
         getFinalResponse: finalOnce,
         toStreamable(): ReadableStream<Uint8Array> {
@@ -596,6 +608,9 @@ export function wrapBamlStreamingFunction<TInput, TPartial, TFinal>(
                         error instanceof Error ? error.message : "Error in stream processing",
                       prompt: "",
                       raw_output: "",
+                      // A BAML error names the prompt and the output it could not coerce, and a
+                      // reader written against the client reads those off the frame
+                      ...(typeof error === "object" && error !== null ? error : {}),
                     },
                   })
                 );

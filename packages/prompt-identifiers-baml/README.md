@@ -157,7 +157,7 @@ Decoding reads keys either way, since a key only changes when it matches a place
 
 A value is walked when its state is in its own enumerable keys. A `Date`, a `Map`, a `Set`, a `RegExp`, a `Promise`, an `Error` and a typed array keep theirs in internal slots that no rebuild can copy, and each says so through its own `Object.prototype.toString` tag, whether or not it also carries a field. A BAML media argument (`image`, `audio`, `pdf`, `video`) is a native handle with no tag and no keys. All of them reach the function as themselves, and an identifier inside one reaches the model as it is written and is not in the mapping. An object that gives itself a `Symbol.toStringTag` is read the same way, so keep identifiers out of one.
 
-Everything else is walked and rebuilt on its own prototype, so a class instance and a record built with no prototype have their identifiers encoded and keep their methods and their type.
+Everything else is walked and rebuilt on its own prototype, so a class instance and a record built with no prototype have their identifiers encoded and keep their methods and their type. What a rebuild cannot carry is state that is not an own enumerable field: a `#private` field is gone from the copy, and a `Proxy` is read through to its target. Pass either of those as a field of a plain record, not as the record itself.
 
 `encodeObject` takes the same switch as its fourth argument: `encodeObject(obj, config, undefined, true)`.
 
