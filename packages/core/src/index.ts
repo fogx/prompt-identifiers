@@ -485,6 +485,10 @@ export function encode(text: string, config: EncodeConfig, state?: EncodeState):
  * never a placeholder. Numeric, IdToken and Passthrough always return an empty list, and so does
  * a formatter that throws on the indices this probes.
  *
+ * A template is read for the literals around its index, so its affixes are exact at any pad width.
+ * A formatter function cannot be read, so it is probed at four spread indices, the widest 16
+ * digits, and one padded wider counts its own leading zeros as a delimiter and finds nothing.
+ *
  * @example
  * findPlaceholders("See creator://~053~ and ~~120~~ and ~5~", "SafeNumeric") // ["~053~", "~5~"]
  */

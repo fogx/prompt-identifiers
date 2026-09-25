@@ -2653,6 +2653,26 @@ describe("prompt-identifiers-ai-sdk", () => {
     });
   });
 
+  describe("A core too old to serve the middleware", () => {
+    test("is refused where the middleware is built", async () => {
+      // A peer range is a warning under pnpm and CJS resolves a missing export to undefined, so a
+      // stale core otherwise runs a whole billed turn before anything notices
+      const core = await import("prompt-identifiers");
+      const real = core.findPlaceholders;
+      Object.defineProperty(core, "findPlaceholders", { value: undefined, configurable: true });
+      try {
+        expect(() =>
+          promptIdentifiersMiddleware({
+            config: { inputFormat: "UUID", outputFormat: "SafeNumeric" },
+            instruction: false,
+          })
+        ).toThrow(/prompt-identifiers 0\.2\.0 or later/);
+      } finally {
+        Object.defineProperty(core, "findPlaceholders", { value: real, configurable: true });
+      }
+    });
+  });
+
   describe("An output format JSON cannot carry", () => {
     test.each([
       ["a double quote", '"{i:03}"'],

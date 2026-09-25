@@ -755,6 +755,16 @@ export function promptIdentifiersMiddleware(
         "system message, or false to send none."
     );
   }
+  // A peer range is a warning rather than a wall, and a CJS require of a core too old to export
+  // this reads it as undefined, so a stale pair would otherwise run a whole billed turn before
+  // the decode path touched it
+  if (typeof findPlaceholders !== "function") {
+    throw new Error(
+      "promptIdentifiersMiddleware needs prompt-identifiers 0.2.0 or later. The installed copy " +
+        "does not export findPlaceholders."
+    );
+  }
+
   // A tool payload reaches the model as JSON and comes back as JSON text the decoder scans without
   // parsing, so a placeholder JSON has to escape is written one way and read another
   const example =
