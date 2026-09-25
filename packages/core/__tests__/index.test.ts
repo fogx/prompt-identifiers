@@ -522,6 +522,22 @@ describe("prompt-identifiers", () => {
       expect(Object.keys(mapping)).toHaveLength(2);
     });
 
+    test("a template with nothing around its index has no shape to find", () => {
+      // Nothing fixed at either end means no delimiter a scan could anchor on
+      expect(findPlaceholders("see 000 and 7", { template: "{i:03}" })).toEqual([]);
+    });
+
+    test("a formatter padded wider than nine digits is probed wide enough", () => {
+      // A bare function cannot be read, so its affixes come from probes, and a narrow set of them
+      // would share the padding and pass it off as a delimiter
+      const format = (index: number) => `ID${String(index).padStart(12, "0")}`;
+
+      expect(findPlaceholders("see ID000000000007 and ID999999999999", format)).toEqual([
+        "ID000000000007",
+        "ID999999999999",
+      ]);
+    });
+
     test("a caller with no types still gets an answer, not a throw", () => {
       // findPlaceholders answers which tokens look like placeholders, so a format it cannot read
       // is a format with no shape rather than a reason to end the call
