@@ -77,7 +77,8 @@ export interface WrapBamlFunctionOptions {
   onEncode?: (result: { mapping: Record<string, string>; debugData?: EncodeDebugData }) => void;
 
   /**
-   * Optional callback fired after decoding IDs in the output.
+   * Optional callback fired after decoding IDs in the output. A stream fires it once, where its
+   * loop ends, and its counts cover the partials and the final together.
    * When debug is true, receives debugData with input, output, counts, and timing.
    */
   onDecode?: (result: { debugData?: DecodeDebugData }) => void;
@@ -89,6 +90,14 @@ export type BamlFunction<TInput, TOutput> = (input: TInput) => Promise<TOutput>;
 /** What `b.stream.<Fn>(input)` returns: async iterable partials, final response on demand */
 export interface BamlStream<TPartial, TFinal> extends AsyncIterable<TPartial> {
   getFinalResponse(): Promise<TFinal>;
+}
+
+/**
+ * What the wrapper hands back. `toStreamable` is the Next.js path, and the wrapper always carries
+ * one, including for a client old enough not to have had it.
+ */
+export interface WrappedBamlStream<TPartial, TFinal> extends BamlStream<TPartial, TFinal> {
+  toStreamable(): ReadableStream<Uint8Array>;
 }
 
 /** A BAML streaming function type */
@@ -440,7 +449,7 @@ export function wrapBamlFunction<TInput, TOutput>(
 export function wrapBamlStreamingFunction<TInput, TPartial, TFinal>(
   fn: BamlStreamFunction<TInput, TPartial, TFinal>,
   options: WrapBamlFunctionOptions
-): BamlStreamFunction<TInput, TPartial, TFinal>;
+): (input: TInput) => WrappedBamlStream<TPartial, TFinal>;
 export function wrapBamlStreamingFunction<TInput, TPartial, TFinal>(
   fn: BamlStreamingFunction<TInput, TPartial, TFinal>,
   options: WrapBamlFunctionOptions
@@ -449,7 +458,9 @@ export function wrapBamlStreamingFunction<TInput, TPartial, TFinal>(
   fn:
     BamlStreamFunction<TInput, TPartial, TFinal> | BamlStreamingFunction<TInput, TPartial, TFinal>,
   options: WrapBamlFunctionOptions
-): (input: TInput) => BamlStream<TPartial, TFinal> | AsyncGenerator<TPartial, TFinal, unknown> {
+): (
+  input: TInput
+) => WrappedBamlStream<TPartial, TFinal> | AsyncGenerator<TPartial, TFinal, unknown> {
   requireCurrentCore();
   const { config, encodeFields, encodeKeys = false, onEncode, onDecode, debug } = options;
 
@@ -512,19 +523,66 @@ export function wrapBamlStreamingFunction<TInput, TPartial, TFinal>(
     // The generated BAML client hands back a stream rather than a generator: it iterates, and its
     // final response is a separate call the consumer makes when it wants one
     if (isBamlStream<TPartial, TFinal>(source)) {
-      return {
-        async *[Symbol.asyncIterator](): AsyncGenerator<TPartial, void, unknown> {
-          for await (const partial of source) {
-            yield decodePart(partial);
-          }
-        },
-        async getFinalResponse() {
-          const final = await source.getFinalResponse();
+      const bamlSource = source;
+      // The real stream memoises the task it drives, so asking it twice is one run. Decoding
+      // twice would count the same placeholders twice and report the answer twice, so the
+      // wrapper memoises its side as well
+      let decodedFinal: Promise<TFinal> | undefined;
+      function finalOnce() {
+        decodedFinal ??= (async () => {
+          const final = await bamlSource.getFinalResponse();
           const decoded = decodePart(final);
           reportFinal(final, decoded);
           return decoded;
+        })();
+        return decodedFinal;
+      }
+
+      const stream: WrappedBamlStream<TPartial, TFinal> = {
+        async *[Symbol.asyncIterator](): AsyncGenerator<TPartial, void, unknown> {
+          for await (const partial of bamlSource) {
+            yield decodePart(partial);
+          }
+          // The generator branch reports where its loop ends, because that is where the final
+          // value arrives. Here the final is a second call, and a consumer that only iterates
+          // never makes it, so the end of the loop makes it once on their behalf. A final that
+          // throws belongs to the consumer that asked for it, and this one did not
+          await finalOnce().catch(() => {});
+        },
+        getFinalResponse: finalOnce,
+        toStreamable(): ReadableStream<Uint8Array> {
+          // Forwarding the source's own would serialise the partials and the final as the model
+          // wrote them, placeholders and all, because it drives the stream it was defined on
+          const encoder = new TextEncoder();
+          const line = (message: unknown) => encoder.encode(JSON.stringify(message) + "\n");
+
+          return new ReadableStream({
+            async start(controller) {
+              try {
+                for await (const partial of stream) controller.enqueue(line({ partial }));
+                controller.enqueue(line({ final: await stream.getFinalResponse() }));
+              } catch (error) {
+                // The last line the reader gets, the way the client writes it, except that the
+                // message travels: a BamlError carries its text where JSON.stringify cannot see it
+                controller.enqueue(
+                  line({
+                    error: {
+                      type: "StreamError",
+                      message:
+                        error instanceof Error ? error.message : "Error in stream processing",
+                      prompt: "",
+                      raw_output: "",
+                    },
+                  })
+                );
+              }
+              controller.close();
+            },
+          });
         },
       };
+
+      return stream;
     }
 
     const generator = source;
