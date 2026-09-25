@@ -242,11 +242,15 @@ function deepEncode<T>(value: T, ctx: EncodeContext, path: string[] = []): T {
   // Handle objects
   if (typeof value === "object") {
     // A value is rebuildable from its own enumerable keys only when its state is in those keys. A
-    // BAML media argument, a Date, a Map, a Set, a RegExp and a Promise keep theirs in internal
-    // slots and have none, so rebuilding one hands the runtime an empty object, and a typed
-    // array's own keys are its bytes. Everything else is walked, prototype and all, so a class
-    // instance and a record built with no prototype reach the function encoded and intact.
-    if (ArrayBuffer.isView(value) || Object.keys(value).length === 0) {
+    // Date, a Map, a Set, a RegExp, a Promise, an Error and a typed array keep theirs in internal
+    // slots that no rebuild can copy, and each of them says so through its own tag, whether or
+    // not it also carries a field. A BAML media argument is a native handle with no tag and no
+    // keys. Everything else is walked, prototype and all, so a class instance and a record built
+    // with no prototype reach the function encoded and intact.
+    if (
+      Object.prototype.toString.call(value) !== "[object Object]" ||
+      Object.keys(value).length === 0
+    ) {
       return value;
     }
 
@@ -311,10 +315,13 @@ function deepDecode<T>(value: T, mapping: Record<string, string>, countRef: { co
 
   // Handle objects
   if (typeof value === "object") {
-    // The same rule the encode side walks by: a Date, a Map or a media handle the function
-    // returned has no own enumerable keys and would come back empty, a typed array's own keys are
-    // its bytes, and anything else is rebuilt on its own prototype
-    if (ArrayBuffer.isView(value) || Object.keys(value).length === 0) {
+    // The same rule the encode side walks by: a value the function returned that carries its own
+    // tag holds state a rebuild cannot copy, a media handle has neither tag nor keys, and
+    // anything else is rebuilt on its own prototype
+    if (
+      Object.prototype.toString.call(value) !== "[object Object]" ||
+      Object.keys(value).length === 0
+    ) {
       return value;
     }
 

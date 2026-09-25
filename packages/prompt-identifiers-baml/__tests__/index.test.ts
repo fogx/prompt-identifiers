@@ -632,6 +632,11 @@ describe("prompt-identifiers-baml", () => {
     });
   });
 
+  // Own keys and internal slots are not exclusive: this carries both
+  class TaggedMap extends Map<string, string> {
+    label = "x";
+  }
+
   describe("A value that is not a plain record", () => {
     // A BAML media argument is a native handle: prototype null, no own enumerable keys, all state
     // behind the handle. Rebuilding one from its entries hands the runtime an empty object.
@@ -642,6 +647,8 @@ describe("prompt-identifiers-baml", () => {
       ["a Set", new Set(["v"])],
       ["a RegExp", /x/g],
       ["a typed array", new Uint8Array([1, 2, 3])],
+      ["a Map subclass carrying a field", new TaggedMap([["k", "v"]])],
+      ["an Error with an own field", Object.assign(new Error("boom"), { code: "E1" })],
     ])("%s reaches the function by identity", async (_label, value) => {
       const mockFn = vi.fn(async (_input: { arg: unknown }) => ({ ok: true }));
 
@@ -659,6 +666,8 @@ describe("prompt-identifiers-baml", () => {
       ["a Set", new Set(["v"])],
       ["a RegExp", /x/g],
       ["a typed array", new Uint8Array([1, 2, 3])],
+      ["a Map subclass carrying a field", new TaggedMap([["k", "v"]])],
+      ["an Error with an own field", Object.assign(new Error("boom"), { code: "E1" })],
     ])("%s in a result comes back by identity too", async (_label, value) => {
       const mockFn = vi.fn(async () => ({ held: value, note: "~000~" }));
 
@@ -671,6 +680,20 @@ describe("prompt-identifiers-baml", () => {
 
     // A class instance and a record built with no prototype both carry their state in ordinary
     // own fields, so both are walked and the identifiers in them never reach the model
+    test("a value with slots and a field keeps both", async () => {
+      // Own keys and internal slots are not exclusive. Rebuilding one of these carries the field
+      // across and leaves the slots behind, so the copy has the prototype and none of the state
+      const failure = Object.assign(new Error("boom"), { code: "E1" });
+      const mockFn = vi.fn(async (_input: { failure: Error }) => ({ ok: true }));
+
+      const wrapped = wrapBamlFunction(mockFn, { config: defaultConfig });
+      await wrapped({ failure });
+
+      const sent = mockFn.mock.calls[0][0].failure;
+      expect(sent).toBe(failure);
+      expect(sent.message).toBe("boom");
+    });
+
     test("a class instance has its fields encoded and keeps its prototype", async () => {
       class UserDto {
         constructor(public user_id: string) {}
@@ -993,6 +1016,33 @@ describe("prompt-identifiers-baml", () => {
           .split("\n")
           .map((entry) => JSON.parse(entry))
       ).toEqual([{ partial: { text: `${uuid1} first` } }, { final: { text: `${uuid1} done` } }]);
+    });
+
+    test("toStreamable writes an error frame when the generation fails", async () => {
+      // The only signal a reader on the other end of the NDJSON has that the answer is not coming
+      const wrapped = wrapBamlStreamingFunction(
+        () => ({
+          async *[Symbol.asyncIterator]() {
+            yield { text: "~000~ first" };
+          },
+          async getFinalResponse(): Promise<{ text: string }> {
+            throw new Error("coercion failed");
+          },
+        }),
+        { config: defaultConfig }
+      );
+
+      const body = await new Response(wrapped({ id: uuid1 }).toStreamable()).text();
+
+      expect(
+        body
+          .trimEnd()
+          .split("\n")
+          .map((entry) => JSON.parse(entry))
+      ).toEqual([
+        { partial: { text: `${uuid1} first` } },
+        { error: { type: "StreamError", message: "coercion failed", prompt: "", raw_output: "" } },
+      ]);
     });
 
     test("its input is encoded the same way", async () => {
