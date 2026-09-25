@@ -498,6 +498,21 @@ export function wrapBamlStreamingFunction<TInput, TPartial, TFinal>(
   return function (input: TInput) {
     const { ctx, encodedInput } = encodeInput(input);
     const source = fn(encodedInput);
+
+    // A stream and a generator are both objects and neither is thenable. A consumer who puts a
+    // step in front of the call hands back a promise, which would reach the generator branch and
+    // die on the first iteration with the error this wrapper exists to stop
+    if (
+      source === null ||
+      typeof source !== "object" ||
+      typeof (source as { then?: unknown }).then === "function"
+    ) {
+      throw new TypeError(
+        "wrapBamlStreamingFunction needs a function that returns the stream itself, as " +
+          "`b.stream.<Fn>` does. A promise, or anything that is not a stream or an async " +
+          "generator, cannot be decoded as it arrives."
+      );
+    }
     let totalDecoded = 0;
     const startDecode = debug ? performance.now() : 0;
 
