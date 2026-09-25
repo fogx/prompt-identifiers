@@ -639,12 +639,8 @@ describe("prompt-identifiers-baml", () => {
       ["a Date", new Date("2026-01-02T03:04:05.000Z")],
       ["a Map", new Map([["k", "v"]])],
       ["a Set", new Set(["v"])],
-      [
-        "a class instance",
-        new (class Box {
-          held = "x";
-        })(),
-      ],
+      ["a RegExp", /x/g],
+      ["a typed array", new Uint8Array([1, 2, 3])],
     ])("%s reaches the function by identity", async (_label, value) => {
       const mockFn = vi.fn(async (_input: { arg: unknown }) => ({ ok: true }));
 
@@ -663,6 +659,50 @@ describe("prompt-identifiers-baml", () => {
 
       expect(result.when).toBe(when);
       expect(result.note).toBe(uuid1);
+    });
+
+    // A class instance and a record built with no prototype both carry their state in ordinary
+    // own fields, so both are walked and the identifiers in them never reach the model
+    test("a class instance has its fields encoded and keeps its prototype", async () => {
+      class UserDto {
+        constructor(public user_id: string) {}
+        label() {
+          return `user ${this.user_id}`;
+        }
+      }
+      const mockFn = vi.fn(async (_input: UserDto) => ({ ok: true }));
+
+      const wrapped = wrapBamlFunction(mockFn, { config: defaultConfig });
+      await wrapped(new UserDto(uuid1));
+
+      const sent = mockFn.mock.calls[0][0];
+      expect(sent.user_id).toBe("~000~");
+      expect(sent).toBeInstanceOf(UserDto);
+      expect(sent.label()).toBe("user ~000~");
+    });
+
+    test("a record built with no prototype has its fields encoded", async () => {
+      const record: { user_id: string } = Object.create(null);
+      record.user_id = uuid1;
+      const mockFn = vi.fn(async (_input: { user_id: string }) => ({ ok: true }));
+
+      const wrapped = wrapBamlFunction(mockFn, { config: defaultConfig });
+      await wrapped(record);
+
+      expect(mockFn.mock.calls[0][0].user_id).toBe("~000~");
+    });
+
+    test("a class instance in a result is decoded and keeps its prototype", async () => {
+      class Answer {
+        constructor(public note: string) {}
+      }
+      const mockFn = vi.fn(async () => new Answer("~000~"));
+
+      const wrapped = wrapBamlFunction(mockFn, { config: defaultConfig });
+      const result = await wrapped({ id: uuid1 });
+
+      expect(result.note).toBe(uuid1);
+      expect(result).toBeInstanceOf(Answer);
     });
 
     test("a plain record beside it is still encoded", async () => {
