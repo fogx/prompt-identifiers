@@ -136,12 +136,15 @@ Manually encode an object (useful for custom integrations):
 import { encodeObject } from "prompt-identifiers-baml";
 
 const { encoded, mapping } = encodeObject(
-  { user_id: "uuid-here", data: { owner: "other-uuid" } },
+  {
+    user_id: "123e4567-e89b-42d3-a456-426655440000",
+    data: { owner: "987fcdeb-51a2-43f7-8d9c-0123456789ab" },
+  },
   { inputFormat: "UUID", outputFormat: "SafeNumeric" }
 );
 
 // encoded: { user_id: '~000~', data: { owner: '~001~' } }
-// mapping: { '~000~': 'uuid-here', '~001~': 'other-uuid' }
+// mapping: { '~000~': '123e4567-e89b-42d3-a456-426655440000', '~001~': '987fcdeb-51a2-43f7-8d9c-0123456789ab' }
 ```
 
 ### decodeObject
@@ -153,10 +156,10 @@ import { decodeObject } from "prompt-identifiers-baml";
 
 const decoded = decodeObject(
   { user_id: "~000~", summary: "User ~000~ is active" },
-  { "~000~": "uuid-here" }
+  { "~000~": "123e4567-e89b-42d3-a456-426655440000" }
 );
 
-// decoded: { user_id: 'uuid-here', summary: 'User uuid-here is active' }
+// decoded: { user_id: '123e4567-e89b-42d3-a456-426655440000', summary: 'User 123e4567-e89b-42d3-a456-426655440000 is active' }
 ```
 
 ## Type Safety

@@ -630,4 +630,96 @@ describe("prompt-identifiers-baml", () => {
       expect(onDecode.mock.calls[0][0].debugData).toBeUndefined();
     });
   });
+
+  describe("A placeholder in an object key", () => {
+    test("a result grouped by id is decoded in its keys", async () => {
+      const mockFn = vi.fn(async (input: { ids: string }) => ({
+        byId: { "~000~": "active", "~001~": "idle" },
+        summary: `Both seen: ${input.ids}`,
+      }));
+
+      const wrapped = wrapBamlFunction(mockFn, { config: defaultConfig });
+      const result = await wrapped({ ids: `${uuid1} ${uuid2}` });
+
+      expect(result.byId).toEqual({ [uuid1]: "active", [uuid2]: "idle" });
+    });
+
+    test("decodeObject restores a key as well as a value", () => {
+      expect(decodeObject({ "~000~": "active" }, { "~000~": uuid1 })).toEqual({
+        [uuid1]: "active",
+      });
+    });
+
+    test("a decoded key named __proto__ stays an own property", () => {
+      const decoded = decodeObject<Record<string, unknown>>(
+        { "~000~": "value" },
+        { "~000~": "__proto__" }
+      );
+
+      expect(Object.getOwnPropertyNames(decoded)).toEqual(["__proto__"]);
+      expect(Object.getPrototypeOf(decoded)).toBe(Object.prototype);
+    });
+
+    test("a decoded key counts towards the debug total", async () => {
+      const onDecode = vi.fn();
+      const mockFn = vi.fn(async () => ({ byId: { "~000~": "active" } }));
+
+      const wrapped = wrapBamlFunction(mockFn, {
+        config: defaultConfig,
+        debug: true,
+        onDecode,
+      });
+      await wrapped({ id: uuid1 });
+
+      expect(onDecode.mock.calls[0][0].debugData.decodedCount).toBe(1);
+    });
+  });
+
+  describe("A consumer that stops reading a stream early", () => {
+    test("the wrapped generator is closed", async () => {
+      let closed = false;
+      async function* source() {
+        try {
+          yield { text: "~000~ first" };
+          yield { text: "~000~ second" };
+          return { text: "~000~ done" };
+        } finally {
+          closed = true;
+        }
+      }
+
+      const wrapped = wrapBamlStreamingFunction(() => source(), { config: defaultConfig });
+
+      for await (const partial of wrapped({ id: uuid1 })) {
+        expect(partial.text).toBe(`${uuid1} first`);
+        break;
+      }
+
+      expect(closed).toBe(true);
+    });
+
+    test("a consumer throwing inside the loop closes the generator", async () => {
+      let closed = false;
+      async function* source() {
+        try {
+          yield { text: "~000~ first" };
+          return { text: "~000~ done" };
+        } finally {
+          closed = true;
+        }
+      }
+
+      const wrapped = wrapBamlStreamingFunction(() => source(), { config: defaultConfig });
+
+      await expect(
+        (async () => {
+          for await (const _partial of wrapped({ id: uuid1 })) {
+            throw new Error("the consumer gave up");
+          }
+        })()
+      ).rejects.toThrow("the consumer gave up");
+
+      expect(closed).toBe(true);
+    });
+  });
 });

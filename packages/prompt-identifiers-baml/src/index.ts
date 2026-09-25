@@ -235,7 +235,19 @@ function deepDecode<T>(value: T, mapping: Record<string, string>, countRef: { co
     const result: Record<string, unknown> = {};
 
     for (const [key, val] of Object.entries(value)) {
-      result[key] = deepDecode(val, mapping, countRef);
+      // A model asked to group its answer puts an identifier in the key position, so a key
+      // carries a placeholder as readily as a string does
+      const decodedKey = decode(key, mapping);
+      if (decodedKey !== key) {
+        countRef.count++;
+      }
+      // Defining the property keeps a decoded key of `__proto__` off the prototype
+      Object.defineProperty(result, decodedKey, {
+        value: deepDecode(val, mapping, countRef),
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
     }
 
     return result as T;
@@ -339,7 +351,7 @@ export function wrapBamlFunction<TInput, TOutput>(
  *   config: { inputFormat: 'UUID', outputFormat: 'SafeNumeric' },
  * });
  *
- * for await (const partial of streamAnalysis({ user_id: 'uuid-here' })) {
+ * for await (const partial of streamAnalysis({ user_id: '123e4567-e89b-42d3-a456-426655440000' })) {
  *   console.log(partial); // IDs decoded in real-time
  * }
  * ```
@@ -382,34 +394,40 @@ export function wrapBamlStreamingFunction<TInput, TPartial, TFinal>(
     let totalDecoded = 0;
     const startDecode = debug ? performance.now() : 0;
 
-    while (true) {
-      const { value, done } = await generator.next();
+    // A consumer that breaks out of its loop, or throws inside it, returns this generator and
+    // nothing else tells the wrapped one to stop, which would leave the stream open
+    try {
+      while (true) {
+        const { value, done } = await generator.next();
 
-      if (done) {
-        // Final value
+        if (done) {
+          // Final value
+          const countRef = { count: 0 };
+          const decodedValue = deepDecode(value, ctx.state.mapping, countRef);
+          totalDecoded += countRef.count;
+          const decodeDurationMs = debug ? performance.now() - startDecode : 0;
+
+          onDecode?.({
+            ...(debug && {
+              debugData: {
+                decodedCount: totalDecoded,
+                input: value,
+                output: decodedValue,
+                durationMs: decodeDurationMs,
+              },
+            }),
+          });
+          return decodedValue;
+        }
+
+        // Partial value
         const countRef = { count: 0 };
         const decodedValue = deepDecode(value, ctx.state.mapping, countRef);
         totalDecoded += countRef.count;
-        const decodeDurationMs = debug ? performance.now() - startDecode : 0;
-
-        onDecode?.({
-          ...(debug && {
-            debugData: {
-              decodedCount: totalDecoded,
-              input: value,
-              output: decodedValue,
-              durationMs: decodeDurationMs,
-            },
-          }),
-        });
-        return decodedValue;
+        yield decodedValue;
       }
-
-      // Partial value
-      const countRef = { count: 0 };
-      const decodedValue = deepDecode(value, ctx.state.mapping, countRef);
-      totalDecoded += countRef.count;
-      yield decodedValue;
+    } finally {
+      await generator.return?.(undefined as TFinal);
     }
   };
 }
@@ -420,7 +438,7 @@ export function wrapBamlStreamingFunction<TInput, TPartial, TFinal>(
  * @example
  * ```typescript
  * const { encoded, mapping } = encodeObject(
- *   { user_id: 'uuid-here', data: { owner: 'other-uuid' } },
+ *   { user_id: '123e4567-e89b-42d3-a456-426655440000', data: { owner: '987fcdeb-51a2-43f7-8d9c-0123456789ab' } },
  *   { inputFormat: 'UUID', outputFormat: 'SafeNumeric' }
  * );
  * ```
@@ -449,8 +467,8 @@ export function encodeObject<T>(
  * @example
  * ```typescript
  * const decoded = decodeObject(
- *   { user_id: '«000»', summary: 'User «000» is active' },
- *   { '«000»': 'uuid-here' }
+ *   { user_id: '~000~', summary: 'User ~000~ is active' },
+ *   { '~000~': '123e4567-e89b-42d3-a456-426655440000' }
  * );
  * ```
  */
