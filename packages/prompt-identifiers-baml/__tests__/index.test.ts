@@ -1398,4 +1398,140 @@ describe("prompt-identifiers-baml", () => {
       expect(closed).toBe(true);
     });
   });
+  describe("A generation that fails with an error carrying the model's text", () => {
+    // The shape the BAML client raises: `prompt` is the text the model was sent and `raw_output`
+    // is the text it wrote back, both own and enumerable, so both hold this call's placeholders
+    class ValidationError extends Error {
+      prompt: string;
+      raw_output: string;
+
+      constructor(prompt: string, rawOutput: string, message: string) {
+        super(message);
+        this.name = "ValidationError";
+        this.prompt = prompt;
+        this.raw_output = rawOutput;
+      }
+    }
+
+    function failing() {
+      return new ValidationError(
+        "Summarise ~000~",
+        '{"owner": "~000~"}',
+        "could not parse ~000~ out of the response"
+      );
+    }
+
+    function expectDecoded(error: unknown) {
+      expect(error).toBeInstanceOf(ValidationError);
+      const validation = error as ValidationError;
+      expect(validation.prompt).toBe(`Summarise ${uuid1}`);
+      expect(validation.raw_output).toBe(`{"owner": "${uuid1}"}`);
+      expect(validation.message).toBe(`could not parse ${uuid1} out of the response`);
+    }
+
+    test("a rejecting call hands back the identifiers it was given", async () => {
+      const wrapped = wrapBamlFunction(
+        async () => {
+          throw failing();
+        },
+        { config: defaultConfig }
+      );
+
+      await expect(wrapped({ id: uuid1 })).rejects.toSatisfy((error: unknown) => {
+        expectDecoded(error);
+        return true;
+      });
+    });
+
+    test("a stream that dies mid-iteration hands back the identifiers it was given", async () => {
+      const source = {
+        async *[Symbol.asyncIterator]() {
+          yield { text: "~000~ so far" };
+          throw failing();
+        },
+        async getFinalResponse() {
+          throw failing();
+        },
+      };
+
+      const wrapped = wrapBamlStreamingFunction(() => source, { config: defaultConfig });
+
+      let caught: unknown;
+      try {
+        for await (const _partial of wrapped({ id: uuid1 })) {
+          // read
+        }
+      } catch (error) {
+        caught = error;
+      }
+
+      expectDecoded(caught);
+    });
+
+    test("a rejecting final hands back the identifiers it was given", async () => {
+      const source = {
+        async *[Symbol.asyncIterator]() {
+          yield { text: "~000~ so far" };
+        },
+        async getFinalResponse() {
+          throw failing();
+        },
+      };
+
+      const wrapped = wrapBamlStreamingFunction(() => source, { config: defaultConfig });
+
+      await expect(wrapped({ id: uuid1 }).getFinalResponse()).rejects.toSatisfy(
+        (error: unknown) => {
+          expectDecoded(error);
+          return true;
+        }
+      );
+    });
+
+    test("a generator that dies mid-iteration hands back the identifiers it was given", async () => {
+      async function* source() {
+        yield { text: "~000~ so far" };
+        throw failing();
+      }
+
+      const wrapped = wrapBamlStreamingFunction(() => source(), { config: defaultConfig });
+
+      let caught: unknown;
+      try {
+        for await (const _partial of wrapped({ id: uuid1 })) {
+          // read
+        }
+      } catch (error) {
+        caught = error;
+      }
+
+      expectDecoded(caught);
+    });
+
+    test("a thrown string is decoded too", async () => {
+      const wrapped = wrapBamlFunction(
+        async () => {
+          throw "the model refused ~000~";
+        },
+        { config: defaultConfig }
+      );
+
+      await expect(wrapped({ id: uuid1 })).rejects.toBe(`the model refused ${uuid1}`);
+    });
+
+    test("an error that refuses to be written keeps its own text", async () => {
+      const wrapped = wrapBamlFunction(
+        async () => {
+          throw Object.freeze(failing());
+        },
+        { config: defaultConfig }
+      );
+
+      await expect(wrapped({ id: uuid1 })).rejects.toSatisfy((error: unknown) => {
+        expect(error).toBeInstanceOf(ValidationError);
+        expect((error as ValidationError).raw_output).toBe('{"owner": "~000~"}');
+        return true;
+      });
+    });
+  });
 });

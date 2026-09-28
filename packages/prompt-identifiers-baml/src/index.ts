@@ -291,6 +291,43 @@ function deepEncode<T>(value: T, ctx: EncodeContext, path: string[] = []): T {
 }
 
 /**
+ * Decode the text a failed generation carries. The client raises an error holding the prompt it
+ * sent and the raw output it could not parse, so both are this call's placeholders, and the
+ * message quotes them. The strings are written back onto the error itself rather than onto a
+ * rebuilt one, so a consumer testing the class, the prototype or `instanceof` still finds them.
+ */
+function decodeThrown(error: unknown, mapping: Record<string, string>): unknown {
+  if (typeof error === "string") {
+    return decode(error, mapping);
+  }
+  if (typeof error !== "object" || error === null) {
+    return error;
+  }
+
+  // `message` and `stack` are own but not enumerable, and `stack` repeats the message, so a
+  // consumer logging the error whole reads the placeholders back out of it
+  const fields = new Set(Object.keys(error));
+  if (error instanceof Error) {
+    fields.add("message");
+    fields.add("stack");
+  }
+
+  for (const field of fields) {
+    const value = (error as Record<string, unknown>)[field];
+    if (typeof value !== "string") continue;
+    const decoded = decode(value, mapping);
+    if (decoded === value) continue;
+    try {
+      (error as Record<string, unknown>)[field] = decoded;
+    } catch {
+      // A frozen error, or one holding this field behind a getter, keeps the text it has. The
+      // write would throw a TypeError in its place and lose the failure the consumer waits for
+    }
+  }
+  return error;
+}
+
+/**
  * Deep traverse and decode placeholders in an object. Returns a rebuilt object where it walks,
  * and the value it was given where it does not.
  */
@@ -420,7 +457,12 @@ export function wrapBamlFunction<TInput, TOutput>(
     });
 
     // Call the original function
-    const output = await fn(encodedInput);
+    let output: TOutput;
+    try {
+      output = await fn(encodedInput);
+    } catch (error) {
+      throw decodeThrown(error, ctx.state.mapping);
+    }
 
     // Decode output
     const countRef = { count: 0 };
@@ -598,7 +640,7 @@ export function wrapBamlStreamingFunction<TInput, TPartial, TFinal>(
             // iterator, so a consumer holding decoded partials is told what it got before the
             // error reaches it. A consumer that breaks does not come through here
             reportFinal(lastPartial, lastDecoded);
-            throw error;
+            throw decodeThrown(error, ctx.state.mapping);
           } finally {
             openLoops--;
           }
@@ -614,7 +656,7 @@ export function wrapBamlStreamingFunction<TInput, TPartial, TFinal>(
           // and this one has nothing, so the reader that is still reading answers for it
           finalOnce().catch((error) => {
             if (openLoops === 0) reportFinal(undefined, undefined);
-            throw error;
+            throw decodeThrown(error, ctx.state.mapping);
           }),
         toStreamable(): ReadableStream<Uint8Array> {
           // Forwarding the source's own would serialise the partials and the final as the model
@@ -679,7 +721,7 @@ export function wrapBamlStreamingFunction<TInput, TPartial, TFinal>(
         // The same door as the stream branch: a generation that dies part way through still
         // decoded everything the consumer already read
         reportFinal(lastPartial, lastDecoded);
-        throw error;
+        throw decodeThrown(error, ctx.state.mapping);
       } finally {
         await generator.return?.(undefined as TFinal);
       }
