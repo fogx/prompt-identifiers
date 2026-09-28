@@ -228,6 +228,22 @@ describe("prompt-identifiers", () => {
     });
   });
 
+  describe("What the built-in input formats refuse", () => {
+    test.each([
+      ["a UUID v7", "0192b4a1-7b3e-7c4d-8e9f-1a2b3c4d5e6f"],
+      ["a UUID v1", "c232ab00-9414-11ec-b3c8-9f6bdeced846"],
+    ])("UUID leaves %s alone", (_label, text) => {
+      // The format table says v4, and the version and variant nibbles are what says so
+      expect(encode(text, { inputFormat: "UUID", outputFormat: "SafeNumeric" }).encoded).toBe(text);
+    });
+
+    test("ULID leaves a 26-character run carrying a non-Crockford letter alone", () => {
+      // Crockford base32 drops I, L, O and U so they cannot be misread for 1 and 0
+      const text = "01ARZ3NDEKTSV4RRFFQ69G5ILO";
+      expect(encode(text, { inputFormat: "ULID", outputFormat: "SafeNumeric" }).encoded).toBe(text);
+    });
+  });
+
   describe("A placeholder that spells a member of Object.prototype", () => {
     test("is an own entry in the mapping and survives the round trip", () => {
       // `__prot{i:base62}__` writes `__proto__` at index 50, and an assignment into a plain

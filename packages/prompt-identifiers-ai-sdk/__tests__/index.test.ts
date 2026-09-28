@@ -2464,26 +2464,85 @@ describe("prompt-identifiers-ai-sdk", () => {
         model: mockModel,
       });
 
-      await expect(
-        middleware.wrapGenerate({
-          doGenerate: vi.fn().mockResolvedValue({
+      // Both orders, because a guard on the raw key still refuses one of them
+      for (const result of [
+        { "~000~": { rank: 1 }, [uuid]: { rank: 2 } },
+        { [uuid]: { rank: 2 }, "~000~": { rank: 1 } },
+      ]) {
+        await expect(
+          middleware.wrapGenerate({
+            doGenerate: vi.fn().mockResolvedValue({
+              content: [{ type: "tool-result", toolCallId: "call-1", toolName: "rank", result }],
+              finishReason: mockFinishReason(),
+              usage: mockUsage(),
+              warnings: [],
+            }),
+            doStream: vi.fn(),
+            params: transformedParams,
+            model: mockModel,
+          })
+        ).rejects.toThrow(/same identifier/i);
+      }
+    });
+
+    test("an assistant's reasoning part is encoded like its text", async () => {
+      // A reasoning part carries the model's own words back into the next prompt, so an
+      // identifier in one reaches the model unless the part is encoded with the rest
+      const middleware = createMiddleware({ config });
+      const result = await middleware.transformParams({
+        params: createParams([
+          {
+            role: "assistant",
             content: [
-              {
-                type: "tool-result",
-                toolCallId: "call-1",
-                toolName: "rank",
-                result: { "~000~": { rank: 1 }, [uuid]: { rank: 2 } },
-              },
+              { type: "reasoning", text: `the creator is ${uuid}` },
+              { type: "text", text: `answering for ${uuid}` },
             ],
-            finishReason: mockFinishReason(),
-            usage: mockUsage(),
-            warnings: [],
-          }),
-          doStream: vi.fn(),
-          params: transformedParams,
-          model: mockModel,
-        })
-      ).rejects.toThrow(/same identifier/i);
+          } as LanguageModelV4Message,
+        ]),
+        type: "generate",
+        model: mockModel,
+      });
+
+      const parts = (result.prompt[0] as { content: { text: string }[] }).content;
+      expect(parts[0].text).toBe("the creator is ~000~");
+      expect(parts[1].text).toBe("answering for ~000~");
+    });
+
+    test("a tool result keeps an own __proto__ key and an ordinary toString key", async () => {
+      // JSON.parse produces `__proto__` as an own key, and every object inherits a `toString`,
+      // so a membership test that walks the prototype chain refuses a well-formed result
+      const middleware = createMiddleware({ config });
+      const transformedParams = await middleware.transformParams({
+        params: createParams([userMessage(`Look up ${uuid}`)]),
+        type: "generate",
+        model: mockModel,
+      });
+
+      const result = await middleware.wrapGenerate({
+        doGenerate: vi.fn().mockResolvedValue({
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "call-1",
+              toolName: "rank",
+              result: JSON.parse('{"toString":"x","__proto__":{"seen":"~000~"}}'),
+            },
+          ],
+          finishReason: mockFinishReason(),
+          usage: mockUsage(),
+          warnings: [],
+        }),
+        doStream: vi.fn(),
+        params: transformedParams,
+        model: mockModel,
+      });
+
+      const decoded = (result.content[0] as { result: Record<string, unknown> }).result;
+      expect(Object.getOwnPropertyNames(decoded)).toEqual(["toString", "__proto__"]);
+      expect(Object.getPrototypeOf(decoded)).toBe(Object.prototype);
+      expect(
+        (Object.getOwnPropertyDescriptor(decoded, "__proto__")?.value as { seen: string }).seen
+      ).toBe(uuid);
     });
 
     test("a replaced preliminary result reports the content it was replaced with", async () => {

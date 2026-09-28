@@ -206,22 +206,24 @@ describe("prompt-identifiers-baml", () => {
 
   describe("encodeFields option", () => {
     test("only encodes specified top-level fields", async () => {
-      const mockFn = vi.fn(async (input: { user_id: string; code: string }) => ({
+      const mockFn = vi.fn(async (input: { user_id: string; owner_id: string; code: string }) => ({
         result: `${input.user_id} - ${input.code}`,
       }));
 
       const wrapped = wrapBamlFunction(mockFn, {
         config: defaultConfig,
-        encodeFields: ["user_id"], // Only encode user_id, not code
+        // Two paths are a union, not an intersection: no value sits at both
+        encodeFields: ["user_id", "owner_id"],
       });
 
       // code looks like a UUID but shouldn't be encoded
       const codeUuid = "11111111-1111-4111-8111-111111111111";
 
-      await wrapped({ user_id: uuid1, code: codeUuid });
+      await wrapped({ user_id: uuid1, owner_id: uuid2, code: codeUuid });
 
       expect(mockFn).toHaveBeenCalledWith({
         user_id: "~000~",
+        owner_id: "~001~",
         code: codeUuid, // Not encoded
       });
     });
@@ -748,6 +750,45 @@ describe("prompt-identifiers-baml", () => {
   });
 
   describe("An identifier in an object key", () => {
+    test.each([
+      [
+        "wrapBamlFunction",
+        async (input: { byId: Record<string, string> }) => {
+          const wrapped = wrapBamlFunction(async (i: typeof input) => i, {
+            config: defaultConfig,
+          });
+          return wrapped(input);
+        },
+      ],
+      [
+        "wrapBamlStreamingFunction",
+        async (input: { byId: Record<string, string> }) => {
+          const wrapped = wrapBamlStreamingFunction(
+            // eslint-disable-next-line require-yield
+            async function* (i: typeof input) {
+              return i;
+            },
+            { config: defaultConfig }
+          );
+          const iterator = wrapped(input);
+          let step = await iterator.next();
+          while (!step.done) step = await iterator.next();
+          return step.value;
+        },
+      ],
+      [
+        "encodeObject",
+        async (input: { byId: Record<string, string> }) =>
+          encodeObject(input, defaultConfig).encoded,
+      ],
+    ])("%s leaves a key alone unless the caller asks", async (_label, run) => {
+      // A rewritten field name calls the BAML function with an object its class does not
+      // describe, so nothing at runtime can tell a map key from a class's own field
+      const sent = await run({ byId: { [uuid1]: "active" } });
+
+      expect(Object.keys((sent as { byId: Record<string, string> }).byId)).toEqual([uuid1]);
+    });
+
     test("a map keyed by identifier is encoded when the caller asks", async () => {
       const mockFn = vi.fn(async (input: { byId: Record<string, string> }) => ({
         seen: Object.keys(input.byId).join(" "),
@@ -853,9 +894,15 @@ describe("prompt-identifiers-baml", () => {
     test("two keys that decode to one identifier are refused", async () => {
       // The encode half refuses the mirror of this, and a model asked to group its answer can put
       // the identifier in one key and the placeholder it was handed in another
-      expect(() =>
-        decodeObject<Record<string, unknown>>({ "~000~": "a", [uuid1]: "b" }, { "~000~": uuid1 })
-      ).toThrow(/same identifier/i);
+      // Both orders, because a guard on the raw key still refuses one of them
+      for (const byId of [
+        { "~000~": "a", [uuid1]: "b" },
+        { [uuid1]: "b", "~000~": "a" },
+      ]) {
+        expect(() => decodeObject<Record<string, unknown>>(byId, { "~000~": uuid1 })).toThrow(
+          /same identifier/i
+        );
+      }
     });
 
     test("a decoded key counts towards the debug total", async () => {
@@ -1128,12 +1175,25 @@ describe("prompt-identifiers-baml", () => {
       expect(onDecode).toHaveBeenCalledTimes(1);
     });
 
-    test("a consumer that breaks out early is not reported to", async () => {
-      // Breaking returns the iterator rather than throwing through it, so it does not reach the
-      // catch that reports a failed generation
+    test.each([
+      [
+        "a stream",
+        () => bamlStream([{ text: "~000~ first" }, { text: "~000~ second" }], { text: "done" }),
+      ],
+      [
+        "a generator",
+        async function* (): AsyncGenerator<{ text: string }, { text: string }, unknown> {
+          yield { text: "~000~ first" };
+          yield { text: "~000~ second" };
+          return { text: "done" };
+        },
+      ],
+    ])("a consumer that breaks out of %s early is not reported to", async (_label, fn) => {
+      // Breaking returns the iterator rather than throwing through it, so it reaches neither the
+      // catch that reports a failed generation nor the end of the loop
       const onDecode = vi.fn();
       const wrapped = wrapBamlStreamingFunction(
-        () => bamlStream([{ text: "~000~ first" }, { text: "~000~ second" }], { text: "done" }),
+        fn as BamlStreamFunction<{ id: string }, { text: string }, { text: string }>,
         { config: defaultConfig, debug: true, onDecode }
       );
 
@@ -1160,6 +1220,7 @@ describe("prompt-identifiers-baml", () => {
       for await (const _partial of wrapped({ id: uuid1 })) void _partial;
 
       expect(onDecode.mock.calls[0][0].debugData.durationMs).toBeLessThan(100);
+      expect(onDecode.mock.calls[0][0].debugData.durationMs).toBeGreaterThan(0);
     });
 
     test("an error frame carries what the error itself carries", async () => {
