@@ -250,7 +250,9 @@ function detectDecodeWarnings(
     }
 
     for (const token of findPlaceholders(masked, config.outputFormat)) {
-      if (mapping[token] !== undefined) continue;
+      // The token is the model's, so reading it off the mapping with `in` or an index would find
+      // whatever Object.prototype carries and take an invented placeholder for a minted one
+      if (Object.prototype.hasOwnProperty.call(mapping, token)) continue;
 
       // A cut leaves half a placeholder behind, and an answer carrying several blocks has one per
       // block, so position says nothing about which of them the cut made
@@ -456,12 +458,26 @@ function decodeJsonValue(
   try {
     if (Array.isArray(value)) return value.map((item) => decodeJsonValue(item, mapping, open));
 
-    return Object.fromEntries(
-      Object.entries(value).map(([name, item]) => [
-        decode(name, mapping),
-        decodeJsonValue(item, mapping, open),
-      ])
-    );
+    const decoded: Record<string, unknown> = {};
+    for (const [name, item] of Object.entries(value)) {
+      const decodedName = decode(name, mapping);
+      // A placeholder beside the identifier it stands for lands on one key, and the encode half
+      // refuses the mirror of this rather than let one entry stand for two
+      if (Object.prototype.hasOwnProperty.call(decoded, decodedName)) {
+        throw new Error(
+          `Two keys in a tool result decode to the same identifier ${JSON.stringify(decodedName)}, ` +
+            `so one of them would be lost.`
+        );
+      }
+      // Defining the property keeps a decoded key of `__proto__` off the prototype setter
+      Object.defineProperty(decoded, decodedName, {
+        value: decodeJsonValue(item, mapping, open),
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
+    }
+    return decoded;
   } finally {
     open.delete(value);
   }

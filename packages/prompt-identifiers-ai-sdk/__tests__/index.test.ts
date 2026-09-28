@@ -2227,6 +2227,38 @@ describe("prompt-identifiers-ai-sdk", () => {
       ]);
     });
 
+    test("two result keys that decode to one identifier are refused", async () => {
+      // The encode half refuses the mirror of this. Collapsing them here drops a whole entry from
+      // what the caller is handed, with nothing said
+      const middleware = createMiddleware({ config });
+      const transformedParams = await middleware.transformParams({
+        params: createParams([userMessage(`Look up ${uuid}`)]),
+        type: "generate",
+        model: mockModel,
+      });
+
+      await expect(
+        middleware.wrapGenerate({
+          doGenerate: vi.fn().mockResolvedValue({
+            content: [
+              {
+                type: "tool-result",
+                toolCallId: "call-1",
+                toolName: "rank",
+                result: { "~000~": { rank: 1 }, [uuid]: { rank: 2 } },
+              },
+            ],
+            finishReason: mockFinishReason(),
+            usage: mockUsage(),
+            warnings: [],
+          }),
+          doStream: vi.fn(),
+          params: transformedParams,
+          model: mockModel,
+        })
+      ).rejects.toThrow(/same identifier/i);
+    });
+
     test("a replaced preliminary result reports the content it was replaced with", async () => {
       // A preview is not the content the answer was built from, so the last result for a call is
       // the one that speaks for it
@@ -2791,6 +2823,39 @@ describe("prompt-identifiers-ai-sdk", () => {
       );
 
       expect(wire).toBe('{"note":"see ~000~","__proto__":{"id":"~000~"}}');
+    });
+
+    test("an invented placeholder spelled like a prototype member is still reported", async () => {
+      // The mapping is a plain record, so reading a model-controlled token off it finds whatever
+      // Object.prototype carries and the token is taken for one this call minted
+      const seen: unknown[] = [];
+      const middleware = createMiddleware({
+        config: { inputFormat: "UUID", outputFormat: { template: "__prot{i:base62}__" } },
+        onDecode: (result) => seen.push(result.warnings),
+      });
+      const transformedParams = await middleware.transformParams({
+        params: createParams([userMessage(`Look up ${ids[0]}`)]),
+        type: "generate",
+        model: mockModel,
+      });
+
+      await middleware.wrapGenerate({
+        doGenerate: vi.fn().mockResolvedValue({
+          content: [{ type: "text", text: "saw __proto__ and __protZ__" }],
+          finishReason: mockFinishReason(),
+          usage: mockUsage(),
+          warnings: [],
+        }),
+        doStream: vi.fn(),
+        params: transformedParams,
+        model: mockModel,
+      });
+
+      // `__protZ__` is the control: the same shape, spelling nothing Object.prototype carries
+      expect(seen[0]).toEqual([
+        { type: "unknown_placeholder", value: "__proto__", source: "text" },
+        { type: "unknown_placeholder", value: "__protZ__", source: "text" },
+      ]);
     });
 
     test("a payload key named toString is not read as a collision", async () => {
