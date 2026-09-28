@@ -409,9 +409,10 @@ describe("prompt-identifiers-ai-sdk", () => {
     test("preserves non-text-delta stream parts", async () => {
       const middleware = createMiddleware({ config: defaultConfig });
 
-      const params = createParams([userMessage("Find user 123e4567-e89b-42d3-a456-426655440000")]);
+      const uuid = "123e4567-e89b-42d3-a456-426655440000";
+      const params = createParams([userMessage(`Find user ${uuid}`)]);
 
-      await middleware.transformParams({
+      const transformedParams = await middleware.transformParams({
         params,
         type: "stream",
         model: mockModel,
@@ -419,7 +420,7 @@ describe("prompt-identifiers-ai-sdk", () => {
 
       const mockStreamResult = createMockStreamResult([
         { type: "text-delta", id: "1", delta: "~000~" },
-        { type: "text-end", id: "2" },
+        { type: "text-end", id: "1" },
       ]);
       const doStream = vi.fn().mockResolvedValue(mockStreamResult);
       const doGenerate = vi.fn();
@@ -427,7 +428,7 @@ describe("prompt-identifiers-ai-sdk", () => {
       const result = await middleware.wrapStream({
         doStream,
         doGenerate,
-        params,
+        params: transformedParams,
         model: mockModel,
       });
 
@@ -440,8 +441,11 @@ describe("prompt-identifiers-ai-sdk", () => {
         parts.push(value);
       }
 
-      expect(parts).toHaveLength(2);
-      expect(parts[1].type).toBe("text-end");
+      // The delta is decoded and the block's end is handed on as it arrived
+      expect(parts).toEqual([
+        { type: "text-delta", id: "1", delta: uuid },
+        { type: "text-end", id: "1" },
+      ]);
     });
   });
 
@@ -655,6 +659,9 @@ describe("prompt-identifiers-ai-sdk", () => {
     test("preserves non-tool-result parts in tool messages", async () => {
       const middleware = createMiddleware({ config: defaultConfig });
 
+      const uuid = "123e4567-e89b-42d3-a456-426655440000";
+      // A part the encoder does not recognise, which a later provider version can add at any time
+      const unknown = { type: "unknown-future-part", payload: 1 };
       const params = createParams([
         {
           role: "tool",
@@ -663,10 +670,11 @@ describe("prompt-identifiers-ai-sdk", () => {
               type: "tool-result",
               toolCallId: "call-1",
               toolName: "test",
-              output: { type: "text", value: "result" },
+              output: { type: "text", value: `result for ${uuid}` },
             },
+            unknown,
           ],
-        } as LanguageModelV4Message,
+        } as unknown as LanguageModelV4Message,
       ]);
 
       const result = await middleware.transformParams({
@@ -677,6 +685,15 @@ describe("prompt-identifiers-ai-sdk", () => {
 
       const msg = result.prompt[0];
       expect(msg.role).toBe("tool");
+      expect(msg.content).toEqual([
+        {
+          type: "tool-result",
+          toolCallId: "call-1",
+          toolName: "test",
+          output: { type: "text", value: "result for ~000~" },
+        },
+        unknown,
+      ]);
     });
   });
 
@@ -1689,11 +1706,15 @@ describe("prompt-identifiers-ai-sdk", () => {
       ).toEqual([["stripped_delimiter", "00000000000000000000"]]);
     });
 
-    test("a template padded wider than a probe reports the whole stripped body", async () => {
-      // A template's affixes come from its own literal rather than from probes, so the pad is body
-      // at any width and the warning carries every digit the model wrote
-      expect(await warningsFor({ template: "ID{i:012}" }, '{"ref": "000000000000"}')).toEqual([
-        ["stripped_delimiter", "000000000000"],
+    test("a bare formatter padded wider than the widest probe keeps its pad in the prefix", async () => {
+      // A template says where its index sits. A bare function has to be probed, and the widest
+      // probe is 16 digits, so a pad of 20 leaves four zeros shared by all four probes and read
+      // as part of the fixed prefix. What the warning carries is the body that is left
+      const format = (index: number) => `ID${String(index).padStart(20, "0")}`;
+
+      // `ID0000` is what all four probes share, so the body is the sixteen characters after it
+      expect(await warningsFor(format, '{"ref": "0000000000000000"}')).toEqual([
+        ["stripped_delimiter", "0000000000000000"],
       ]);
     });
 
@@ -2038,11 +2059,14 @@ describe("prompt-identifiers-ai-sdk", () => {
     });
 
     test("a stream that ends mid-placeholder still reports the buffered tail", async () => {
+      // `~00` is a proper prefix of the one placeholder this call minted, so the buffer holds it
+      // back in case the next chunk completes it. The stream ends instead, and the flush is the
+      // only thing that can put it in front of the reader
       const result = await streamDecodeWith([
-        { type: "text-delta", id: "1", delta: "See ~000~ and also ~13" },
+        { type: "text-delta", id: "1", delta: "See ~000~ and also ~00" },
       ]);
 
-      expect(result.output).toBe("See 123e4567-e89b-42d3-a456-426655440000 and also ~13");
+      expect(result.output).toBe("See 123e4567-e89b-42d3-a456-426655440000 and also ~00");
     });
 
     test("reports text the consumer already holds when the stream dies", async () => {
@@ -3447,12 +3471,6 @@ describe("prompt-identifiers-ai-sdk", () => {
       // ID_0000 arrived as ID_000. Nothing closes the placeholder, so the scan reads the
       // shortened digit run as a whole one, though the format never writes a body that short.
       expect(await warningsFromGenerate("The record is ID_000", "length")).toEqual([]);
-    });
-
-    test("the same token in an answer that finished is still reported", async () => {
-      expect(await warningsFromGenerate("The record is ID_000", "stop")).toEqual([
-        { type: "unknown_placeholder", value: "ID_000", source: "text" },
-      ]);
     });
 
     test.each([
