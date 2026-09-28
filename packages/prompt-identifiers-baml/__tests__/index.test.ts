@@ -681,8 +681,9 @@ describe("prompt-identifiers-baml", () => {
     });
 
     test("a value with slots and a field keeps both", async () => {
-      // Own keys and internal slots are not exclusive. Rebuilding one of these carries the field
-      // across and leaves the slots behind, so the copy has the prototype and none of the state
+      // Own keys and internal slots are not exclusive, and an Error carries both. Its tag is not
+      // "[object Object]", so it is handed on as it is rather than rebuilt from its keys, which
+      // would have carried the field across and left the slots behind
       const failure = Object.assign(new Error("boom"), { code: "E1" });
       const mockFn = vi.fn(async (_input: { failure: Error }) => ({ ok: true }));
 

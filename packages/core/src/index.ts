@@ -234,10 +234,10 @@ export function createFormatter(format: OutputFormat): FormatterFn {
   }
 }
 
-// These differ from each other in their first and last character, in decimal and in base62, so
-// whatever every formatted placeholder shares is delimiter. The widest of them is 16 digits, so a
-// format padded wider than that still holds some of its padding across all four and reads it as
-// part of the prefix.
+// Every probe is compared against the first, whose single digit differs from the leading and the
+// trailing digit of all the others, in decimal and in base62, so what they share is delimiter. The
+// widest of them is 16 digits, so a format padded wider than that still holds some of its padding
+// across all four and reads it as part of the prefix.
 const PLACEHOLDER_PROBE_INDICES = [0, 123456789, 987654321, Number.MAX_SAFE_INTEGER];
 
 const builtInShapeCache = new Map<string, PlaceholderShape | undefined>();

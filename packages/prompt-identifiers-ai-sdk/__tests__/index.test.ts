@@ -983,8 +983,8 @@ describe("prompt-identifiers-ai-sdk", () => {
     });
 
     test("counts a placeholder whose format carries a regex metacharacter", async () => {
-      // The count compiles each placeholder into a pattern, so a format whose literals carry a
-      // metacharacter counts a character class rather than the text, or fails to compile at all
+      // The count compiles each placeholder into a pattern, escaping it first, so a format whose
+      // literals carry a metacharacter counts the text rather than a character class
       const onDecode = vi.fn();
       const uuid = "123e4567-e89b-42d3-a456-426655440000";
 
@@ -1603,7 +1603,7 @@ describe("prompt-identifiers-ai-sdk", () => {
 
     test("a format whose body carries a regex metacharacter is scanned, not compiled", async () => {
       // The body is whatever sits between the affixes, so a formatter that writes its index twice
-      // puts a metacharacter in it, and the scan compiles that body into a pattern
+      // puts a metacharacter in it, and the scan matches that body rather than compiling it
       expect(await warningsFor((i: number) => `id(${i})-${i}`, '{"ref": "0)-0"}')).toEqual([
         ["stripped_delimiter", "0)-0"],
       ]);
@@ -1649,9 +1649,9 @@ describe("prompt-identifiers-ai-sdk", () => {
       ).toEqual([["stripped_delimiter", "00000000000000000000"]]);
     });
 
-    test("a format padded wider than a probe reports the whole stripped body", async () => {
-      // A probe pair that both carry the pad's leading zeros would read them as the affix and
-      // leave the reported body short of what the model actually wrote
+    test("a template padded wider than a probe reports the whole stripped body", async () => {
+      // A template's affixes come from its own literal rather than from probes, so the pad is body
+      // at any width and the warning carries every digit the model wrote
       expect(await warningsFor({ template: "ID{i:012}" }, '{"ref": "000000000000"}')).toEqual([
         ["stripped_delimiter", "000000000000"],
       ]);
@@ -1716,7 +1716,7 @@ describe("prompt-identifiers-ai-sdk", () => {
       });
     });
 
-    test("detects surviving placeholders in text via wrapGenerate", async () => {
+    test("a placeholder that decodes cleanly raises no surviving-placeholder warning", async () => {
       const onDecode = vi.fn();
       const middleware = createMiddleware({ config: defaultConfig, onDecode });
 
@@ -1729,9 +1729,8 @@ describe("prompt-identifiers-ai-sdk", () => {
         model: mockModel,
       });
 
-      // Simulate LLM inventing a placeholder that doesn't exist in mapping
-      // But we test the surviving case: ~000~ appears in the decoded text
-      // This happens if decode somehow misses it
+      // ~000~ is the placeholder transformParams minted for this uuid, so decode restores it and
+      // nothing is left for the scan to report
       const mockResult: LanguageModelV4GenerateResult = {
         content: [{ type: "text", text: "Found user ~000~ in the database." }],
         finishReason: mockFinishReason(),

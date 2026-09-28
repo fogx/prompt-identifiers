@@ -223,7 +223,7 @@ describe("prompt-identifiers", () => {
       expect(result.mapping["Z"]).toBeDefined();
       expect(result.mapping["a"]).toBeDefined();
       expect(result.mapping["z"]).toBeDefined();
-      // 62nd ID should be "10"
+      // 63rd ID should be "10"
       expect(result.mapping["10"]).toBeDefined();
     });
   });
@@ -238,7 +238,8 @@ describe("prompt-identifiers", () => {
     });
 
     test("ULID leaves a 26-character run carrying a non-Crockford letter alone", () => {
-      // Crockford base32 drops I, L, O and U so they cannot be misread for 1 and 0
+      // Crockford base32 drops I, L and O because they read as 1 and 0, and U so that no
+      // identifier spells out an obscenity
       const text = "01ARZ3NDEKTSV4RRFFQ69G5ILO";
       expect(encode(text, { inputFormat: "ULID", outputFormat: "SafeNumeric" }).encoded).toBe(text);
     });
@@ -618,9 +619,9 @@ describe("prompt-identifiers", () => {
       ).toEqual(["ID00000000000000000007", "ID99999999999999999999"]);
     });
 
-    test("a format padded wider than a probe still has its padding read as body", () => {
-      // Probing only nine-digit indices leaves every probe sharing the leading zeros of a wider
-      // pad, which would read the padding as part of the fixed prefix
+    test("a template padded wider than a probe still has its padding read as body", () => {
+      // The bare-function form of this pad has to be probed. A template says where its index sits,
+      // so its affixes come from the literal and no width of padding can pass for one
       const format = { template: "ID{i:012}" };
 
       expect(findPlaceholders("see ID000000000007 and ID999999999999", format)).toEqual([

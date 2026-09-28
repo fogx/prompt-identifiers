@@ -811,9 +811,9 @@ export function promptIdentifiersMiddleware(
   }
 
   // A tool payload reaches the model as JSON and comes back as JSON text the decoder scans without
-  // parsing, so a placeholder JSON has to escape is written one way and read another
-  // A format safe at index 0 and not after loses an identifier just the same, so the guard reads
-  // the same spread of indices the affixes are derived from
+  // parsing, so a placeholder that JSON has to escape is written one way and read another. A format
+  // safe at index 0 and not after loses an identifier just the same, so the guard reads the same
+  // spread of indices the affixes are derived from
   const example =
     config.outputFormat === "Passthrough"
       ? ""
