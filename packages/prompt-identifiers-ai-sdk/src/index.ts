@@ -212,6 +212,11 @@ const CUT_SHORT = new Set(["length", "content-filter", "error"]);
  *    such as one the model invented. Only delimited formats can report these, and a truncated
  *    answer's trailing token is spared when a placeholder this call minted starts with it.
  */
+/** Escape a format's own text so it is matched rather than compiled. */
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function detectDecodeWarnings(
   decodedText: string,
   decodedToolCalls: DecodedToolCall[],
@@ -264,7 +269,9 @@ function detectDecodeWarnings(
     // A bare index in prose is ordinary text, so only one quoted as a JSON value counts as a
     // delimiter the model stripped
     for (const bare of bareIndices) {
-      const pattern = new RegExp(`"${bare}"`, "g");
+      // The body is the format's, not this file's, so a formatter that writes its index twice
+      // around a literal puts a metacharacter in it
+      const pattern = new RegExp(`"${escapeRegExp(bare)}"`, "g");
       if (pattern.test(masked)) {
         warnings.push({ type: "stripped_delimiter", value: bare, ...source });
       }
@@ -604,7 +611,7 @@ function encodePromptMessages(
  */
 function countPlaceholders(text: string, mapping: Record<string, string>): number {
   return Object.keys(mapping).reduce((acc, placeholder) => {
-    const regex = new RegExp(placeholder.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g");
+    const regex = new RegExp(escapeRegExp(placeholder), "g");
     return acc + (text.match(regex)?.length ?? 0);
   }, 0);
 }
@@ -642,11 +649,17 @@ function jsonSafeMapping(mapping: Record<string, string>): Record<string, string
 
   const escaped: Record<string, string> = {};
   let changed = false;
-  for (const placeholder of keys) {
-    const id = mapping[placeholder];
+  // A format can write a placeholder that spells an inherited member, so the entries are read and
+  // written by their own keys rather than through the prototype chain
+  for (const [placeholder, id] of Object.entries(mapping)) {
     const safe = JSON.stringify(id).slice(1, -1);
     if (safe !== id) changed = true;
-    escaped[placeholder] = safe;
+    Object.defineProperty(escaped, placeholder, {
+      value: safe,
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
   }
 
   const result = changed ? escaped : mapping;
@@ -698,7 +711,7 @@ function createStreamingDecoder(mapping: Record<string, string>) {
   const pattern = new RegExp(
     [...placeholders]
       .sort((a, b) => b.length - a.length)
-      .map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+      .map(escapeRegExp)
       .join("|"),
     "g"
   );
@@ -799,8 +812,20 @@ export function promptIdentifiersMiddleware(
 
   // A tool payload reaches the model as JSON and comes back as JSON text the decoder scans without
   // parsing, so a placeholder JSON has to escape is written one way and read another
+  // A format safe at index 0 and not after loses an identifier just the same, so the guard reads
+  // the same spread of indices the affixes are derived from
   const example =
-    config.outputFormat === "Passthrough" ? "" : createFormatter(config.outputFormat)(0);
+    config.outputFormat === "Passthrough"
+      ? ""
+      : (PROBE_INDICES.map((index) => {
+          try {
+            // A formatter is free to cover only the indices it expects, and one that refuses a
+            // high probe says nothing about the placeholders it does write
+            return createFormatter(config.outputFormat)(index);
+          } catch {
+            return "";
+          }
+        }).find((written) => /["\\\u0000-\u001f]/.test(written)) ?? "");
   const unsafe = example.match(/["\\\u0000-\u001f]/);
   if (unsafe) {
     throw new Error(
@@ -955,7 +980,7 @@ export function promptIdentifiersMiddleware(
       const accDecodedToolResults = new Map<string, DecodedToolCall>();
 
       // Debug-only accumulation state
-      let streamStartTime = 0;
+      let decodeMs = 0;
       let accEncodedText = "";
       let streamStarted = false;
 
@@ -971,7 +996,7 @@ export function promptIdentifiersMiddleware(
         for (const decoder of textDecoders.values()) accDecodedText += decoder.flush();
         textDecoders.clear();
 
-        const durationMs = debug && streamStarted ? performance.now() - streamStartTime : 0;
+        const durationMs = decodeMs;
         const warnings = onDecode
           ? detectDecodeWarnings(
               accDecodedText,
@@ -1036,141 +1061,14 @@ export function promptIdentifiersMiddleware(
         LanguageModelV4StreamPart
       >({
         transform(chunk, controller) {
-          // A closing chunk is the last chance to emit what a decoder still holds:
-          // anything enqueued from flush() arrives after the stream has finished,
-          // with no open block to attach to, and is dropped from the assembled message.
-          if (chunk.type === "text-end") {
-            const remaining = textDecoders.get(chunk.id)?.flush();
-            if (remaining) {
-              accDecodedText += remaining;
-              controller.enqueue({
-                type: "text-delta",
-                id: chunk.id,
-                delta: remaining,
-              } as LanguageModelV4StreamPart);
-            }
-            textDecoders.delete(chunk.id);
+          // The model's latency falls between these calls rather than inside them, so summing
+          // the calls answers the documented question and the wall clock does not
+          const startChunk = debug ? performance.now() : 0;
+          try {
+            transformChunk(chunk, controller);
+          } finally {
+            if (debug) decodeMs += performance.now() - startChunk;
           }
-
-          if (chunk.type === "reasoning-end") {
-            const remaining = reasoningDecoders.get(chunk.id)?.flush();
-            if (remaining) {
-              controller.enqueue({
-                type: "reasoning-delta",
-                id: chunk.id,
-                delta: remaining,
-              } as LanguageModelV4StreamPart);
-            }
-            reasoningDecoders.delete(chunk.id);
-          }
-
-          if (chunk.type === "finish") {
-            flushAll(textDecoders, "text-delta", (part) => controller.enqueue(part));
-            flushAll(reasoningDecoders, "reasoning-delta", (part) => controller.enqueue(part));
-          }
-
-          if (chunk.type === "finish") {
-            streamFinishReason = chunk.finishReason?.unified;
-
-            for (const [id, decoder] of toolInputDecoders) {
-              const remaining = decoder.flush();
-              if (remaining) {
-                controller.enqueue({
-                  type: "tool-input-delta",
-                  id,
-                  delta: remaining,
-                } as LanguageModelV4StreamPart);
-              }
-            }
-            toolInputDecoders.clear();
-          }
-
-          // Decode text deltas
-          if (chunk.type === "text-delta" && chunk.delta) {
-            if (debug) {
-              if (!streamStarted) {
-                streamStartTime = performance.now();
-                streamStarted = true;
-              }
-              accEncodedText += chunk.delta;
-            }
-            const decoded = decoderFor(textDecoders, chunk.id).process(chunk.delta);
-            if (decoded) {
-              accDecodedText += decoded;
-              controller.enqueue({ ...chunk, delta: decoded });
-            }
-            return;
-          }
-
-          // Decode reasoning deltas
-          if (chunk.type === "reasoning-delta" && chunk.delta) {
-            const decoded = decoderFor(reasoningDecoders, chunk.id).process(chunk.delta);
-            if (decoded) {
-              controller.enqueue({ ...chunk, delta: decoded });
-            }
-            return;
-          }
-
-          // Decode complete tool calls (input is stringified JSON)
-          if (chunk.type === "tool-call" && "input" in chunk && typeof chunk.input === "string") {
-            const decodedInput = decodeToolInputString(chunk.input, mapping);
-            accDecodedToolCalls.push({ toolName: chunk.toolName, input: decodedInput });
-            controller.enqueue({
-              ...chunk,
-              input: decodedInput,
-            });
-            return;
-          }
-
-          if (chunk.type === "tool-result" && chunk.result !== undefined) {
-            const decodedResult = decodeJsonValue(chunk.result, mapping);
-            // Serialising is the warning scan's own cost and a provider-run tool returns whole
-            // documents, so nothing pays it unheard
-            if (onDecode) {
-              accDecodedToolResults.set(chunk.toolCallId, {
-                toolName: chunk.toolName,
-                input: JSON.stringify(decodedResult),
-              });
-            }
-            controller.enqueue({ ...chunk, result: decodedResult as typeof chunk.result });
-            return;
-          }
-
-          if (chunk.type === "tool-input-start") {
-            decoderFor(toolInputDecoders, chunk.id);
-            controller.enqueue(chunk);
-            return;
-          }
-
-          // Decode tool input deltas (partial JSON strings)
-          if (chunk.type === "tool-input-delta" && "delta" in chunk) {
-            const decoder = decoderFor(toolInputDecoders, chunk.id);
-            const rawDelta = (chunk as { delta: string }).delta;
-            const decodedDelta = decoder.process(rawDelta);
-            if (decodedDelta) {
-              controller.enqueue({ ...chunk, delta: decodedDelta });
-            }
-            return;
-          }
-
-          if (chunk.type === "tool-input-end") {
-            const decoder = toolInputDecoders.get(chunk.id);
-            if (decoder) {
-              const remaining = decoder.flush();
-              if (remaining) {
-                controller.enqueue({
-                  type: "tool-input-delta",
-                  id: chunk.id,
-                  delta: remaining,
-                } as LanguageModelV4StreamPart);
-              }
-              toolInputDecoders.delete(chunk.id);
-            }
-            controller.enqueue(chunk);
-            return;
-          }
-
-          controller.enqueue(chunk);
         },
 
         flush: report,
@@ -1179,6 +1077,141 @@ export function promptIdentifiersMiddleware(
         // is already holding the text decoded so far
         cancel: report,
       });
+
+      function transformChunk(
+        chunk: LanguageModelV4StreamPart,
+        controller: TransformStreamDefaultController<LanguageModelV4StreamPart>
+      ) {
+        // A closing chunk is the last chance to emit what a decoder still holds:
+        // anything enqueued from flush() arrives after the stream has finished,
+        // with no open block to attach to, and is dropped from the assembled message.
+        if (chunk.type === "text-end") {
+          const remaining = textDecoders.get(chunk.id)?.flush();
+          if (remaining) {
+            accDecodedText += remaining;
+            controller.enqueue({
+              type: "text-delta",
+              id: chunk.id,
+              delta: remaining,
+            } as LanguageModelV4StreamPart);
+          }
+          textDecoders.delete(chunk.id);
+        }
+
+        if (chunk.type === "reasoning-end") {
+          const remaining = reasoningDecoders.get(chunk.id)?.flush();
+          if (remaining) {
+            controller.enqueue({
+              type: "reasoning-delta",
+              id: chunk.id,
+              delta: remaining,
+            } as LanguageModelV4StreamPart);
+          }
+          reasoningDecoders.delete(chunk.id);
+        }
+
+        if (chunk.type === "finish") {
+          flushAll(textDecoders, "text-delta", (part) => controller.enqueue(part));
+          flushAll(reasoningDecoders, "reasoning-delta", (part) => controller.enqueue(part));
+        }
+
+        if (chunk.type === "finish") {
+          streamFinishReason = chunk.finishReason?.unified;
+
+          for (const [id, decoder] of toolInputDecoders) {
+            const remaining = decoder.flush();
+            if (remaining) {
+              controller.enqueue({
+                type: "tool-input-delta",
+                id,
+                delta: remaining,
+              } as LanguageModelV4StreamPart);
+            }
+          }
+          toolInputDecoders.clear();
+        }
+
+        // Decode text deltas
+        if (chunk.type === "text-delta" && chunk.delta) {
+          if (debug) accEncodedText += chunk.delta;
+          const decoded = decoderFor(textDecoders, chunk.id).process(chunk.delta);
+          if (decoded) {
+            accDecodedText += decoded;
+            controller.enqueue({ ...chunk, delta: decoded });
+          }
+          return;
+        }
+
+        // Decode reasoning deltas
+        if (chunk.type === "reasoning-delta" && chunk.delta) {
+          const decoded = decoderFor(reasoningDecoders, chunk.id).process(chunk.delta);
+          if (decoded) {
+            controller.enqueue({ ...chunk, delta: decoded });
+          }
+          return;
+        }
+
+        // Decode complete tool calls (input is stringified JSON)
+        if (chunk.type === "tool-call" && "input" in chunk && typeof chunk.input === "string") {
+          const decodedInput = decodeToolInputString(chunk.input, mapping);
+          accDecodedToolCalls.push({ toolName: chunk.toolName, input: decodedInput });
+          controller.enqueue({
+            ...chunk,
+            input: decodedInput,
+          });
+          return;
+        }
+
+        if (chunk.type === "tool-result" && chunk.result !== undefined) {
+          const decodedResult = decodeJsonValue(chunk.result, mapping);
+          // Serialising is the warning scan's own cost and a provider-run tool returns whole
+          // documents, so nothing pays it unheard
+          if (onDecode) {
+            accDecodedToolResults.set(chunk.toolCallId, {
+              toolName: chunk.toolName,
+              input: JSON.stringify(decodedResult),
+            });
+          }
+          controller.enqueue({ ...chunk, result: decodedResult as typeof chunk.result });
+          return;
+        }
+
+        if (chunk.type === "tool-input-start") {
+          decoderFor(toolInputDecoders, chunk.id);
+          controller.enqueue(chunk);
+          return;
+        }
+
+        // Decode tool input deltas (partial JSON strings)
+        if (chunk.type === "tool-input-delta" && "delta" in chunk) {
+          const decoder = decoderFor(toolInputDecoders, chunk.id);
+          const rawDelta = (chunk as { delta: string }).delta;
+          const decodedDelta = decoder.process(rawDelta);
+          if (decodedDelta) {
+            controller.enqueue({ ...chunk, delta: decodedDelta });
+          }
+          return;
+        }
+
+        if (chunk.type === "tool-input-end") {
+          const decoder = toolInputDecoders.get(chunk.id);
+          if (decoder) {
+            const remaining = decoder.flush();
+            if (remaining) {
+              controller.enqueue({
+                type: "tool-input-delta",
+                id: chunk.id,
+                delta: remaining,
+              } as LanguageModelV4StreamPart);
+            }
+            toolInputDecoders.delete(chunk.id);
+          }
+          controller.enqueue(chunk);
+          return;
+        }
+
+        controller.enqueue(chunk);
+      }
 
       return {
         stream: stream.pipeThrough(transformedStream),

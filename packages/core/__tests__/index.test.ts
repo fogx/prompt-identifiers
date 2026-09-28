@@ -228,6 +228,25 @@ describe("prompt-identifiers", () => {
     });
   });
 
+  describe("A placeholder that spells a member of Object.prototype", () => {
+    test("is an own entry in the mapping and survives the round trip", () => {
+      // `__prot{i:base62}__` writes `__proto__` at index 50, and an assignment into a plain
+      // record would reach the inherited setter instead of adding a key
+      const format = { template: "__prot{i:base62}__" } as const;
+      const ids = Array.from(
+        { length: 51 },
+        (_, i) => `123e4567-e89b-42d3-a456-4266554400${String(i).padStart(2, "0")}`
+      );
+
+      const result = encode(ids.join(" "), { inputFormat: "UUID", outputFormat: format });
+
+      expect(Object.keys(result.mapping)).toHaveLength(ids.length);
+      expect(Object.prototype.hasOwnProperty.call(result.mapping, "__proto__")).toBe(true);
+      expect(result.encoded).not.toContain(ids[50]);
+      expect(decode(result.encoded, result.mapping)).toBe(ids.join(" "));
+    });
+  });
+
   describe("Error handling", () => {
     test("decode with valid mapping works", () => {
       const { encoded, mapping } = encode(

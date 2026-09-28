@@ -1018,6 +1018,19 @@ describe("prompt-identifiers-ai-sdk", () => {
       }
     });
 
+    test("a format that is JSON-unsafe only past its first index is refused", async () => {
+      // The guard exists so a placeholder survives a tool call, and a format that is safe at
+      // index 0 and not after loses an identifier out of a tool call's arguments instead
+      expect(() =>
+        createMiddleware({
+          config: {
+            inputFormat: "UUID",
+            outputFormat: (i: number) => (i === 0 ? "P0" : `P"${i}`),
+          },
+        })
+      ).toThrow(/would not survive a tool call/);
+    });
+
     test("a placeholder split across two text parts is reported once", async () => {
       // Decode never sees it whole, so it survives. Reporting it as invented as well would tell
       // the consumer the model made up a placeholder the middleware itself minted
@@ -1209,6 +1222,123 @@ describe("prompt-identifiers-ai-sdk", () => {
       expect(cbResult.debugData.input).toBe("Found ~000~ in DB.");
       expect(cbResult.debugData.output).toContain(uuid);
       expect(typeof cbResult.debugData.durationMs).toBe("number");
+    });
+
+    test("the streamed duration is decode time, not the generation's", async () => {
+      // A stream is decoded a chunk at a time with the model's latency in between, and the same
+      // field on the generated path answers for the decode alone
+      const onDecode = vi.fn();
+      const uuid = "123e4567-e89b-42d3-a456-426655440000";
+      const middleware = createMiddleware({ config: defaultConfig, debug: true, onDecode });
+      const transformedParams = await middleware.transformParams({
+        params: createParams([userMessage(`Look up ${uuid}`)]),
+        type: "stream",
+        model: mockModel,
+      });
+
+      const chunks: LanguageModelV4StreamPart[] = [
+        { type: "text-start", id: "1" },
+        { type: "text-delta", id: "1", delta: "Found ~000~" },
+        { type: "text-end", id: "1" },
+        { type: "finish", finishReason: mockFinishReason(), usage: mockUsage() },
+      ];
+
+      const result = await middleware.wrapStream({
+        doStream: vi.fn().mockResolvedValue({
+          stream: new ReadableStream<LanguageModelV4StreamPart>({
+            async start(controller) {
+              for (const chunk of chunks) {
+                await new Promise((resolve) => setTimeout(resolve, 40));
+                controller.enqueue(chunk);
+              }
+              controller.close();
+            },
+          }),
+        }),
+        doGenerate: vi.fn(),
+        params: transformedParams,
+        model: mockModel,
+      });
+
+      await collectStreamText(result.stream);
+
+      expect(onDecode.mock.calls[0][0].debugData.durationMs).toBeLessThan(100);
+    });
+
+    test("an escaped mapping keeps a placeholder spelled like a prototype member", async () => {
+      // The escaped copy is only built when an identifier carries a character JSON escapes, and
+      // it is built key by key, so a key of `__proto__` would be dropped from it alone
+      const ids = Array.from({ length: 51 }, (_, i) => `ID"${String(i).padStart(3, "0")}`);
+      const middleware = createMiddleware({
+        config: {
+          inputFormat: /ID"\d{3}/g,
+          outputFormat: { template: "__prot{i:base62}__" },
+        },
+      });
+      const transformedParams = await middleware.transformParams({
+        params: createParams([userMessage(ids.join(" "))]),
+        type: "generate",
+        model: mockModel,
+      });
+
+      const result = await middleware.wrapGenerate({
+        doGenerate: vi.fn().mockResolvedValue({
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call-1",
+              toolName: "lookup",
+              input: '{"id":"__proto__"}',
+            },
+          ],
+          finishReason: mockFinishReason(),
+          usage: mockUsage(),
+          warnings: [],
+        }),
+        doStream: vi.fn(),
+        params: transformedParams,
+        model: mockModel,
+      });
+
+      expect((result.content[0] as { input: string }).input).toBe('{"id":"ID\\"050"}');
+    });
+
+    test("a placeholder spelled like a prototype member survives a tool call", async () => {
+      // `__prot{i:base62}__` writes `__proto__` at index 50, and the escaped mapping the tool
+      // input decoder reads is built key by key
+      const ids = Array.from(
+        { length: 51 },
+        (_, i) => `123e4567-e89b-42d3-a456-4266554400${String(i).padStart(2, "0")}`
+      );
+      const middleware = createMiddleware({
+        config: { inputFormat: "UUID", outputFormat: { template: "__prot{i:base62}__" } },
+      });
+      const transformedParams = await middleware.transformParams({
+        params: createParams([userMessage(ids.join(" "))]),
+        type: "generate",
+        model: mockModel,
+      });
+
+      const result = await middleware.wrapGenerate({
+        doGenerate: vi.fn().mockResolvedValue({
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call-1",
+              toolName: "lookup",
+              input: '{"id":"__proto__"}',
+            },
+          ],
+          finishReason: mockFinishReason(),
+          usage: mockUsage(),
+          warnings: [],
+        }),
+        doStream: vi.fn(),
+        params: transformedParams,
+        model: mockModel,
+      });
+
+      expect((result.content[0] as { input: string }).input).toBe(`{"id":"${ids[50]}"}`);
     });
 
     test("debugData is absent when debug is false", async () => {
@@ -1469,6 +1599,16 @@ describe("prompt-identifiers-ai-sdk", () => {
           '{"ref": "000000000000"}'
         )
       ).toEqual([["stripped_delimiter", "000000000000"]]);
+    });
+
+    test("a format whose body carries a regex metacharacter is scanned, not compiled", async () => {
+      // The body is whatever sits between the affixes, so a formatter that writes its index twice
+      // puts a metacharacter in it, and the scan compiles that body into a pattern
+      expect(await warningsFor((i: number) => `id(${i})-${i}`, '{"ref": "0)-0"}')).toEqual([
+        ["stripped_delimiter", "0)-0"],
+      ]);
+      // `.` would otherwise match any character, so an ordinary value reads as a stripped one
+      expect(await warningsFor((i: number) => `<${i}.${i}>`, '{"ref": "010"}')).toEqual([]);
     });
 
     test("an identifier written between two delimiter fragments reports nothing", async () => {

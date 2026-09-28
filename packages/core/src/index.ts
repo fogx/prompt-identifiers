@@ -481,7 +481,15 @@ export function encode(text: string, config: EncodeConfig, state?: EncodeState):
       );
     }
     idToPlaceholder.set(id, placeholder);
-    mapping[placeholder] = match;
+    // A format can write a placeholder that spells an inherited member, `__proto__` among them,
+    // and assigning one would reach the setter rather than add a key: the identifier would leave
+    // for the model with nothing to bring it back
+    Object.defineProperty(mapping, placeholder, {
+      value: match,
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
     return placeholder;
   });
 
