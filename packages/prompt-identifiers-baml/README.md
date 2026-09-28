@@ -132,7 +132,7 @@ const final = await stream.getFinalResponse();
 
 The wrapper mirrors what it was given: pass `b.stream.<Fn>`, which returns a `BamlStream`, and you get a stream back with the same `getFinalResponse()` and the same `toStreamable()`, whose newline-delimited JSON carries the decoded partials and the decoded final. Pass a plain async generator and you get an async generator, whose return value is the decoded final.
 
-`getFinalResponse()` decodes once however often it is called, and `onDecode` fires once per stream, where the consumption ends: at the end of the loop, or at `getFinalResponse()` for a consumer that calls it without iterating. Either way the final is decoded and counted with the partials.
+`getFinalResponse()` decodes once however often it is called, and `onDecode` fires once per stream, where the consumption ends: at the end of the loop, or at `getFinalResponse()` for a consumer that calls it without iterating. The final is decoded and counted with the partials, and a final that throws leaves the report carrying the partials alone.
 
 ## Utility Functions
 

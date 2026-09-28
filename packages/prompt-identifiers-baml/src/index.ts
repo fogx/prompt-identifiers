@@ -79,7 +79,7 @@ export interface WrapBamlFunctionOptions {
   /**
    * Optional callback fired after decoding IDs in the output. A stream fires it once, where its
    * consumption ends: the end of the loop, or `getFinalResponse()` for a consumer that calls it
-   * without iterating. Its counts cover the partials and the final together.
+   * without iterating. Its counts cover the partials, and the final when the final arrives.
    * When debug is true, receives debugData with input, output, counts, and timing.
    */
   onDecode?: (result: { debugData?: DecodeDebugData }) => void;
@@ -211,8 +211,8 @@ interface EncodeContext {
 }
 
 /**
- * Deep traverse and encode IDs in an object.
- * Returns a new object with IDs replaced by placeholders.
+ * Deep traverse and encode IDs in an object. Returns a rebuilt object where it walks, and the
+ * value it was given where it does not.
  */
 function deepEncode<T>(value: T, ctx: EncodeContext, path: string[] = []): T {
   // Handle null/undefined
@@ -289,8 +289,8 @@ function deepEncode<T>(value: T, ctx: EncodeContext, path: string[] = []): T {
 }
 
 /**
- * Deep traverse and decode placeholders in an object.
- * Returns a new object with placeholders replaced by original IDs.
+ * Deep traverse and decode placeholders in an object. Returns a rebuilt object where it walks,
+ * and the value it was given where it does not.
  */
 function deepDecode<T>(value: T, mapping: Record<string, string>, countRef: { count: number }): T {
   // Handle null/undefined
@@ -507,9 +507,9 @@ export function wrapBamlStreamingFunction<TInput, TPartial, TFinal>(
     const { ctx, encodedInput } = encodeInput(input);
     const source = fn(encodedInput);
 
-    // A stream answers getFinalResponse and a generator answers next. Anything else, including
-    // the promise a consumer hands back when they put a step in front of the call, would reach
-    // the generator branch and die on the first iteration with the error this wrapper stops
+    // A stream answers getFinalResponse and a generator answers next. Anything else, such as the
+    // promise a consumer hands back when they put a step in front of the call, would reach the
+    // generator branch and die on the first iteration with `generator.next is not a function`
     if (
       source === null ||
       typeof source !== "object" ||
@@ -554,8 +554,7 @@ export function wrapBamlStreamingFunction<TInput, TPartial, TFinal>(
     if (isBamlStream<TPartial, TFinal>(source)) {
       const bamlSource = source;
       // The real stream memoises the task it drives, so asking it twice is one run. Decoding
-      // twice would count the same placeholders twice and report the answer twice, so the
-      // wrapper memoises its side as well
+      // twice would count the same placeholders twice, so the wrapper memoises its side as well
       let decodedFinal: Promise<TFinal> | undefined;
       function finalOnce() {
         decodedFinal ??= (async () => {
@@ -578,11 +577,9 @@ export function wrapBamlStreamingFunction<TInput, TPartial, TFinal>(
             yield lastDecoded;
           }
 
-          // The generator branch reports where its loop ends, because that is where the final
-          // value arrives. Here the final is a second call, and a consumer that only iterates
-          // never makes it, so the end of the loop makes it once on their behalf. A final that
-          // throws belongs to the consumer that asked for it, and this one did not, so what it
-          // gets told about is the last partial it did read
+          // A consumer that only iterates never asks for the final, so the loop asks once on its
+          // behalf. A throwing final belongs to the consumer that asked, and this one did not, so
+          // the catch reports the last partial it read
           await finalOnce().catch(() => reportFinal(lastPartial, lastDecoded));
         },
         getFinalResponse: finalOnce,
@@ -599,19 +596,21 @@ export function wrapBamlStreamingFunction<TInput, TPartial, TFinal>(
                 controller.enqueue(line({ final: await stream.getFinalResponse() }));
               } catch (error) {
                 // The last line the reader gets, the way the client writes it, except that the
-                // message travels: a BamlError carries its text where JSON.stringify cannot see it
+                // message travels: a BamlError carries its text where JSON.stringify cannot see it.
+                // A BAML error also names the prompt and the output it could not coerce, and both
+                // are the model's own words, so the frame is decoded like every other line
                 controller.enqueue(
                   line({
-                    error: {
+                    error: decodePart({
                       type: "StreamError",
                       message:
                         error instanceof Error ? error.message : "Error in stream processing",
                       prompt: "",
                       raw_output: "",
-                      // A BAML error names the prompt and the output it could not coerce, and a
-                      // reader written against the client reads those off the frame
+                      // Spread last, so an error that carries these fields speaks for them. Above
+                      // the defaults it would blank whatever the error had
                       ...(typeof error === "object" && error !== null ? error : {}),
-                    },
+                    }),
                   })
                 );
               }

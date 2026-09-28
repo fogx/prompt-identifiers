@@ -678,8 +678,6 @@ describe("prompt-identifiers-baml", () => {
       expect(result.note).toBe(uuid1);
     });
 
-    // A class instance and a record built with no prototype both carry their state in ordinary
-    // own fields, so both are walked and the identifiers in them never reach the model
     test("a value with slots and a field keeps both", async () => {
       // Own keys and internal slots are not exclusive. Rebuilding one of these carries the field
       // across and leaves the slots behind, so the copy has the prototype and none of the state
@@ -1019,8 +1017,7 @@ describe("prompt-identifiers-baml", () => {
     });
 
     test("a consumer that only iterates is told what was decoded even when the final fails", async () => {
-      // BamlValidationError is an ordinary end to a generation, and the consumer that never asked
-      // for the final still decoded every partial
+      // A failed final is an ordinary end to a generation, so the partials already read still count
       const onDecode = vi.fn();
       const wrapped = wrapBamlStreamingFunction(
         () => ({
@@ -1042,8 +1039,8 @@ describe("prompt-identifiers-baml", () => {
     });
 
     test("a consumer that reads the stream twice is still told once", async () => {
-      // Each loop ends where the final is asked for, and on a stream whose final fails there is
-      // no memoised answer to stop the second loop reporting again
+      // A failed final is memoised as a rejection, so the second loop reaches the catch again and
+      // the guard on the report is what holds it to one
       const onDecode = vi.fn();
       const wrapped = wrapBamlStreamingFunction(
         () => ({
@@ -1065,13 +1062,11 @@ describe("prompt-identifiers-baml", () => {
     });
 
     test("an error frame carries what the error itself carries", async () => {
-      // A BAML validation error names the prompt and the output it could not coerce, and a reader
-      // written against the client reads those fields off the frame
       const wrapped = wrapBamlStreamingFunction(
         () => ({
           async *[Symbol.asyncIterator]() {},
           async getFinalResponse(): Promise<{ text: string }> {
-            throw Object.assign(new Error("failed to parse"), {
+            throw Object.assign(new Error("failed to parse ~000~"), {
               type: "BamlValidationError",
               raw_output: "~000~ half",
             });
@@ -1082,18 +1077,20 @@ describe("prompt-identifiers-baml", () => {
 
       const body = await new Response(wrapped({ id: uuid1 }).toStreamable()).text();
 
+      // The frame is the reader's copy of what the model wrote, so it is decoded like everything
+      // else the wrapper hands back
       expect(JSON.parse(body.trim())).toEqual({
         error: {
           type: "BamlValidationError",
-          message: "failed to parse",
+          message: `failed to parse ${uuid1}`,
           prompt: "",
-          raw_output: "~000~ half",
+          raw_output: `${uuid1} half`,
         },
       });
     });
 
     test("toStreamable writes an error frame when the generation fails", async () => {
-      // The only signal a reader on the other end of the NDJSON has that the answer is not coming
+      // The error frame is the only signal a reader of the NDJSON gets that no answer is coming
       const wrapped = wrapBamlStreamingFunction(
         () => ({
           async *[Symbol.asyncIterator]() {
@@ -1137,10 +1134,8 @@ describe("prompt-identifiers-baml", () => {
   });
 
   describe("A wrapped streaming function that returns something else", () => {
-    // A consumer putting anything in front of the call writes `async (input) => { await
-    // authorise(); return b.stream.F(input); }`, which hands back a promise. It is neither a
-    // stream nor a generator, so it is refused where the call is made rather than on the first
-    // iteration
+    // A consumer putting a step in front of the call writes `async (input) => { await
+    // authorise(); return b.stream.F(input); }`, which hands back a promise, not the stream
     test.each([
       ["a promise", () => Promise.resolve({})],
       ["undefined", () => undefined],
@@ -1154,7 +1149,7 @@ describe("prompt-identifiers-baml", () => {
         }),
       ],
     ])("%s is refused where the call is made", (_label, fn) => {
-      // The types forbid all three, which is the point: this is the shape a JavaScript consumer
+      // The types forbid every row, which is the point: this is the shape a JavaScript consumer
       // reaches the wrapper with
       const wrapped = wrapBamlStreamingFunction(
         fn as unknown as BamlStreamFunction<{ id: string }, unknown, unknown>,
