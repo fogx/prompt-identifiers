@@ -789,7 +789,10 @@ function isBamlStream<TPartial, TFinal>(
  *
  * `encodeKeys` encodes identifiers sitting in object keys, for an object keyed by identifier. It
  * is off by default because nothing at runtime tells such a key from a class's own field name, and
- * it is ignored when `encodeFields` is given, because a field path names a value.
+ * it is ignored when `encodeFields` is given, because a field path names a value. A non-delimited
+ * format spells its placeholders the way a caller spells an ordinary key, so `Numeric` and
+ * `IdToken` refuse an object holding both an identifier and a key written `"000"` or `"0"`, and
+ * `IdToken` moves the key it encodes to the front because an integer-like key is ordered first.
  *
  * @example
  * ```typescript

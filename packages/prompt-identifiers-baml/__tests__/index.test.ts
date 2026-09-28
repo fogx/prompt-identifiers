@@ -1648,4 +1648,53 @@ describe("prompt-identifiers-baml", () => {
       });
     });
   });
+  describe("What a non-delimited format costs a key", () => {
+    const withUuids = { alpha: 1, [uuid1]: 2, beta: 3, [uuid2]: 4 };
+
+    test("an ordinary key spelled like a placeholder is refused", () => {
+      expect(() =>
+        encodeObject(
+          { "0": "written by the caller", [uuid1]: "an identifier" },
+          { inputFormat: "UUID", outputFormat: "IdToken" },
+          undefined,
+          true
+        )
+      ).toThrow(/Two keys encode to the same placeholder/);
+
+      expect(() =>
+        encodeObject(
+          { "000": "written by the caller", [uuid1]: "an identifier" },
+          { inputFormat: "UUID", outputFormat: "Numeric" },
+          undefined,
+          true
+        )
+      ).toThrow(/Two keys encode to the same placeholder/);
+    });
+
+    test("a delimited format needs the key written as a placeholder before it collides", () => {
+      expect(() =>
+        encodeObject(
+          { "000": "written by the caller", [uuid1]: "an identifier" },
+          defaultConfig,
+          undefined,
+          true
+        )
+      ).not.toThrow();
+    });
+
+    test("IdToken moves the key it encodes to the front, a delimited format does not", () => {
+      // An IdToken placeholder for a low index is a canonical integer string, and an object orders
+      // its integer-like keys first whatever order they were written in
+      const idToken = encodeObject(
+        withUuids,
+        { inputFormat: "UUID", outputFormat: "IdToken" },
+        undefined,
+        true
+      );
+      expect(Object.keys(idToken.encoded)).toEqual(["0", "1", "alpha", "beta"]);
+
+      const safe = encodeObject(withUuids, defaultConfig, undefined, true);
+      expect(Object.keys(safe.encoded)).toEqual(["alpha", "~000~", "beta", "~001~"]);
+    });
+  });
 });

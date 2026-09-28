@@ -151,6 +151,10 @@ const wrapped = wrapBamlFunction(b.AnalyzeUsers, {
 
 It is off by default because nothing at runtime tells a map key from a class's own field name, so a custom input format matching a field name would rewrite the class's shape. It is ignored when `encodeFields` is given, because a field path names a value. Two keys that encode to one placeholder are refused rather than collapsed.
 
+An ordinary key becomes one of that pair under a non-delimited format. `Numeric` mints `"000"` and `IdToken` mints `"0"`, which are keys a caller writes for their own reasons, so an object holding both an identifier and a key spelled that way is refused. A delimited format needs the key written as `~000~` before it collides. The same spelling collides on the way back: a key or a value carrying a bare digit run is rewritten on decode, because nothing tells it from a placeholder.
+
+`IdToken` also moves the key it encodes. Its placeholder for a low index is a canonical integer string, and JavaScript orders an object's integer-like keys first and in ascending order whatever the insertion order was, so `{ alpha, <id>, beta }` reaches the model as `{ "0", alpha, beta }` and comes back in that order. Use a delimited format where the key order carries meaning.
+
 Decoding reads keys either way, since a key only changes when it matches a placeholder the call minted. Two keys that decode to one identifier are refused rather than collapsed, the same as on the way out.
 
 ### What is walked
