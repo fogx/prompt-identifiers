@@ -1398,6 +1398,66 @@ describe("prompt-identifiers-baml", () => {
 
       expect(closed).toBe(true);
     });
+
+    // The stream branch closes its source by a different mechanism: the generator branch calls
+    // `return` on it in a finally, and this one leaves the for-await to close it when the
+    // wrapper's own generator is returned
+    test("a stream source is closed too", async () => {
+      let closed = false;
+      let finalAsked = false;
+      const source = {
+        async *[Symbol.asyncIterator]() {
+          try {
+            yield { text: "~000~ first" };
+            yield { text: "~000~ second" };
+          } finally {
+            closed = true;
+          }
+        },
+        async getFinalResponse() {
+          finalAsked = true;
+          return { text: "~000~ done" };
+        },
+      };
+
+      const wrapped = wrapBamlStreamingFunction(() => source, { config: defaultConfig });
+
+      for await (const partial of wrapped({ id: uuid1 })) {
+        expect(partial.text).toBe(`${uuid1} first`);
+        break;
+      }
+
+      expect(closed).toBe(true);
+      expect(finalAsked).toBe(false);
+    });
+
+    test("a consumer throwing inside the loop closes a stream source", async () => {
+      let closed = false;
+      const source = {
+        async *[Symbol.asyncIterator]() {
+          try {
+            yield { text: "~000~ first" };
+          } finally {
+            closed = true;
+          }
+        },
+        async getFinalResponse() {
+          return { text: "~000~ done" };
+        },
+      };
+
+      const wrapped = wrapBamlStreamingFunction(() => source, { config: defaultConfig });
+
+      await expect(
+        (async () => {
+          for await (const _partial of wrapped({ id: uuid1 })) {
+            throw new Error("the consumer gave up");
+          }
+        })()
+      ).rejects.toThrow("the consumer gave up");
+
+      expect(closed).toBe(true);
+    });
   });
   describe("A generation that fails with an error carrying the model's text", () => {
     // The shape the BAML client raises: `prompt` is the text the model was sent and `raw_output`
@@ -1532,6 +1592,59 @@ describe("prompt-identifiers-baml", () => {
         expect(error).toBeInstanceOf(ValidationError);
         expect((error as ValidationError).raw_output).toBe('{"owner": "~000~"}');
         return true;
+      });
+    });
+  });
+  describe("A value that refers back to itself", () => {
+    test("encoding names the cycle rather than running out of stack", () => {
+      const input: Record<string, unknown> = { id: uuid1 };
+      input.self = input;
+
+      expect(() => encodeObject(input, defaultConfig)).toThrow(
+        /circular structure.*BAML argument/i
+      );
+    });
+
+    test("encoding names a cycle two hops away", () => {
+      const parent: Record<string, unknown> = { id: uuid1 };
+      const child: Record<string, unknown> = { parent };
+      parent.child = child;
+
+      expect(() => encodeObject(parent, defaultConfig)).toThrow(/circular structure/i);
+    });
+
+    test("decoding names the cycle rather than running out of stack", () => {
+      const output: Record<string, unknown> = { id: "~000~" };
+      output.self = output;
+
+      expect(() => decodeObject(output, { "~000~": uuid1 })).toThrow(
+        /circular structure.*BAML answer/i
+      );
+    });
+
+    test("a wrapped call names the cycle it was handed", async () => {
+      const input: Record<string, unknown> = { id: uuid1 };
+      input.self = input;
+      const wrapped = wrapBamlFunction(async () => ({ ok: true }), { config: defaultConfig });
+
+      await expect(wrapped(input)).rejects.toThrow(/circular structure/i);
+    });
+
+    test("the same object under two keys is not a cycle", () => {
+      const shared = { id: uuid1 };
+
+      const { encoded, mapping } = encodeObject({ x: shared, y: shared }, defaultConfig);
+
+      expect(encoded).toEqual({ x: { id: "~000~" }, y: { id: "~000~" } });
+      expect(mapping).toEqual({ "~000~": uuid1 });
+    });
+
+    test("the same object under two keys survives the decode too", () => {
+      const shared = { id: "~000~" };
+
+      expect(decodeObject({ x: shared, y: shared }, { "~000~": uuid1 })).toEqual({
+        x: { id: uuid1 },
+        y: { id: uuid1 },
       });
     });
   });

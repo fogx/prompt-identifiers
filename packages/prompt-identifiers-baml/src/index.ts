@@ -216,7 +216,12 @@ interface EncodeContext {
  * Deep traverse and encode IDs in an object. Returns a rebuilt object where it walks, and the
  * value it was given where it does not.
  */
-function deepEncode<T>(value: T, ctx: EncodeContext, path: string[] = []): T {
+function deepEncode<T>(
+  value: T,
+  ctx: EncodeContext,
+  path: string[] = [],
+  open: Set<object> = new Set()
+): T {
   // Handle null/undefined
   if (value === null || value === undefined) {
     return value;
@@ -238,7 +243,7 @@ function deepEncode<T>(value: T, ctx: EncodeContext, path: string[] = []): T {
 
   // Handle arrays
   if (Array.isArray(value)) {
-    return value.map((item, index) => deepEncode(item, ctx, [...path, String(index)])) as T;
+    return value.map((item, index) => deepEncode(item, ctx, [...path, String(index)], open)) as T;
   }
 
   // Handle objects
@@ -256,38 +261,58 @@ function deepEncode<T>(value: T, ctx: EncodeContext, path: string[] = []): T {
       return value;
     }
 
-    const result: Record<string, unknown> = Object.create(Object.getPrototypeOf(value));
-
-    for (const [key, val] of Object.entries(value)) {
-      // A key is only a candidate when the caller says the object is keyed by identifier. Nothing
-      // at runtime tells a map key from a class's own field name, and rewriting a field name calls
-      // the BAML function with an object its class does not describe.
-      const encodeThisKey = ctx.encodeKeys && ctx.fieldPaths === null;
-      const encodedKey = encodeThisKey ? encode(key, ctx.config, ctx.state).encoded : key;
-      // Two keys holding one identifier in different cases, or a key already shaped like the
-      // placeholder, would otherwise leave one entry standing for both
-      if (encodeThisKey && Object.prototype.hasOwnProperty.call(result, encodedKey)) {
-        throw new Error(
-          `Two keys encode to the same placeholder ${JSON.stringify(encodedKey)}, so one of them ` +
-            `would be lost. Give the object one key per identifier, or choose an output format ` +
-            `whose placeholders an ordinary key cannot spell.`
-        );
-      }
-      // Defining the property keeps a key of `__proto__`, which JSON.parse produces as an own
-      // key, off the prototype setter that would drop the field and reshape the object
-      Object.defineProperty(result, encodedKey, {
-        value: deepEncode(val, ctx, [...path, key]),
-        writable: true,
-        enumerable: true,
-        configurable: true,
-      });
+    // The walk reaches a self-reference before the stack does, and it is the only place that can
+    // say the cycle came in rather than out. The same object under two keys is not one, so it is
+    // dropped again on the way back up
+    if (open.has(value)) {
+      throw new TypeError("Converting circular structure to JSON in a BAML argument.");
     }
-
-    return result as T;
+    open.add(value);
+    try {
+      return encodeEntries(value, ctx, path, open) as T;
+    } finally {
+      open.delete(value);
+    }
   }
 
   // Primitives (numbers, booleans) - return as-is
   return value;
+}
+
+function encodeEntries(
+  value: object,
+  ctx: EncodeContext,
+  path: string[],
+  open: Set<object>
+): Record<string, unknown> {
+  const result: Record<string, unknown> = Object.create(Object.getPrototypeOf(value));
+
+  for (const [key, val] of Object.entries(value)) {
+    // A key is only a candidate when the caller says the object is keyed by identifier. Nothing
+    // at runtime tells a map key from a class's own field name, and rewriting a field name calls
+    // the BAML function with an object its class does not describe.
+    const encodeThisKey = ctx.encodeKeys && ctx.fieldPaths === null;
+    const encodedKey = encodeThisKey ? encode(key, ctx.config, ctx.state).encoded : key;
+    // Two keys holding one identifier in different cases, or a key already shaped like the
+    // placeholder, would otherwise leave one entry standing for both
+    if (encodeThisKey && Object.prototype.hasOwnProperty.call(result, encodedKey)) {
+      throw new Error(
+        `Two keys encode to the same placeholder ${JSON.stringify(encodedKey)}, so one of them ` +
+          `would be lost. Give the object one key per identifier, or choose an output format ` +
+          `whose placeholders an ordinary key cannot spell.`
+      );
+    }
+    // Defining the property keeps a key of `__proto__`, which JSON.parse produces as an own
+    // key, off the prototype setter that would drop the field and reshape the object
+    Object.defineProperty(result, encodedKey, {
+      value: deepEncode(val, ctx, [...path, key], open),
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+  }
+
+  return result;
 }
 
 /**
@@ -331,7 +356,12 @@ function decodeThrown(error: unknown, mapping: Record<string, string>): unknown 
  * Deep traverse and decode placeholders in an object. Returns a rebuilt object where it walks,
  * and the value it was given where it does not.
  */
-function deepDecode<T>(value: T, mapping: Record<string, string>, countRef: { count: number }): T {
+function deepDecode<T>(
+  value: T,
+  mapping: Record<string, string>,
+  countRef: { count: number },
+  open: Set<object> = new Set()
+): T {
   // Handle null/undefined
   if (value === null || value === undefined) {
     return value;
@@ -349,7 +379,7 @@ function deepDecode<T>(value: T, mapping: Record<string, string>, countRef: { co
 
   // Handle arrays
   if (Array.isArray(value)) {
-    return value.map((item) => deepDecode(item, mapping, countRef)) as T;
+    return value.map((item) => deepDecode(item, mapping, countRef, open)) as T;
   }
 
   // Handle objects
@@ -364,37 +394,56 @@ function deepDecode<T>(value: T, mapping: Record<string, string>, countRef: { co
       return value;
     }
 
-    const result: Record<string, unknown> = Object.create(Object.getPrototypeOf(value));
-
-    for (const [key, val] of Object.entries(value)) {
-      // A model asked to group its answer puts an identifier in the key position, so a key
-      // carries a placeholder as readily as a string does
-      const decodedKey = decode(key, mapping);
-      if (decodedKey !== key) {
-        countRef.count++;
-      }
-      // The encode half refuses two keys that land on one placeholder, and a model asked to group
-      // its answer can hand back the identifier in one key and its placeholder in another
-      if (Object.prototype.hasOwnProperty.call(result, decodedKey)) {
-        throw new Error(
-          `Two keys decode to the same identifier ${JSON.stringify(decodedKey)}, so one of them ` +
-            `would be lost.`
-        );
-      }
-      // Defining the property keeps a decoded key of `__proto__` off the prototype
-      Object.defineProperty(result, decodedKey, {
-        value: deepDecode(val, mapping, countRef),
-        writable: true,
-        enumerable: true,
-        configurable: true,
-      });
+    // The same door the encode half has. A function that hands back a value pointing at itself
+    // is named here rather than left to run the stack out
+    if (open.has(value)) {
+      throw new TypeError("Converting circular structure to JSON in a BAML answer.");
     }
-
-    return result as T;
+    open.add(value);
+    try {
+      return decodeEntries(value, mapping, countRef, open) as T;
+    } finally {
+      open.delete(value);
+    }
   }
 
   // Primitives - return as-is
   return value;
+}
+
+function decodeEntries(
+  value: object,
+  mapping: Record<string, string>,
+  countRef: { count: number },
+  open: Set<object>
+): Record<string, unknown> {
+  const result: Record<string, unknown> = Object.create(Object.getPrototypeOf(value));
+
+  for (const [key, val] of Object.entries(value)) {
+    // A model asked to group its answer puts an identifier in the key position, so a key
+    // carries a placeholder as readily as a string does
+    const decodedKey = decode(key, mapping);
+    if (decodedKey !== key) {
+      countRef.count++;
+    }
+    // The encode half refuses two keys that land on one placeholder, and a model asked to group
+    // its answer can hand back the identifier in one key and its placeholder in another
+    if (Object.prototype.hasOwnProperty.call(result, decodedKey)) {
+      throw new Error(
+        `Two keys decode to the same identifier ${JSON.stringify(decodedKey)}, so one of them ` +
+          `would be lost.`
+      );
+    }
+    // Defining the property keeps a decoded key of `__proto__` off the prototype
+    Object.defineProperty(result, decodedKey, {
+      value: deepDecode(val, mapping, countRef, open),
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+  }
+
+  return result;
 }
 
 // =============================================================================
