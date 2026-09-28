@@ -58,20 +58,19 @@ function benchmark(
 
   // Benchmark encode
   const encodeStart = performance.now();
-  let mapping: Record<string, string> = {};
-  let encoded = "";
+  const results: { encoded: string; mapping: Record<string, string> }[] = [];
   for (let i = 0; i < iterations; i++) {
-    const result = encode(text, config);
-    encoded = result.encoded;
-    mapping = result.mapping;
+    results.push(encode(text, config));
   }
   const encodeEnd = performance.now();
   const encodeUs = ((encodeEnd - encodeStart) / iterations) * 1000;
 
-  // Benchmark decode
+  // Benchmark decode. One mapping per iteration, because decode caches its compiled pattern on
+  // the mapping object, and a loop over one object would measure the build once and the cache
+  // 999 times. A request mints a fresh mapping, so a real decode always pays the build
   const decodeStart = performance.now();
-  for (let i = 0; i < iterations; i++) {
-    decode(encoded, mapping);
+  for (const result of results) {
+    decode(result.encoded, result.mapping);
   }
   const decodeEnd = performance.now();
   const decodeUs = ((decodeEnd - decodeStart) / iterations) * 1000;

@@ -72,7 +72,9 @@ interface ModelResults {
   model: string;
   modelDisplayName: string;
   results: RunResult[];
-  averageErrors: Record<BenchmarkFormat, number>;
+  /** Undefined for a format whose every run failed, which is not the same as a score of zero. */
+  averageErrors: Record<BenchmarkFormat, number | undefined>;
+  failedRuns: Record<BenchmarkFormat, number>;
 }
 
 interface BenchmarkResults {
@@ -315,7 +317,8 @@ async function runBenchmark(config: BenchmarkConfig): Promise<BenchmarkResults> 
       model,
       modelDisplayName: getDisplayName(model),
       results: [],
-      averageErrors: {} as Record<BenchmarkFormat, number>,
+      averageErrors: {} as Record<BenchmarkFormat, number | undefined>,
+      failedRuns: {} as Record<BenchmarkFormat, number>,
     };
 
     const errorsByFormat: Record<BenchmarkFormat, number[]> = {
@@ -355,6 +358,9 @@ async function runBenchmark(config: BenchmarkConfig): Promise<BenchmarkResults> 
           }
         } catch (error) {
           console.log(`✗ Error: ${error instanceof Error ? error.message : String(error)}`);
+          // A run that never reached the model says nothing about the format. Dropping it would
+          // let a format whose every call failed average zero errors and read as a perfect score
+          modelResults.failedRuns[format] = (modelResults.failedRuns[format] ?? 0) + 1;
         }
 
         // Small delay between API calls to avoid rate limiting
@@ -365,8 +371,9 @@ async function runBenchmark(config: BenchmarkConfig): Promise<BenchmarkResults> 
     // Calculate averages
     for (const format of config.formats) {
       const errors = errorsByFormat[format];
+      modelResults.failedRuns[format] ??= 0;
       modelResults.averageErrors[format] =
-        errors.length > 0 ? errors.reduce((a, b) => a + b, 0) / errors.length : 0;
+        errors.length > 0 ? errors.reduce((a, b) => a + b, 0) / errors.length : undefined;
     }
 
     results.models.push(modelResults);
@@ -402,7 +409,8 @@ function printSummary(results: BenchmarkResults): void {
         const run = runs.find((r) => r.run === n);
         return run ? run.verification.totalErrors.toString() : "-";
       });
-      const avg = modelResult.averageErrors[format].toFixed(1);
+      const average = modelResult.averageErrors[format];
+      const avg = average === undefined ? "-" : average.toFixed(1);
       console.log(
         `| ${format.padEnd(12)} | ${runErrors
           .map((e) => e.padStart(5))
@@ -410,11 +418,21 @@ function printSummary(results: BenchmarkResults): void {
       );
     }
 
-    // Calculate improvement
-    const rawAvg = modelResult.averageErrors["raw"] || 0;
-    const safeAvg = modelResult.averageErrors["SafeNumeric"] || 0;
+    const failed = Object.entries(modelResult.failedRuns).filter(([, n]) => n > 0);
+    if (failed.length > 0) {
+      console.log(
+        `\nRuns that never reached the model: ${failed
+          .map(([format, n]) => `${format} ${n}`)
+          .join(", ")}. They are not in the averages.`
+      );
+    }
 
-    if (rawAvg > 0 && safeAvg >= 0) {
+    // Calculate improvement. Both formats have to have been measured: comparing against a format
+    // that was never run, or whose every run failed, is a claim with nothing behind it
+    const rawAvg = modelResult.averageErrors["raw"];
+    const safeAvg = modelResult.averageErrors["SafeNumeric"];
+
+    if (rawAvg !== undefined && rawAvg > 0 && safeAvg !== undefined) {
       const improvement = ((rawAvg - safeAvg) / rawAvg) * 100;
       console.log(`\nSafeNumeric reduces errors by ${improvement.toFixed(0)}% vs raw UUIDs.`);
     }
