@@ -208,6 +208,11 @@ function bodiesFrom(
 /** Finish reasons that stop the model partway through what it was writing. */
 const CUT_SHORT = new Set(["length", "content-filter", "error"]);
 
+/** Escape a format's own text so it is matched rather than compiled. */
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 /**
  * Detect decode anomalies in the decoded output.
  *
@@ -219,11 +224,6 @@ const CUT_SHORT = new Set(["length", "content-filter", "error"]);
  *    such as one the model invented. Only delimited formats can report these, and a truncated
  *    answer's trailing token is spared when a placeholder this call minted starts with it.
  */
-/** Escape a format's own text so it is matched rather than compiled. */
-function escapeRegExp(text: string): string {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 function detectDecodeWarnings(
   decodedText: string,
   decodedToolCalls: DecodedToolCall[],

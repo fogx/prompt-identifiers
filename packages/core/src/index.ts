@@ -593,10 +593,7 @@ export function decode(text: string, mapping: Record<string, string>): string {
     placeholders.sort((a, b) => b.length - a.length);
 
     // Build a single regex matching all placeholders - O(n) single pass
-    pattern = new RegExp(
-      placeholders.map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"),
-      "g"
-    );
+    pattern = new RegExp(placeholders.map(escapeRegExp).join("|"), "g");
 
     decodeRegexCache.set(mapping, { keys, pattern });
   }
