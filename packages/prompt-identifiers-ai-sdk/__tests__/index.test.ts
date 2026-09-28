@@ -1048,6 +1048,51 @@ describe("prompt-identifiers-ai-sdk", () => {
       ).toThrow(/would not survive a tool call/);
     });
 
+    test("a format writing a lone surrogate is refused", async () => {
+      // JSON.stringify rewrites an unpaired surrogate as an escape sequence, so the serialised
+      // arguments no longer carry the placeholder the decoder scans for, and the identifier the
+      // model was given cannot be put back
+      const uuid1 = "123e4567-e89b-42d3-a456-426655440000";
+
+      expect(() =>
+        createMiddleware({
+          config: { inputFormat: "UUID", outputFormat: (i: number) => `<\ud800${i}>` },
+        })
+      ).toThrow(/would not survive a tool call/);
+
+      // And the same at an index no probe reads
+      const table = ["<safe>", "<\udc00>"];
+      const middleware = createMiddleware({
+        config: { inputFormat: "UUID", outputFormat: (i: number) => table[i] ?? `<${i}>` },
+      });
+
+      await expect(
+        middleware.transformParams({
+          params: createParams([
+            userMessage(`creators ${uuid1} and 987fcdeb-51a2-43f7-8d9c-0123456789ab`),
+          ]),
+          type: "generate",
+          model: mockModel,
+        })
+      ).rejects.toThrow(/would not survive a tool call/);
+    });
+
+    test("a format writing a matched surrogate pair is fine", async () => {
+      // A pair is one ordinary character, and JSON writes it as itself
+      const uuid1 = "123e4567-e89b-42d3-a456-426655440000";
+      const middleware = createMiddleware({
+        config: { inputFormat: "UUID", outputFormat: (i: number) => `<\u{1f600}${i}>` },
+      });
+
+      const transformed = await middleware.transformParams({
+        params: createParams([userMessage(`creator ${uuid1}`)]),
+        type: "generate",
+        model: mockModel,
+      });
+
+      expect(JSON.stringify(transformed.prompt)).toContain("0>");
+    });
+
     test("a format JSON-unsafe at an index no probe reads is refused when it mints there", async () => {
       // The probes sit far apart so that what they share is the format's literals. encode mints
       // densely from zero, so a lookup table unsafe at index 1 passes construction untouched and

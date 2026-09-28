@@ -126,11 +126,15 @@ const ID_MASK = "\u0001";
 const PROBE_INDICES = [0, 123456789, 987654321, Number.MAX_SAFE_INTEGER];
 
 /**
- * What JSON rewrites on its way into a string. A placeholder carrying one of these is sent as
- * its escaped spelling and read back as its unescaped one, so the identifier never returns.
+ * What JSON rewrites on its way into a string: the quote, the backslash, the control characters,
+ * and a surrogate standing on its own, which `JSON.stringify` writes as an escape because the
+ * text is not well formed without its partner. A placeholder carrying any of them is sent as its
+ * escaped spelling and read back as its unescaped one, so the identifier never returns.
+ *
  * No `g` flag: the same object is tested repeatedly and would carry its index between calls.
  */
-const JSON_UNSAFE = /["\\\u0000-\u001f]/;
+const JSON_UNSAFE =
+  /["\\\u0000-\u001f]|[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/;
 
 /**
  * The bodies of a call's placeholders: each one with the format's fixed prefix and suffix removed.

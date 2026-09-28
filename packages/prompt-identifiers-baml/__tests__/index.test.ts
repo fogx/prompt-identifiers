@@ -1633,6 +1633,97 @@ describe("prompt-identifiers-baml", () => {
       await expect(wrapped({ id: uuid1 })).rejects.toBe(`the model refused ${uuid1}`);
     });
 
+    test("the NDJSON frame decodes an error that could not be written to", async () => {
+      // A frozen error keeps its placeholders, so the frame the reader gets is the only place
+      // left that can put the identifiers back for them
+      const source = {
+        async *[Symbol.asyncIterator]() {
+          yield { text: "~000~ so far" };
+          throw Object.freeze(failing());
+        },
+        async getFinalResponse(): Promise<{ text: string }> {
+          throw Object.freeze(failing());
+        },
+      };
+
+      const wrapped = wrapBamlStreamingFunction(() => source, { config: defaultConfig });
+      const body = await new Response(wrapped({ id: uuid1 }).toStreamable()).text();
+      const frame = body
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line))
+        .find((message) => message.error);
+
+      expect(frame.error.raw_output).toBe(`{"owner": "${uuid1}"}`);
+      expect(frame.error.prompt).toBe(`Summarise ${uuid1}`);
+    });
+
+    test("a field that is not a string is left alone", async () => {
+      // decode() takes text. Handing it a number would throw in place of the failure the
+      // consumer is waiting for
+      class WithNumbers extends Error {
+        status = 500;
+        retries = 0;
+        raw_output = '{"owner": "~000~"}';
+      }
+
+      const wrapped = wrapBamlFunction(
+        async () => {
+          throw new WithNumbers("failed on ~000~");
+        },
+        { config: defaultConfig }
+      );
+
+      await expect(wrapped({ id: uuid1 })).rejects.toSatisfy((error: unknown) => {
+        const withNumbers = error as WithNumbers;
+        expect(withNumbers.status).toBe(500);
+        expect(withNumbers.retries).toBe(0);
+        expect(withNumbers.raw_output).toBe(`{"owner": "${uuid1}"}`);
+        return true;
+      });
+    });
+
+    test("a rejection that is not an object is handed on as it is", async () => {
+      // Object.keys on null throws, and a rejected promise carrying nothing is an ordinary way
+      // for a generation to end
+      const wrapped = wrapBamlFunction(
+        async () => {
+          throw null;
+        },
+        { config: defaultConfig }
+      );
+
+      await expect(wrapped({ id: uuid1 })).rejects.toBe(null);
+
+      const numeric = wrapBamlFunction(
+        async () => {
+          throw 404;
+        },
+        { config: defaultConfig }
+      );
+
+      await expect(numeric({ id: uuid1 })).rejects.toBe(404);
+    });
+
+    test("the stack a consumer logs carries the identifiers too", async () => {
+      // V8 builds the stack lazily off the message, so reading it before the decode would hand
+      // back a string that never had a placeholder in it. Materialising it first is the test
+      const wrapped = wrapBamlFunction(
+        async () => {
+          const error = failing();
+          void error.stack;
+          throw error;
+        },
+        { config: defaultConfig }
+      );
+
+      await expect(wrapped({ id: uuid1 })).rejects.toSatisfy((error: unknown) => {
+        expect((error as Error).stack).toContain(uuid1);
+        expect((error as Error).stack).not.toContain("~000~");
+        return true;
+      });
+    });
+
     test("an error that refuses to be written keeps its own text", async () => {
       const wrapped = wrapBamlFunction(
         async () => {
