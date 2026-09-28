@@ -569,6 +569,7 @@ export function wrapBamlStreamingFunction<TInput, TPartial, TFinal>(
       const bamlSource = source;
       // The real stream memoises the task it drives, so asking it twice is one run. Decoding
       // twice would count the same placeholders twice, so the wrapper memoises its side as well
+      let openLoops = 0;
       let decodedFinal: Promise<TFinal> | undefined;
       function finalOnce() {
         decodedFinal ??= (async () => {
@@ -585,6 +586,7 @@ export function wrapBamlStreamingFunction<TInput, TPartial, TFinal>(
           let lastPartial: TPartial | undefined;
           let lastDecoded: TPartial | undefined;
 
+          openLoops++;
           try {
             for await (const partial of bamlSource) {
               lastPartial = partial;
@@ -597,6 +599,8 @@ export function wrapBamlStreamingFunction<TInput, TPartial, TFinal>(
             // error reaches it. A consumer that breaks does not come through here
             reportFinal(lastPartial, lastDecoded);
             throw error;
+          } finally {
+            openLoops--;
           }
 
           // A consumer that only iterates never asks for the final, so the loop asks once on its
@@ -605,10 +609,11 @@ export function wrapBamlStreamingFunction<TInput, TPartial, TFinal>(
           await finalOnce().catch(() => reportFinal(lastPartial, lastDecoded));
         },
         getFinalResponse: () =>
-          // The consumption ended, and it ended in an error. The loop's catch answers for a
-          // consumer that was iterating, and this for one that asked the stream directly
+          // The consumption ended, and it ended in an error. A consumer can hold this promise
+          // while it reads the partials, and then the loop's catch has the partials to report
+          // and this one has nothing, so the reader that is still reading answers for it
           finalOnce().catch((error) => {
-            reportFinal(undefined, undefined);
+            if (openLoops === 0) reportFinal(undefined, undefined);
             throw error;
           }),
         toStreamable(): ReadableStream<Uint8Array> {

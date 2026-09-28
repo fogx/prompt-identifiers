@@ -1155,6 +1155,35 @@ describe("prompt-identifiers-baml", () => {
       expect(onDecode.mock.calls[0][0].debugData.decodedCount).toBe(1);
     });
 
+    test("a consumer holding the final's promise while it iterates is told what it read", async () => {
+      // Asking for the final before the loop is an ordinary shape, and the rejection lands while
+      // the partials are still being read: the report belongs to the consumer that read them
+      const onDecode = vi.fn();
+      const wrapped = wrapBamlStreamingFunction(
+        () => ({
+          async *[Symbol.asyncIterator]() {
+            yield { text: "~000~ first" };
+            await new Promise((resolve) => setTimeout(resolve, 10));
+            yield { text: "~000~ second" };
+          },
+          async getFinalResponse(): Promise<{ text: string }> {
+            throw new Error("the model stopped");
+          },
+        }),
+        { config: defaultConfig, debug: true, onDecode }
+      );
+
+      const stream = wrapped({ id: uuid1 });
+      const final = stream.getFinalResponse();
+      // Held across the loop, so the rejection needs a handler before the loop awaits anything
+      final.catch(() => {});
+      for await (const _partial of stream) void _partial;
+      await expect(final).rejects.toThrow("the model stopped");
+
+      expect(onDecode).toHaveBeenCalledTimes(1);
+      expect(onDecode.mock.calls[0][0].debugData.decodedCount).toBe(2);
+    });
+
     test("a final that rejects for a consumer that never iterated still reports", async () => {
       // The other door of the same case: the consumption ended, and it ended in an error
       const onDecode = vi.fn();
