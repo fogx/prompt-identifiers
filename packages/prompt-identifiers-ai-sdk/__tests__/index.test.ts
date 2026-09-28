@@ -1785,7 +1785,6 @@ describe("prompt-identifiers-ai-sdk", () => {
         model: mockModel,
       });
 
-      // ~000~ should be decoded to UUID, so no surviving placeholder warning
       const result = onDecode.mock.calls[0][0];
       expect(result.warnings).toBeUndefined();
     });
