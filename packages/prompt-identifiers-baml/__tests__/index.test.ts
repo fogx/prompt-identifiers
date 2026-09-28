@@ -850,6 +850,14 @@ describe("prompt-identifiers-baml", () => {
       expect(Object.getPrototypeOf(decoded)).toBe(Object.prototype);
     });
 
+    test("two keys that decode to one identifier are refused", async () => {
+      // The encode half refuses the mirror of this, and a model asked to group its answer can put
+      // the identifier in one key and the placeholder it was handed in another
+      expect(() =>
+        decodeObject<Record<string, unknown>>({ "~000~": "a", [uuid1]: "b" }, { "~000~": uuid1 })
+      ).toThrow(/same identifier/i);
+    });
+
     test("a decoded key counts towards the debug total", async () => {
       const onDecode = vi.fn();
       const mockFn = vi.fn(async () => ({ byId: { "~000~": "active" } }));
@@ -1059,6 +1067,79 @@ describe("prompt-identifiers-baml", () => {
       for await (const _partial of stream) void _partial;
 
       expect(onDecode).toHaveBeenCalledTimes(1);
+    });
+
+    test.each([
+      [
+        "a stream",
+        () => ({
+          async *[Symbol.asyncIterator]() {
+            yield { text: "~000~ first" };
+            throw new Error("the model stopped");
+          },
+          async getFinalResponse(): Promise<{ text: string }> {
+            throw new Error("the model stopped");
+          },
+        }),
+      ],
+      [
+        "a generator",
+        async function* (): AsyncGenerator<{ text: string }, { text: string }, unknown> {
+          yield { text: "~000~ first" };
+          throw new Error("the model stopped");
+        },
+      ],
+    ])("%s that dies mid-iteration still reports what it decoded", async (_label, fn) => {
+      // The client raises a validation error, a timeout and an abort from inside its own iterator,
+      // so this is the ordinary shape of a failed generation rather than a corner
+      const onDecode = vi.fn();
+      const wrapped = wrapBamlStreamingFunction(
+        fn as BamlStreamFunction<{ id: string }, { text: string }, { text: string }>,
+        { config: defaultConfig, debug: true, onDecode }
+      );
+
+      const seen: unknown[] = [];
+      await expect(async () => {
+        for await (const partial of wrapped({ id: uuid1 })) seen.push(partial);
+      }).rejects.toThrow("the model stopped");
+
+      expect(seen).toEqual([{ text: `${uuid1} first` }]);
+      expect(onDecode).toHaveBeenCalledTimes(1);
+      expect(onDecode.mock.calls[0][0].debugData.decodedCount).toBe(1);
+    });
+
+    test("a consumer that breaks out early is not reported to", async () => {
+      // Breaking returns the iterator rather than throwing through it, so it does not reach the
+      // catch that reports a failed generation
+      const onDecode = vi.fn();
+      const wrapped = wrapBamlStreamingFunction(
+        () => bamlStream([{ text: "~000~ first" }, { text: "~000~ second" }], { text: "done" }),
+        { config: defaultConfig, debug: true, onDecode }
+      );
+
+      for await (const _partial of wrapped({ id: uuid1 })) break;
+
+      expect(onDecode).not.toHaveBeenCalled();
+    });
+
+    test("the reported duration is decode time, not the model's latency", async () => {
+      const onDecode = vi.fn();
+      const wrapped = wrapBamlStreamingFunction(
+        () => ({
+          async *[Symbol.asyncIterator]() {
+            await new Promise((resolve) => setTimeout(resolve, 120));
+            yield { text: "~000~ first" };
+          },
+          async getFinalResponse() {
+            return { text: "~000~ done" };
+          },
+        }),
+        { config: defaultConfig, debug: true, onDecode }
+      );
+
+      for await (const _partial of wrapped({ id: uuid1 })) void _partial;
+
+      expect(onDecode.mock.calls[0][0].debugData.durationMs).toBeLessThan(100);
     });
 
     test("an error frame carries what the error itself carries", async () => {

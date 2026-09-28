@@ -77,9 +77,11 @@ export interface WrapBamlFunctionOptions {
   onEncode?: (result: { mapping: Record<string, string>; debugData?: EncodeDebugData }) => void;
 
   /**
-   * Optional callback fired after decoding IDs in the output. A stream fires it once, where its
-   * consumption ends: the end of the loop, or `getFinalResponse()` for a consumer that calls it
-   * without iterating. Its counts cover the partials, and the final when the final arrives.
+   * Optional callback fired after decoding IDs in the output. A stream fires it once, where the
+   * consumption that finishes first ends: the end of the loop, `getFinalResponse()` for a consumer
+   * that calls it without iterating, or the error that ends either one. Its counts cover what had
+   * been decoded by then, so a consumer that asks for the final before it iterates is told about
+   * the final alone.
    * When debug is true, receives debugData with input, output, counts, and timing.
    */
   onDecode?: (result: { debugData?: DecodeDebugData }) => void;
@@ -335,6 +337,14 @@ function deepDecode<T>(value: T, mapping: Record<string, string>, countRef: { co
         countRef.count++;
       }
       // Defining the property keeps a decoded key of `__proto__` off the prototype
+      // The encode half refuses two keys that land on one placeholder, and a model asked to group
+      // its answer can hand back the identifier in one key and its placeholder in another
+      if (Object.prototype.hasOwnProperty.call(result, decodedKey)) {
+        throw new Error(
+          `Two keys decode to the same identifier ${JSON.stringify(decodedKey)}, so one of them ` +
+            `would be lost.`
+        );
+      }
       Object.defineProperty(result, decodedKey, {
         value: deepDecode(val, mapping, countRef),
         writable: true,
@@ -524,11 +534,15 @@ export function wrapBamlStreamingFunction<TInput, TPartial, TFinal>(
       );
     }
     let totalDecoded = 0;
-    const startDecode = debug ? performance.now() : 0;
+    // A stream is decoded a partial at a time with the model's latency in between, so the answer
+    // to 'time spent decoding' is the sum of those pieces rather than the wall clock around them
+    let decodeMs = 0;
 
     function decodePart<T>(value: T): T {
       const countRef = { count: 0 };
+      const startPart = debug ? performance.now() : 0;
       const decoded = deepDecode(value, ctx.state.mapping, countRef);
+      if (debug) decodeMs += performance.now() - startPart;
       totalDecoded += countRef.count;
       return decoded;
     }
@@ -543,7 +557,7 @@ export function wrapBamlStreamingFunction<TInput, TPartial, TFinal>(
             decodedCount: totalDecoded,
             input,
             output,
-            durationMs: performance.now() - startDecode,
+            durationMs: decodeMs,
           },
         }),
       });
@@ -571,10 +585,18 @@ export function wrapBamlStreamingFunction<TInput, TPartial, TFinal>(
           let lastPartial: TPartial | undefined;
           let lastDecoded: TPartial | undefined;
 
-          for await (const partial of bamlSource) {
-            lastPartial = partial;
-            lastDecoded = decodePart(partial);
-            yield lastDecoded;
+          try {
+            for await (const partial of bamlSource) {
+              lastPartial = partial;
+              lastDecoded = decodePart(partial);
+              yield lastDecoded;
+            }
+          } catch (error) {
+            // The client raises a validation error, a timeout and an abort from inside its own
+            // iterator, so a consumer holding decoded partials is told what it got before the
+            // error reaches it. A consumer that breaks does not come through here
+            reportFinal(lastPartial, lastDecoded);
+            throw error;
           }
 
           // A consumer that only iterates never asks for the final, so the loop asks once on its
@@ -627,6 +649,9 @@ export function wrapBamlStreamingFunction<TInput, TPartial, TFinal>(
     return (async function* (): AsyncGenerator<TPartial, TFinal, unknown> {
       // A consumer that breaks out of its loop, or throws inside it, returns this generator and
       // nothing else tells the wrapped one to stop, which would leave the stream open
+      let lastPartial: TPartial | undefined;
+      let lastDecoded: TPartial | undefined;
+
       try {
         while (true) {
           const { value, done } = await generator.next();
@@ -637,8 +662,15 @@ export function wrapBamlStreamingFunction<TInput, TPartial, TFinal>(
             return decodedValue;
           }
 
-          yield decodePart(value);
+          lastPartial = value;
+          lastDecoded = decodePart(value);
+          yield lastDecoded;
         }
+      } catch (error) {
+        // The same door as the stream branch: a generation that dies part way through still
+        // decoded everything the consumer already read
+        reportFinal(lastPartial, lastDecoded);
+        throw error;
       } finally {
         await generator.return?.(undefined as TFinal);
       }
