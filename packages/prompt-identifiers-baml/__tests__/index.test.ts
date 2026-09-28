@@ -1108,6 +1108,26 @@ describe("prompt-identifiers-baml", () => {
       expect(onDecode.mock.calls[0][0].debugData.decodedCount).toBe(1);
     });
 
+    test("a final that rejects for a consumer that never iterated still reports", async () => {
+      // The other door of the same case: the consumption ended, and it ended in an error
+      const onDecode = vi.fn();
+      const wrapped = wrapBamlStreamingFunction(
+        () => ({
+          async *[Symbol.asyncIterator]() {
+            yield { text: "~000~ first" };
+          },
+          async getFinalResponse(): Promise<{ text: string }> {
+            throw new Error("the model stopped");
+          },
+        }),
+        { config: defaultConfig, debug: true, onDecode }
+      );
+
+      await expect(wrapped({ id: uuid1 }).getFinalResponse()).rejects.toThrow("the model stopped");
+
+      expect(onDecode).toHaveBeenCalledTimes(1);
+    });
+
     test("a consumer that breaks out early is not reported to", async () => {
       // Breaking returns the iterator rather than throwing through it, so it does not reach the
       // catch that reports a failed generation

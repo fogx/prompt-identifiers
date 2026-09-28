@@ -105,7 +105,7 @@ export interface DecodeWarning {
   toolName?: string;
 }
 
-/** A tool call's arguments after decoding, kept for the warning scan */
+/** A decoded tool call's arguments, or a decoded tool result, kept for the warning scan */
 interface DecodedToolCall {
   toolName: string;
   input: string;
@@ -241,8 +241,8 @@ function detectDecodeWarnings(
     // own delimiters, such as a "-{i}-" template against a UUID's hyphens.
     const masked = ids.reduce((acc, id) => acc.split(id).join(ID_MASK), text);
 
-    // Masking leaves nothing for this to find while decode replaces every key it is given, so it
-    // reports a regression in one of the two rather than anything a model can write
+    // Each text part is decoded on its own, so a placeholder split across two of them is missed
+    // there and turns up whole in the joined text this scans
     for (const placeholder of placeholders) {
       if (masked.includes(placeholder)) {
         warnings.push({ type: "surviving_placeholder", value: placeholder, ...source });
@@ -261,8 +261,8 @@ function detectDecodeWarnings(
       warnings.push({ type: "unknown_placeholder", value: token, ...source });
     }
 
-    // Check for stripped delimiters: bare indices appearing as standalone JSON string values
-    // Match "000" or similar as a JSON value (surrounded by quotes)
+    // A bare index in prose is ordinary text, so only one quoted as a JSON value counts as a
+    // delimiter the model stripped
     for (const bare of bareIndices) {
       const pattern = new RegExp(`"${bare}"`, "g");
       if (pattern.test(masked)) {
@@ -842,7 +842,6 @@ export function promptIdentifiersMiddleware(
         }),
       });
 
-      // Attach mapping to params using Symbol - survives spread/clone operations
       const transformedParams = {
         ...params,
         prompt: encodedPrompt,
@@ -960,7 +959,6 @@ export function promptIdentifiersMiddleware(
       let accEncodedText = "";
       let streamStarted = false;
 
-      // A stream that never reports one was cut off, the same as one that ran out of room
       let streamFinishReason: string | undefined;
 
       let reported = false;
@@ -1002,7 +1000,6 @@ export function promptIdentifiersMiddleware(
         });
       }
 
-      // Transform the stream to decode placeholders in text and tool calls
       // A provider may skip the opening chunk or repeat it, and either way the id needs the one
       // decoder that holds this block's tail
       type Decoders = Map<string, ReturnType<typeof createStreamingDecoder>>;

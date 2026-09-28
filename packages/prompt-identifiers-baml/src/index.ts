@@ -336,7 +336,6 @@ function deepDecode<T>(value: T, mapping: Record<string, string>, countRef: { co
       if (decodedKey !== key) {
         countRef.count++;
       }
-      // Defining the property keeps a decoded key of `__proto__` off the prototype
       // The encode half refuses two keys that land on one placeholder, and a model asked to group
       // its answer can hand back the identifier in one key and its placeholder in another
       if (Object.prototype.hasOwnProperty.call(result, decodedKey)) {
@@ -345,6 +344,7 @@ function deepDecode<T>(value: T, mapping: Record<string, string>, countRef: { co
             `would be lost.`
         );
       }
+      // Defining the property keeps a decoded key of `__proto__` off the prototype
       Object.defineProperty(result, decodedKey, {
         value: deepDecode(val, mapping, countRef),
         writable: true,
@@ -604,7 +604,13 @@ export function wrapBamlStreamingFunction<TInput, TPartial, TFinal>(
           // the catch reports the last partial it read
           await finalOnce().catch(() => reportFinal(lastPartial, lastDecoded));
         },
-        getFinalResponse: finalOnce,
+        getFinalResponse: () =>
+          // The consumption ended, and it ended in an error. The loop's catch answers for a
+          // consumer that was iterating, and this for one that asked the stream directly
+          finalOnce().catch((error) => {
+            reportFinal(undefined, undefined);
+            throw error;
+          }),
         toStreamable(): ReadableStream<Uint8Array> {
           // Forwarding the source's own would serialise the partials and the final as the model
           // wrote them, placeholders and all, because it drives the stream it was defined on
@@ -617,10 +623,8 @@ export function wrapBamlStreamingFunction<TInput, TPartial, TFinal>(
                 for await (const partial of stream) controller.enqueue(line({ partial }));
                 controller.enqueue(line({ final: await stream.getFinalResponse() }));
               } catch (error) {
-                // The last line the reader gets, the way the client writes it, except that the
-                // message travels: a BamlError carries its text where JSON.stringify cannot see it.
-                // A BAML error also names the prompt and the output it could not coerce, and both
-                // are the model's own words, so the frame is decoded like every other line
+                // JSON.stringify cannot see an Error's message, so it is copied across, and the
+                // prompt and raw output carry this call's placeholders, so the frame is decoded
                 controller.enqueue(
                   line({
                     error: decodePart({
