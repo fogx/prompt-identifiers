@@ -1399,6 +1399,33 @@ describe("prompt-identifiers-baml", () => {
       expect(closed).toBe(true);
     });
 
+    test("a consumer holding the final and then breaking is still reported to", async () => {
+      // Breaking stops one consumption. The promise the consumer is holding is another, and it
+      // finishes on its own
+      const onDecode = vi.fn();
+      const source = {
+        async *[Symbol.asyncIterator]() {
+          yield { text: "~000~ first" };
+          yield { text: "~000~ second" };
+        },
+        async getFinalResponse() {
+          return { text: "~000~ done" };
+        },
+      };
+
+      const wrapped = wrapBamlStreamingFunction(() => source, {
+        config: defaultConfig,
+        onDecode,
+      });
+      const stream = wrapped({ id: uuid1 });
+      const final = stream.getFinalResponse();
+
+      for await (const _partial of stream) break;
+      await final;
+
+      expect(onDecode).toHaveBeenCalledTimes(1);
+    });
+
     // The stream branch closes its source by a different mechanism: the generator branch calls
     // `return` on it in a finally, and this one leaves the for-await to close it when the
     // wrapper's own generator is returned

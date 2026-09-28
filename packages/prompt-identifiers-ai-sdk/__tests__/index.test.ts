@@ -1031,6 +1031,42 @@ describe("prompt-identifiers-ai-sdk", () => {
       ).toThrow(/would not survive a tool call/);
     });
 
+    test("a format JSON-unsafe at an index no probe reads is refused when it mints there", async () => {
+      // The probes sit far apart so that what they share is the format's literals. encode mints
+      // densely from zero, so a lookup table unsafe at index 1 passes construction untouched and
+      // the refusal has to come from the placeholder that was actually minted
+      const uuid1 = "123e4567-e89b-42d3-a456-426655440000";
+      const uuid2 = "987fcdeb-51a2-43f7-8d9c-0123456789ab";
+      const table = ["<!>", '<">'];
+      const middleware = createMiddleware({
+        config: { inputFormat: "UUID", outputFormat: (i: number) => table[i] ?? `<${i}>` },
+      });
+
+      await expect(
+        middleware.transformParams({
+          params: createParams([userMessage(`creators ${uuid1} and ${uuid2}`)]),
+          type: "generate",
+          model: mockModel,
+        })
+      ).rejects.toThrow(/would not survive a tool call/);
+    });
+
+    test("the same format is fine for as long as it only mints safe placeholders", async () => {
+      const uuid1 = "123e4567-e89b-42d3-a456-426655440000";
+      const table = ["<!>", '<">'];
+      const middleware = createMiddleware({
+        config: { inputFormat: "UUID", outputFormat: (i: number) => table[i] ?? `<${i}>` },
+      });
+
+      const transformed = await middleware.transformParams({
+        params: createParams([userMessage(`creator ${uuid1}`)]),
+        type: "generate",
+        model: mockModel,
+      });
+
+      expect(JSON.stringify(transformed.prompt)).toContain("<!>");
+    });
+
     test("a placeholder split across two text parts is reported once", async () => {
       // Decode never sees it whole, so it survives. Reporting it as invented as well would tell
       // the consumer the model made up a placeholder the middleware itself minted

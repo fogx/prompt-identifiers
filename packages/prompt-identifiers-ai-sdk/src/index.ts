@@ -126,6 +126,13 @@ const ID_MASK = "\u0001";
 const PROBE_INDICES = [0, 123456789, 987654321, Number.MAX_SAFE_INTEGER];
 
 /**
+ * What JSON rewrites on its way into a string. A placeholder carrying one of these is sent as
+ * its escaped spelling and read back as its unescaped one, so the identifier never returns.
+ * No `g` flag: the same object is tested repeatedly and would carry its index between calls.
+ */
+const JSON_UNSAFE = /["\\\u0000-\u001f]/;
+
+/**
  * The bodies of a call's placeholders: each one with the format's fixed prefix and suffix removed.
  *
  * The affixes are read off the format rather than guessed, by writing a placeholder at several
@@ -602,6 +609,20 @@ function encodePromptMessages(
     content: encodeMessageContent(message.content, config, state),
   })) as LanguageModelV4Prompt;
 
+  // Indices are minted densely from zero and the probes sit far apart, so a format can be safe
+  // everywhere the construction guard looks and unsafe at the second identifier this call encodes.
+  // The placeholder that was written is the only thing that answers for itself
+  for (const placeholder of Object.keys(state.mapping)) {
+    const unsafe = placeholder.match(JSON_UNSAFE);
+    if (unsafe) {
+      throw new Error(
+        `promptIdentifiersMiddleware: the output format wrote ${JSON.stringify(placeholder)}, ` +
+          `which carries ${JSON.stringify(unsafe[0])}. JSON escapes that character, so the ` +
+          `placeholder would not survive a tool call. Choose a format without it.`
+      );
+    }
+  }
+
   return { encodedPrompt, mapping: state.mapping };
 }
 
@@ -811,9 +832,9 @@ export function promptIdentifiersMiddleware(
   }
 
   // A tool payload reaches the model as JSON and comes back as JSON text the decoder scans without
-  // parsing, so a placeholder that JSON has to escape is written one way and read another. A format
-  // safe at index 0 and not after loses an identifier just the same, so the guard reads the same
-  // spread of indices the affixes are derived from
+  // parsing, so a placeholder that JSON has to escape is written one way and read another. Probing
+  // catches the formats that are unsafe wherever they are read, which is most of them, and says so
+  // before a call is made. Every placeholder is checked again as it is minted
   const example =
     config.outputFormat === "Passthrough"
       ? ""
@@ -825,8 +846,8 @@ export function promptIdentifiersMiddleware(
           } catch {
             return "";
           }
-        }).find((written) => /["\\\u0000-\u001f]/.test(written)) ?? "");
-  const unsafe = example.match(/["\\\u0000-\u001f]/);
+        }).find((written) => JSON_UNSAFE.test(written)) ?? "");
+  const unsafe = example.match(JSON_UNSAFE);
   if (unsafe) {
     throw new Error(
       `promptIdentifiersMiddleware: the output format writes ${JSON.stringify(example)}, which ` +
