@@ -243,7 +243,15 @@ function deepEncode<T>(
 
   // Handle arrays
   if (Array.isArray(value)) {
-    return value.map((item, index) => deepEncode(item, ctx, [...path, String(index)], open)) as T;
+    if (open.has(value)) {
+      throw new TypeError("Converting circular structure to JSON in a BAML argument.");
+    }
+    open.add(value);
+    try {
+      return value.map((item, index) => deepEncode(item, ctx, [...path, String(index)], open)) as T;
+    } finally {
+      open.delete(value);
+    }
   }
 
   // Handle objects
@@ -262,7 +270,7 @@ function deepEncode<T>(
     }
 
     // The walk reaches a self-reference before the stack does, and it is the only place that can
-    // say the cycle came in rather than out. The same object under two keys is not one, so it is
+    // say the cycle came in rather than out. The same value under two keys is not one, so it is
     // dropped again on the way back up
     if (open.has(value)) {
       throw new TypeError("Converting circular structure to JSON in a BAML argument.");
@@ -379,7 +387,15 @@ function deepDecode<T>(
 
   // Handle arrays
   if (Array.isArray(value)) {
-    return value.map((item) => deepDecode(item, mapping, countRef, open)) as T;
+    if (open.has(value)) {
+      throw new TypeError("Converting circular structure to JSON in a BAML answer.");
+    }
+    open.add(value);
+    try {
+      return value.map((item) => deepDecode(item, mapping, countRef, open)) as T;
+    } finally {
+      open.delete(value);
+    }
   }
 
   // Handle objects

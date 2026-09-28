@@ -1683,6 +1683,38 @@ describe("prompt-identifiers-baml", () => {
       await expect(wrapped(input)).rejects.toThrow(/circular structure/i);
     });
 
+    test("encoding names a cycle that closes through an array", () => {
+      // The array branch runs before the object branch, so an array on the way round the loop is
+      // the half of this that a guard sitting under the object branch never sees
+      const list: unknown[] = [{ id: uuid1 }];
+      list.push(list);
+
+      expect(() => encodeObject({ list }, defaultConfig)).toThrow(/circular structure/i);
+    });
+
+    test("encoding names an array that holds itself", () => {
+      const list: unknown[] = [];
+      list[0] = list;
+
+      expect(() => encodeObject({ list }, defaultConfig)).toThrow(/circular structure/i);
+    });
+
+    test("decoding names a cycle that closes through an array", () => {
+      const list: unknown[] = [{ id: "~000~" }];
+      list.push(list);
+
+      expect(() => decodeObject({ list }, { "~000~": uuid1 })).toThrow(/circular structure/i);
+    });
+
+    test("the same array under two keys is not a cycle", () => {
+      const shared = [{ id: uuid1 }];
+
+      expect(encodeObject({ x: shared, y: shared }, defaultConfig).encoded).toEqual({
+        x: [{ id: "~000~" }],
+        y: [{ id: "~000~" }],
+      });
+    });
+
     test("the same object under two keys is not a cycle", () => {
       const shared = { id: uuid1 };
 
