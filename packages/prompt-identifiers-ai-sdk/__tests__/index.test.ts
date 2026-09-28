@@ -982,6 +982,75 @@ describe("prompt-identifiers-ai-sdk", () => {
       expect(typeof result.debugData.durationMs).toBe("number");
     });
 
+    test("counts a placeholder whose format carries a regex metacharacter", async () => {
+      // The count compiles each placeholder into a pattern, so a format whose literals carry a
+      // metacharacter counts a character class rather than the text, or fails to compile at all
+      const onDecode = vi.fn();
+      const uuid = "123e4567-e89b-42d3-a456-426655440000";
+
+      for (const template of ["+{i:03}+", "[[{i:03}]]"]) {
+        onDecode.mockClear();
+        const middleware = createMiddleware({
+          config: { inputFormat: "UUID", outputFormat: { template } },
+          debug: true,
+          onDecode,
+        });
+        const transformedParams = await middleware.transformParams({
+          params: createParams([userMessage(`creator ${uuid}`)]),
+          type: "generate",
+          model: mockModel,
+        });
+        const placeholder = template.replace("{i:03}", "000");
+
+        await middleware.wrapGenerate({
+          doGenerate: vi.fn().mockResolvedValue({
+            content: [{ type: "text", text: `saw ${placeholder}` }],
+            finishReason: mockFinishReason(),
+            usage: mockUsage(),
+            warnings: [],
+          }),
+          doStream: vi.fn(),
+          params: transformedParams,
+          model: mockModel,
+        });
+
+        expect(onDecode.mock.calls[0][0].debugData.decodedCount, template).toBe(1);
+      }
+    });
+
+    test("a placeholder split across two text parts is reported once", async () => {
+      // Decode never sees it whole, so it survives. Reporting it as invented as well would tell
+      // the consumer the model made up a placeholder the middleware itself minted
+      const onDecode = vi.fn();
+      const middleware = createMiddleware({ config: defaultConfig, onDecode });
+      const uuid = "123e4567-e89b-42d3-a456-426655440000";
+
+      const transformedParams = await middleware.transformParams({
+        params: createParams([userMessage(`creator ${uuid}`)]),
+        type: "generate",
+        model: mockModel,
+      });
+
+      await middleware.wrapGenerate({
+        doGenerate: vi.fn().mockResolvedValue({
+          content: [
+            { type: "text", text: "see ~0" },
+            { type: "text", text: "00~" },
+          ],
+          finishReason: mockFinishReason(),
+          usage: mockUsage(),
+          warnings: [],
+        }),
+        doStream: vi.fn(),
+        params: transformedParams,
+        model: mockModel,
+      });
+
+      expect(onDecode.mock.calls[0][0].warnings).toEqual([
+        { type: "surviving_placeholder", value: "~000~", source: "text" },
+      ]);
+    });
+
     test("counts the placeholders in every text part of an answer, not just the last one", async () => {
       const onDecode = vi.fn();
       const middleware = createMiddleware({ config: defaultConfig, debug: true, onDecode });
@@ -1388,6 +1457,24 @@ describe("prompt-identifiers-ai-sdk", () => {
       expect(await warningsFor("SafeNumeric", "revenue was 1000 EUR across 2000 posts")).toEqual(
         []
       );
+    });
+
+    test("a formatter padded wider than the probes still reports a stripped body", async () => {
+      // A formatter function cannot be read, only probed, and a probe that stops at nine digits
+      // has the padding of a wider one read as part of its prefix. Core's half of this is pinned
+      // by its own probe table; this is the middleware's half
+      expect(
+        await warningsFor(
+          (i: number) => `ID${String(i).padStart(12, "0")}`,
+          '{"ref": "000000000000"}'
+        )
+      ).toEqual([["stripped_delimiter", "000000000000"]]);
+    });
+
+    test("an identifier written between two delimiter fragments reports nothing", async () => {
+      // The restored identifier is masked before the scan, and a mask of nothing would close the
+      // fragments on either side of it back into a placeholder the decode never missed
+      expect(await warningsFor("SafeNumeric", "~00~000~0~")).toEqual([]);
     });
 
     test("a format whose literal part carries a digit contributes no bare index", async () => {
