@@ -1298,7 +1298,11 @@ describe("prompt-identifiers-ai-sdk", () => {
 
       await collectStreamText(result.stream);
 
-      expect(onDecode.mock.calls[0][0].debugData.durationMs).toBeLessThan(100);
+      const { durationMs } = onDecode.mock.calls[0][0].debugData;
+      // Below the 160ms the model spent, and above zero: a field that reports no time at all is
+      // as wrong as one reporting the generation's
+      expect(durationMs).toBeLessThan(100);
+      expect(durationMs).toBeGreaterThan(0);
     });
 
     test("an escaped mapping keeps a placeholder spelled like a prototype member", async () => {
@@ -3478,6 +3482,37 @@ describe("prompt-identifiers-ai-sdk", () => {
       ]);
     });
 
+    test("a cut token that starts some of the call's placeholders and not others is a cut", async () => {
+      // The call minted ID_0000 .. ID_0012. ID_001 starts the last three and none of the first
+      // ten, so reading the mapping as a whole rather than looking for one match invents a warning
+      const ids = Array.from(
+        { length: 13 },
+        (_, i) => `123e4567-e89b-42d3-a456-${String(i).padStart(12, "0")}`
+      );
+
+      const onDecode = vi.fn();
+      const middleware = createMiddleware({ config: prefixOnly, onDecode });
+      const transformedParams = await middleware.transformParams({
+        params: createParams([userMessage(`Look up ${ids.join(" ")}`)]),
+        type: "generate",
+        model: mockModel,
+      });
+
+      await middleware.wrapGenerate({
+        doGenerate: vi.fn().mockResolvedValue({
+          content: [{ type: "text", text: "The record is ID_001" }],
+          finishReason: { unified: "length", raw: "length" },
+          usage: mockUsage(),
+          warnings: [],
+        } satisfies LanguageModelV4GenerateResult),
+        doStream: vi.fn(),
+        params: transformedParams,
+        model: mockModel,
+      });
+
+      expect(onDecode.mock.calls[0][0].warnings ?? []).toEqual([]);
+    });
+
     test("a truncated answer still reports a token that no placeholder could have been cut into", async () => {
       // The call minted ID_0000 .. ID_0059. ID_9999 starts none of them, so no cut produced it.
       const ids = Array.from(
@@ -3548,6 +3583,72 @@ describe("prompt-identifiers-ai-sdk", () => {
           .join("")
       ).toBe("alpha ID_00");
       expect(onDecode.mock.calls[0][0].output).toBe("alpha ID_00");
+    });
+
+    test("what the model wrote while thinking is not the answer it gave", async () => {
+      // `output` and the warning scan are about the answer. A placeholder the model invented in
+      // a reasoning block is not one it put in front of the reader
+      const onDecode = vi.fn();
+      const middleware = createMiddleware({ config: prefixOnly, onDecode });
+      const transformedParams = await middleware.transformParams({
+        params: createParams([userMessage(`Look up ${uuid}`)]),
+        type: "generate",
+        model: mockModel,
+      });
+
+      await middleware.wrapGenerate({
+        doGenerate: vi.fn().mockResolvedValue({
+          content: [
+            { type: "reasoning", text: "maybe ID_9999 is the one" },
+            { type: "text", text: "The record is ID_0000" },
+          ],
+          finishReason: mockFinishReason(),
+          usage: mockUsage(),
+          warnings: [],
+        } satisfies LanguageModelV4GenerateResult),
+        doStream: vi.fn(),
+        params: transformedParams,
+        model: mockModel,
+      });
+
+      const reported = onDecode.mock.calls[0][0];
+      expect(reported.output).toBe(`The record is ${uuid}`);
+      expect(reported.warnings ?? []).toEqual([]);
+    });
+
+    test("a reasoning tail held back at finish is not added to the answer", async () => {
+      const onDecode = vi.fn();
+      const middleware = createMiddleware({ config: prefixOnly, onDecode });
+      const transformedParams = await middleware.transformParams({
+        params: createParams([userMessage(`Look up ${uuid}`)]),
+        type: "stream",
+        model: mockModel,
+      });
+
+      const result = await middleware.wrapStream({
+        doStream: vi.fn().mockResolvedValue({
+          stream: createMockStream([
+            { type: "text-start", id: "a" },
+            { type: "text-delta", id: "a", delta: "the record is ID_0000" },
+            { type: "text-end", id: "a" },
+            { type: "reasoning-start", id: "r" },
+            // Held back at the block's end because it could still grow, and released by the flush
+            { type: "reasoning-delta", id: "r", delta: " thinking about ID_00" },
+            {
+              type: "finish",
+              finishReason: { unified: "length", raw: "length" },
+              usage: mockUsage(),
+            },
+          ] as LanguageModelV4StreamPart[]),
+        }),
+        doGenerate: vi.fn(),
+        params: transformedParams,
+        model: mockModel,
+      });
+
+      await collectStreamParts(result.stream);
+
+      expect(onDecode.mock.calls[0][0].output).toBe(`the record is ${uuid}`);
     });
 
     test("a generated answer with no finish reason is read as complete", async () => {

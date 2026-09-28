@@ -1,6 +1,7 @@
 import { describe, test, expect } from "vitest";
 import {
   createEncodeState,
+  createFormatter,
   decode,
   encode,
   EncodeConfig,
@@ -574,6 +575,23 @@ describe("prompt-identifiers", () => {
         "ID00000000000000000007",
         "ID99999999999999999999",
       ]);
+    });
+
+    test("a probed formatter writing a base62 body finds a token spelled in letters", () => {
+      // A bare function's body class comes from the probes. Reading it as digits alone would make
+      // the scan blind to every letter-bearing token the same format writes, invented or not
+      const spell = createFormatter({ template: "|{i:base62}|" });
+      const format = (index: number) => spell(index);
+
+      expect(findPlaceholders("see |7| and |zz|", format)).toEqual(["|7|", "|zz|"]);
+    });
+
+    test("a probed formatter whose body is neither digits nor letters has no shape", () => {
+      // The body is what the probes do not share. Here it carries a hyphen, which neither class
+      // covers, and a format with no readable shape finds nothing rather than guessing
+      const format = (index: number) => `<${index}-${index}>`;
+
+      expect(findPlaceholders("see <7> and <0-0>", format)).toEqual([]);
     });
 
     test("a formatter padded wider than nine digits is probed wide enough", () => {

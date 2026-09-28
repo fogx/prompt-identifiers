@@ -1426,6 +1426,32 @@ describe("prompt-identifiers-baml", () => {
       expect(onDecode).toHaveBeenCalledTimes(1);
     });
 
+    test("a consumer that breaks and then meets a rejecting final is still reported to", async () => {
+      // Breaking returns the wrapper's generator and puts the loop count back, so the consumer
+      // that asks afterwards is the only one left to answer for the error
+      const onDecode = vi.fn();
+      const source = {
+        async *[Symbol.asyncIterator]() {
+          yield { text: "~000~ first" };
+          yield { text: "~000~ second" };
+        },
+        async getFinalResponse(): Promise<{ text: string }> {
+          throw new Error("the generation failed");
+        },
+      };
+
+      const wrapped = wrapBamlStreamingFunction(() => source, {
+        config: defaultConfig,
+        onDecode,
+      });
+      const stream = wrapped({ id: uuid1 });
+
+      for await (const _partial of stream) break;
+      await expect(stream.getFinalResponse()).rejects.toThrow("the generation failed");
+
+      expect(onDecode).toHaveBeenCalledTimes(1);
+    });
+
     // The stream branch closes its source by a different mechanism: the generator branch calls
     // `return` on it in a finally, and this one leaves the for-await to close it when the
     // wrapper's own generator is returned

@@ -1003,7 +1003,6 @@ export function promptIdentifiersMiddleware(
       // Debug-only accumulation state
       let decodeMs = 0;
       let accEncodedText = "";
-      let streamStarted = false;
 
       let streamFinishReason: string | undefined;
 
