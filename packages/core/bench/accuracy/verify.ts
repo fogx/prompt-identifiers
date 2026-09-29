@@ -30,6 +30,13 @@ export interface VerificationResult {
   incorrectNames: number;
   /** Total error count */
   totalErrors: number;
+  /**
+   * Expected class ids the answer did not reproduce exactly. Unlike `totalErrors` this does not
+   * depend on the misspelling discount, which only a format with long enough placeholders can
+   * earn: a three-character `Numeric` id has no room for a typo, so every near miss reads as an
+   * invention there and as a misspelling under `raw`. Compare formats on this.
+   */
+  idsNotReproduced: number;
   /** Detailed error information */
   details: ErrorDetail[];
   /** Whether JSON parsing succeeded */
@@ -114,6 +121,7 @@ export function verify(
     incorrectCounts: 0,
     incorrectNames: 0,
     totalErrors: 0,
+    idsNotReproduced: 0,
     details: [],
     parseSuccess: false,
   };
@@ -127,6 +135,7 @@ export function verify(
     });
     result.totalErrors = expected.aggregations.size; // Count all as dropped
     result.droppedIds = expected.aggregations.size;
+    result.idsNotReproduced = expected.aggregations.size;
     return result;
   }
 
@@ -137,6 +146,8 @@ export function verify(
 
   // Track which expected IDs we've seen
   const seenIds = new Set<string>();
+  // And which the answer spelled exactly, which is what the format comparison rests on
+  const verbatimIds = new Set<string>();
 
   // Check each aggregation in the response
   for (const agg of parsed) {
@@ -177,6 +188,7 @@ export function verify(
     }
 
     seenIds.add(classId);
+    verbatimIds.add(classId);
 
     const expectedAgg = expected.aggregations.get(classId)!;
 
@@ -220,6 +232,7 @@ export function verify(
 
   result.totalErrors =
     result.misspelledIds + result.droppedIds + result.incorrectCounts + result.incorrectNames;
+  result.idsNotReproduced = expected.aggregations.size - verbatimIds.size;
 
   return result;
 }
