@@ -77,6 +77,99 @@ describe("the accuracy bench scores every format the same way", () => {
     }
   });
 
+  test("one wrong id costs the same under every format", () => {
+    // `totalErrors` cannot say this: the misspelling discount is only available to a format whose
+    // placeholders are long enough to carry a typo, so a three-digit Numeric id never earns it and
+    // a 36-character UUID almost always does. idsNotReproduced is what the formats are compared on
+    const oneWrong = [
+      { ids: uuids, written: "deadbeef-dead-4bad-8bad-deadbeefdead" },
+      { ids: placeholders, written: "900" },
+      { ids: placeholders, written: "001x".slice(0, 3) },
+      { ids: ["~000~", "~001~", "~002~"], written: "~009~" },
+    ];
+
+    const costs = oneWrong.map(({ ids, written }) => {
+      const rows = ids.slice(1).map((id) => ({ class_id: id, count: 1, names: ["a"] }));
+      rows.unshift({ class_id: written, count: 1, names: ["a"] });
+      return verify(answer(rows), expectedFor(ids)).idsNotReproduced;
+    });
+
+    expect(costs).toEqual([1, 1, 1, 1]);
+  });
+
+  test("a one-character slip is not discounted for one format and charged to another", () => {
+    // The budget is relative to length, so where it lands decides whether a near miss reads as a
+    // typo. Whatever it decides, the comparison the bench publishes must not move with it
+    const nearMissRaw = verify(
+      answer([
+        { class_id: uuids[0].slice(0, 35) + "1", count: 1, names: ["a"] },
+        { class_id: uuids[1], count: 1, names: ["a"] },
+        { class_id: uuids[2], count: 1, names: ["a"] },
+      ]),
+      expectedFor(uuids)
+    );
+    const nearMissNumeric = verify(
+      answer([
+        { class_id: "003", count: 1, names: ["a"] },
+        { class_id: placeholders[1], count: 1, names: ["a"] },
+        { class_id: placeholders[2], count: 1, names: ["a"] },
+      ]),
+      expectedFor(placeholders)
+    );
+
+    expect(nearMissNumeric.idsNotReproduced).toBe(nearMissRaw.idsNotReproduced);
+  });
+
+  test("a three-character id is never read as a typo of another", () => {
+    // There is no room in three digits for a slip that is distinguishable from a different id,
+    // so the scorer refuses to guess rather than discount. A budget generous enough to call 900 a
+    // typo of 000 hands the short formats a discount the long ones pay full price for
+    const result = verify(
+      answer([
+        { class_id: "900", count: 1, names: ["a"] },
+        { class_id: placeholders[1], count: 1, names: ["a"] },
+        { class_id: placeholders[2], count: 1, names: ["a"] },
+      ]),
+      expectedFor(placeholders)
+    );
+
+    expect(result.misspelledIds).toBe(1);
+    expect(result.droppedIds).toBe(1);
+    expect(result.totalErrors).toBe(2);
+  });
+
+  test("a misspelling is not also counted as dropped", () => {
+    const typo = uuids[0].slice(0, 5) + "f" + uuids[0].slice(6);
+
+    const result = verify(
+      answer([
+        { class_id: typo, count: 1, names: ["a"] },
+        { class_id: uuids[1], count: 1, names: ["a"] },
+      ]),
+      expectedFor([uuids[0], uuids[1]])
+    );
+
+    expect(result.misspelledIds).toBe(1);
+    expect(result.droppedIds).toBe(0);
+  });
+
+  test.each([
+    { label: "two characters short", cut: 2, misspelled: 1 },
+    { label: "three characters short", cut: 3, misspelled: 1 },
+  ])("a UUID cut $label", ({ cut, misspelled }) => {
+    // A model that runs out of output mid-identifier is the commonest raw-format failure the
+    // bench measures, so where the length rules put it moves the baseline the claim divides by
+    const truncated = uuids[0].slice(0, uuids[0].length - cut);
+
+    const result = verify(
+      answer([{ class_id: truncated, count: 1, names: ["a"] }]),
+      expectedFor([uuids[0]])
+    );
+
+    expect(result.misspelledIds).toBe(misspelled);
+    expect(result.droppedIds).toBe(cut <= 2 ? 0 : 1);
+  });
+
   test("a class the model never mentioned is counted as dropped", () => {
     const result = verify(
       answer([{ class_id: placeholders[0], count: 1, names: ["a"] }]),

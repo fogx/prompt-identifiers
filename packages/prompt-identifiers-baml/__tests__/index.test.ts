@@ -1806,6 +1806,24 @@ describe("prompt-identifiers-baml", () => {
       });
     });
 
+    test("the same array under two keys survives the decode too", () => {
+      // The decode half has its own open set, so the encode half's pin says nothing about it
+      const shared = [{ id: "~000~" }];
+
+      expect(decodeObject({ x: shared, y: shared }, { "~000~": uuid1 })).toEqual({
+        x: [{ id: uuid1 }],
+        y: [{ id: uuid1 }],
+      });
+    });
+
+    test("an array holding the same object twice decodes both", () => {
+      const shared = { id: "~000~" };
+
+      expect(decodeObject({ rows: [shared, shared] }, { "~000~": uuid1 })).toEqual({
+        rows: [{ id: uuid1 }, { id: uuid1 }],
+      });
+    });
+
     test("the same object under two keys is not a cycle", () => {
       const shared = { id: uuid1 };
 
