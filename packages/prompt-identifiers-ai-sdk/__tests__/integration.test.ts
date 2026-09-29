@@ -914,11 +914,21 @@ describe("AI SDK Integration: streamText", () => {
     expect(types.indexOf("text-delta", types.indexOf("finish"))).toBe(-1);
   });
 
+  // Each row says what the consumer reads, not only that its two ways of reading it agree. The
+  // agreement holds when the held tail reaches neither of them, which is the failure these are for
   test.each([
-    { label: "a trailing bare delimiter", deltas: ["The id is ~000~ and cost ~"] },
-    { label: "a truncated placeholder", deltas: ["Item ~000"] },
-    { label: "a placeholder split across the last two deltas", deltas: ["Item ~0", "00"] },
-  ])("textStream and result.text agree with $label", async ({ deltas }) => {
+    {
+      label: "a trailing bare delimiter",
+      deltas: ["The id is ~000~ and cost ~"],
+      expected: `The id is ${uuid1} and cost ~`,
+    },
+    { label: "a truncated placeholder", deltas: ["Item ~000"], expected: "Item ~000" },
+    {
+      label: "a placeholder split across the last two deltas",
+      deltas: ["Item ~0", "00"],
+      expected: "Item ~000",
+    },
+  ])("textStream and result.text carry $label", async ({ deltas, expected }) => {
     const result = streamText({
       model: wrappedModel(deltas),
       prompt: `Tell me about ${uuid1}`,
@@ -927,6 +937,7 @@ describe("AI SDK Integration: streamText", () => {
     let streamed = "";
     for await (const delta of result.textStream) streamed += delta;
 
+    expect(streamed).toBe(expected);
     expect(await result.text).toBe(streamed);
   });
 });
