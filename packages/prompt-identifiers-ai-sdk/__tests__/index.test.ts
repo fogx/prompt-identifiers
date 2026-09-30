@@ -3521,7 +3521,10 @@ describe("prompt-identifiers-ai-sdk", () => {
       const result = await middleware.wrapStream({
         doStream: vi.fn().mockResolvedValue({
           stream: createMockStream([
-            { type: "text-delta", id: "1", delta: "found ~000~" },
+            // The decoder is built on the first delta, and building it is where the overflow was,
+            // so one character is enough to reach it. A longer delta only buys match time: an
+            // 11-character one against a 150,000-alternation pattern costs about three seconds
+            { type: "text-delta", id: "1", delta: "x" },
             { type: "text-end", id: "1" },
           ] as LanguageModelV4StreamPart[]),
         }),
@@ -3530,12 +3533,8 @@ describe("prompt-identifiers-ai-sdk", () => {
         model: mockModel,
       });
 
-      await expect(collectStreamText(result.stream)).resolves.toBe(`found ${many[0]}`);
-      // 150,000 ids is what it takes to pass the spread limit, and the only way to a mapping that
-      // size is through the prompt, so this one test carries the cost of encoding them: about 14s
-      // alone. The timeout is generous because the clock is not what is under test here, and a
-      // tighter one fails on a loaded machine while the guard it guards is fine
-    }, 120_000);
+      await expect(collectStreamText(result.stream)).resolves.toBe("x");
+    }, 30_000);
   });
 
   describe("An answer cut off mid-placeholder", () => {
