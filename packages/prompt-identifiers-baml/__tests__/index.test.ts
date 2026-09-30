@@ -205,6 +205,17 @@ describe("prompt-identifiers-baml", () => {
   });
 
   describe("encodeFields option", () => {
+    test("a path names a depth, not a prefix", () => {
+      // Every other row here puts its strings at exactly the depth its path names, so nothing
+      // says whether `data` also claims everything under it
+      const { encoded, mapping } = encodeObject({ data: { user: { id: uuid1 } } }, defaultConfig, [
+        "data",
+      ]);
+
+      expect(encoded).toEqual({ data: { user: { id: uuid1 } } });
+      expect(mapping).toEqual({});
+    });
+
     test("only encodes specified top-level fields", async () => {
       const mockFn = vi.fn(async (input: { user_id: string; owner_id: string; code: string }) => ({
         result: `${input.user_id} - ${input.code}`,
@@ -1057,6 +1068,42 @@ describe("prompt-identifiers-baml", () => {
       await stream.getFinalResponse();
 
       expect(drives).toBe(1);
+    });
+
+    test("the reported duration sums every part, not just the last one", async () => {
+      // Under 100ms and above zero is satisfied by timing one part. What the rule says is that
+      // the pieces add up, so a stream of many heavy parts has to cost more than one of them
+      const heavy = Array.from(
+        { length: 2000 },
+        (_, i) => `~${String(i % 3).padStart(3, "0")}~`
+      ).join(" ");
+      const ids = [uuid1, uuid2, "0192b4a1-7b3e-4c4d-8e9f-1a2b3c4d5e6f"];
+
+      async function durationFor(partCount: number) {
+        const onDecode = vi.fn();
+        const source = {
+          async *[Symbol.asyncIterator]() {
+            for (let i = 0; i < partCount; i++) yield { text: heavy };
+          },
+          async getFinalResponse() {
+            return { text: "" };
+          },
+        };
+        const wrapped = wrapBamlStreamingFunction(() => source, {
+          config: defaultConfig,
+          debug: true,
+          onDecode,
+        });
+        for await (const _partial of wrapped({ ids })) {
+          // read
+        }
+        return onDecode.mock.calls[0][0].debugData.durationMs as number;
+      }
+
+      const one = await durationFor(1);
+      const many = await durationFor(12);
+
+      expect(many).toBeGreaterThan(one * 4);
     });
 
     test("a final response that throws still reaches the consumer that asked for it", async () => {
