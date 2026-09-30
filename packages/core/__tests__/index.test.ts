@@ -231,18 +231,35 @@ describe("prompt-identifiers", () => {
 
   describe("What the built-in input formats refuse", () => {
     test.each([
-      ["a UUID v7", "0192b4a1-7b3e-7c4d-8e9f-1a2b3c4d5e6f"],
-      ["a UUID v1", "c232ab00-9414-11ec-b3c8-9f6bdeced846"],
+      ["a UUID v7, whose version nibble is 7", "0192b4a1-7b3e-7c4d-8e9f-1a2b3c4d5e6f"],
+      ["a UUID v1, whose version nibble is 1", "c232ab00-9414-11ec-b3c8-9f6bdeced846"],
+      ["a v4 whose variant nibble is c", "123e4567-e89b-42d3-c456-426655440000"],
+      ["a v4 whose variant nibble is 7", "123e4567-e89b-42d3-7456-426655440000"],
     ])("UUID leaves %s alone", (_label, text) => {
-      // The format table says v4, and the version and variant nibbles are what says so
+      // The format table says v4, and the version and variant nibbles are what say so. Each row
+      // moves exactly one of them, so widening either character class shows up here
       expect(encode(text, { inputFormat: "UUID", outputFormat: "SafeNumeric" }).encoded).toBe(text);
     });
 
-    test("ULID leaves a 26-character run carrying a non-Crockford letter alone", () => {
-      // Crockford base32 drops I, L and O because they read as 1 and 0, and U so that no
-      // identifier spells out an obscenity
-      const text = "01ARZ3NDEKTSV4RRFFQ69G5ILO";
+    test.each([
+      ["I, which reads as 1", "01ARZ3NDEKTSV4RRFFQ69G5FAI"],
+      ["L, which reads as 1", "01ARZ3NDEKTSV4RRFFQ69G5FAL"],
+      ["O, which reads as 0", "01ARZ3NDEKTSV4RRFFQ69G5FAO"],
+      ["U, which is left out so no identifier spells an obscenity", "01ARZ3NDEKTSV4RRFFQ69G5FAU"],
+    ])("ULID leaves a 26-character run carrying %s alone", (_label, text) => {
       expect(encode(text, { inputFormat: "ULID", outputFormat: "SafeNumeric" }).encoded).toBe(text);
+    });
+
+    test.each([
+      ["UUID", "x123e4567-e89b-42d3-a456-426655440000x"],
+      ["ULID", "xx01ARZ3NDEKTSV4RRFFQ69G5FAVyy"],
+    ])("%s needs a word boundary at both ends", (_label, text) => {
+      // Without the anchors the pattern matches inside a longer run and mints a placeholder for
+      // part of a word, leaving the characters around it stranded
+      expect(
+        encode(text, { inputFormat: _label as "UUID" | "ULID", outputFormat: "SafeNumeric" })
+          .encoded
+      ).toBe(text);
     });
   });
 

@@ -1035,6 +1035,30 @@ describe("prompt-identifiers-baml", () => {
       expect(onDecode.mock.calls[0][0].debugData.decodedCount).toBe(1);
     });
 
+    test("the source's final response is driven once however often it is asked for", async () => {
+      // The report fires once whatever happens, because of its own latch, so counting the
+      // reports says nothing about how often the client underneath was asked
+      let drives = 0;
+      const source = {
+        async *[Symbol.asyncIterator]() {
+          yield { text: "~000~ first" };
+        },
+        async getFinalResponse() {
+          drives++;
+          return { text: "~000~ done" };
+        },
+      };
+
+      const stream = wrapBamlStreamingFunction(() => source, { config: defaultConfig })({
+        id: uuid1,
+      });
+      await stream.getFinalResponse();
+      await stream.getFinalResponse();
+      await stream.getFinalResponse();
+
+      expect(drives).toBe(1);
+    });
+
     test("a final response that throws still reaches the consumer that asked for it", async () => {
       const wrapped = wrapBamlStreamingFunction(
         () => ({

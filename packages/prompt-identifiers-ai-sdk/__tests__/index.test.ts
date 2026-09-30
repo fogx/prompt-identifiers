@@ -656,6 +656,65 @@ describe("prompt-identifiers-ai-sdk", () => {
       expect(Object.keys(onEncode.mock.calls[0][0].mapping)).toHaveLength(1);
     });
 
+    test("encodes the reason a caller gave for approving or denying a tool call", async () => {
+      // The user's own words go to the model, and they name whatever the tool was about to act
+      // on. `execution-denied` carries the same field and is encoded, so this was the half of the
+      // pair that leaked
+      const middleware = createMiddleware({ config: defaultConfig });
+      const uuid = "123e4567-e89b-42d3-a456-426655440000";
+
+      const result = await middleware.transformParams({
+        params: createParams([
+          {
+            role: "tool",
+            content: [
+              {
+                type: "tool-approval-response",
+                approvalId: "appr-1",
+                approved: false,
+                reason: `do not touch creator ${uuid}`,
+              },
+            ],
+          } as unknown as LanguageModelV4Message,
+        ]),
+        type: "generate",
+        model: mockModel,
+      });
+
+      const part = result.prompt[0].content[0] as unknown as {
+        approvalId: string;
+        approved: boolean;
+        reason: string;
+      };
+      expect(part.reason).toBe("do not touch creator ~000~");
+      // The approval id correlates the response with the request the provider issued, so it is
+      // the provider's to spell, not ours
+      expect(part.approvalId).toBe("appr-1");
+      expect(part.approved).toBe(false);
+    });
+
+    test("an approval response with no reason is handed on as it is", async () => {
+      const middleware = createMiddleware({ config: defaultConfig });
+
+      const params = createParams([
+        {
+          role: "tool",
+          content: [{ type: "tool-approval-response", approvalId: "appr-2", approved: true }],
+        } as unknown as LanguageModelV4Message,
+      ]);
+      const result = await middleware.transformParams({
+        params,
+        type: "generate",
+        model: mockModel,
+      });
+
+      expect(result.prompt[0].content[0]).toEqual({
+        type: "tool-approval-response",
+        approvalId: "appr-2",
+        approved: true,
+      });
+    });
+
     test("preserves non-tool-result parts in tool messages", async () => {
       const middleware = createMiddleware({ config: defaultConfig });
 

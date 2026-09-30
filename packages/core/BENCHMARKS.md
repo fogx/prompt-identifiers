@@ -4,9 +4,10 @@ Benchmarks for `prompt-identifiers`, the native JavaScript implementation.
 
 **Environment:** Node.js v24.13.0, Apple Silicon
 **Method:** `pnpm run bench` five times, the median of each cell. Every number is microseconds per
-operation over 1000 iterations. The machine was not idle, so small sizes carry real noise: the
-spread across the five runs is under 10% from 50 IDs up and reaches 50% at 1 and 5 IDs, where the
-work is smaller than the measurement.
+operation over 1000 iterations. The machine was not idle, so read the small sizes as an order of
+magnitude rather than a figure: across the five runs the median cell moved under 7% from 50 IDs
+up, with one cell as far as 49%, and around 90% at 1 and 5 IDs, where the work is smaller than the
+measurement.
 
 **Decode is measured against a mapping it has not seen before**, because `decode` caches its
 compiled pattern on the mapping object and a request mints a fresh mapping every time. A loop that
@@ -157,10 +158,10 @@ All tables write `Numeric` placeholders.
    46.23μs against
    47.59μs at 100 IDs.
 
-2. **The output formats separate as the count grows.** At 100 IDs they sit within a third of each
-   other, 50.95μs to 59.49μs. At 1000 IDs
-   `Numeric` is 418.03μs and `IdToken` is 811.85μs,
-   which is roughly twice as long, so the choice starts to cost something on large payloads.
+2. **The output formats separate as the count grows.** At 100 IDs they sit within a quarter of
+   each other, 48.82μs for `Template {i:base62}` up to 59.49μs for `IdToken`. At 1000 IDs
+   `Numeric` is 418.03μs and `IdToken` is 811.85μs, which is roughly twice as long, so the choice
+   starts to cost something on large payloads.
 
 3. **Scaling is linear in the number of identifiers** for every configuration.
 
@@ -174,8 +175,9 @@ All tables write `Numeric` placeholders.
 2. **It is the least ambiguous.** A purely numeric placeholder reads the same in any context, where
    base62 (`A`, `z`, `10`) can be mistaken for ordinary text.
 
-3. **It is the fastest.** The gap is small at ordinary sizes and about 2x against `IdToken` at
-   1000 identifiers.
+3. **It is the fastest where the cost shows.** Below 100 identifiers the formats sit inside each
+   other's measurement noise and the tables swap their order from run to run. From 300 up
+   `Numeric` wins outright, by about 2x against `IdToken` at 1000.
 
 ### Comparison with Rust FFI
 
