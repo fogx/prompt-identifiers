@@ -67,11 +67,44 @@ describe("instruction stability", () => {
 
     expect(result?.prompt).toEqual(prompt);
   });
-  test("omitting the instruction is rejected, rather than silently sending none", () => {
-    expect(() =>
-      // @ts-expect-error the option is required, and a JS caller reaches this at runtime
-      promptIdentifiersMiddleware({ config })
-    ).toThrow(/instruction/);
+  async function systemMessageOf(options: Record<string, unknown>) {
+    const middleware = promptIdentifiersMiddleware({ config, ...options } as never);
+    const result = await middleware.transformParams?.({
+      params: {
+        prompt: [
+          { role: "user", content: [{ type: "text", text: `Look at ${uuids[0]}` }] },
+        ] as LanguageModelV4Prompt,
+      },
+      type: "generate",
+      model: createMockModel(),
+    });
+    const first = result?.prompt[0];
+    return first?.role === "system" ? (first.content as string) : undefined;
+  }
+
+  test("omitting the instruction sends the default one", async () => {
+    // Without an instruction most models strip the delimiters out of tool call arguments, so the
+    // option defaulting to nothing would be the wrong way round
+    expect(await systemMessageOf({})).toBe(
+      "UUIDs have been replaced with short identifiers like ~000~. Always pass these identifiers verbatim"
+    );
+  });
+
+  test("the option a caller used before this one still works", async () => {
+    expect(await systemMessageOf({ injectInstruction: false })).toBeUndefined();
+    expect(await systemMessageOf({ customInstruction: "Keep {format} as written." })).toBe(
+      "Keep ~000~ as written."
+    );
+  });
+
+  test("the new option wins over the pair it replaced", async () => {
+    expect(
+      await systemMessageOf({
+        instruction: "The new one.",
+        customInstruction: "The old one.",
+        injectInstruction: true,
+      })
+    ).toBe("The new one.");
   });
 
   test("false sends no instruction, leaving the prompt's own messages alone", async () => {
