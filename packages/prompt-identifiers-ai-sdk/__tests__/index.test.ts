@@ -3531,9 +3531,11 @@ describe("prompt-identifiers-ai-sdk", () => {
       });
 
       await expect(collectStreamText(result.stream)).resolves.toBe(`found ${many[0]}`);
-      // 150,000 ids is what it takes to pass the spread limit, and encoding them runs about 2.5s
-      // on a quiet machine, which leaves nothing against vitest's default on a loaded one
-    }, 20_000);
+      // 150,000 ids is what it takes to pass the spread limit, and the only way to a mapping that
+      // size is through the prompt, so this one test carries the cost of encoding them: about 14s
+      // alone. The timeout is generous because the clock is not what is under test here, and a
+      // tighter one fails on a loaded machine while the guard it guards is fine
+    }, 120_000);
   });
 
   describe("An answer cut off mid-placeholder", () => {
