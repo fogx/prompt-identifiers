@@ -589,6 +589,17 @@ function encodeMessageContent(content: unknown, config: EncodeConfig, state: Enc
         };
       }
 
+      // A caller approving or denying a provider-run tool says why in their own words, and what
+      // they name is whatever the tool was about to act on. `approvalId` stays as the provider
+      // spelled it, because it is what matches the response to the request
+      if (
+        typedPart.type === "tool-approval-response" &&
+        typeof (typedPart as { reason?: unknown }).reason === "string"
+      ) {
+        const reason = (typedPart as unknown as { reason: string }).reason;
+        return { ...typedPart, reason: encode(reason, config, state).encoded };
+      }
+
       return part;
     });
   }

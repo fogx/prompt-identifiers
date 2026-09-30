@@ -102,6 +102,18 @@ describe("the summary the accuracy benchmark prints", () => {
     expect(text).toContain("SafeNumeric reduces errors by 60% vs raw UUIDs.");
   });
 
+  test("the improvement line is the format-fair count, not the total errors", () => {
+    // The two records disagree whenever the misspelling discount lands differently per format,
+    // which is the whole reason the second one exists. Reading the wrong one here is silent
+    const text = summaryOf({
+      averageErrors: { raw: 10, SafeNumeric: 10 } as Record<BenchmarkFormat, number | undefined>,
+      averageMisses: { raw: 10, SafeNumeric: 4 } as Record<BenchmarkFormat, number | undefined>,
+    });
+
+    expect(text).toContain("SafeNumeric reduces errors by 60% vs raw UUIDs.");
+    expect(text).not.toContain("by 0%");
+  });
+
   test("a raw baseline of zero errors is not divided by", () => {
     const text = summaryOf({
       averageErrors: { raw: 0, SafeNumeric: 0 } as Record<BenchmarkFormat, number | undefined>,

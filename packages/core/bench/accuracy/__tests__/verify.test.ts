@@ -170,6 +170,17 @@ describe("the accuracy bench scores every format the same way", () => {
     expect(result.droppedIds).toBe(cut <= 2 ? 0 : 1);
   });
 
+  test("an answer that does not parse loses every class", () => {
+    // The scorer cannot see what the model meant, so every expected id is a miss. Leaving the
+    // format-fair count at zero here scores an unusable answer as a perfect one
+    const result = verify("not JSON at all", expectedFor(uuids));
+
+    expect(result.parseSuccess).toBe(false);
+    expect(result.droppedIds).toBe(3);
+    expect(result.idsNotReproduced).toBe(3);
+    expect(result.totalErrors).toBe(3);
+  });
+
   test("a class the model never mentioned is counted as dropped", () => {
     const result = verify(
       answer([{ class_id: placeholders[0], count: 1, names: ["a"] }]),
