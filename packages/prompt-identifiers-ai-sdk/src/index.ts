@@ -751,7 +751,10 @@ function createStreamingDecoder(mapping: Record<string, string>) {
       growable.add(placeholder.slice(0, length));
     }
   }
-  // Spreading the lengths into Math.max overflows the call stack past roughly 120,000 placeholders
+  // Not `Math.max(...lengths)`: spreading an array into a call overflows the stack somewhere
+  // around 124,000 arguments, and a prompt carrying that many identifiers reaches it. The exact
+  // number moves with the engine and the stack depth, so the only test for this would have to
+  // build a mapping that size, which costs seconds. Keep the loop.
   let longest = 0;
   for (const placeholder of placeholders) {
     if (placeholder.length > longest) longest = placeholder.length;

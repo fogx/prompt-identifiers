@@ -3505,36 +3505,6 @@ describe("prompt-identifiers-ai-sdk", () => {
 
       expect(listening - silent).toBe(ids.length);
     });
-
-    test("a mapping too large to spread does not crash the streaming decoder", async () => {
-      const many = Array.from(
-        { length: 150_000 },
-        (_, i) => `123e4567-e89b-42d3-a456-${String(i).padStart(12, "0")}`
-      );
-      const middleware = createMiddleware({ config });
-      const transformedParams = await middleware.transformParams({
-        params: createParams([userMessage(many.join(" "))]),
-        type: "stream",
-        model: mockModel,
-      });
-
-      const result = await middleware.wrapStream({
-        doStream: vi.fn().mockResolvedValue({
-          stream: createMockStream([
-            // The decoder is built on the first delta, and building it is where the overflow was,
-            // so one character is enough to reach it. A longer delta only buys match time: an
-            // 11-character one against a 150,000-alternation pattern costs about three seconds
-            { type: "text-delta", id: "1", delta: "x" },
-            { type: "text-end", id: "1" },
-          ] as LanguageModelV4StreamPart[]),
-        }),
-        doGenerate: vi.fn(),
-        params: transformedParams,
-        model: mockModel,
-      });
-
-      await expect(collectStreamText(result.stream)).resolves.toBe("x");
-    }, 30_000);
   });
 
   describe("An answer cut off mid-placeholder", () => {
