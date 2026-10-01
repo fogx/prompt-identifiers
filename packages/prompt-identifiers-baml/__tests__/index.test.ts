@@ -569,8 +569,8 @@ describe("prompt-identifiers-baml", () => {
         onDecode,
       });
 
-      // The test owns the clock, so each half's duration is the one tick its own two reads
-      // cost. A duration left at zero, or taken across the whole call, cannot give that.
+      // The stubbed clock advances one tick per read, so encode and decode each report the one
+      // tick their own two reads cost.
       let tick = 0;
       const realNow = performance.now;
       performance.now = () => {
@@ -581,7 +581,7 @@ describe("prompt-identifiers-baml", () => {
 
       const input = { id: uuid1 };
       try {
-        // The wrapped function is where a real call spends its time, and none of it is ours
+        // The 40 ticks stand for the model's latency, which falls between encode and decode
         mockFn.mockImplementationOnce(async (received: { id: string }) => {
           tick += 40;
           return { result: `Found: ${received.id}` };
@@ -754,9 +754,8 @@ describe("prompt-identifiers-baml", () => {
   });
 
   describe("An identifier in an object key", () => {
-    // What the BAML function is called with is the question. Reading the key back off the
-    // wrapper's return value cannot answer it, because an encoded key is decoded again on the
-    // way out and the round trip looks the same either way.
+    // An encoded key is decoded again on the way out, so a round trip looks the same whether
+    // the key was rewritten or not. Each case checks the encoded form.
     test.each([
       [
         "wrapBamlFunction",
@@ -1061,9 +1060,8 @@ describe("prompt-identifiers-baml", () => {
     });
 
     test("the reported duration is decode time summed over the parts", async () => {
-      // The test owns the clock: every read costs one tick, so decoding one part costs exactly
-      // one, and the model's latency is 40 ticks added between parts, outside the decode. The
-      // total therefore counts parts and cannot see the latency, which is the whole claim.
+      // The stubbed clock advances one tick per read, so decoding one part costs one tick and
+      // the final response one more. The 40 ticks between parts are the model's latency.
       const partials = [{ text: "~000~ a" }, { text: "~000~ b" }, { text: "~000~ c" }];
       let tick = 0;
       const realNow = performance.now;

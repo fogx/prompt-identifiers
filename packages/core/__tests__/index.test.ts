@@ -305,9 +305,8 @@ describe("prompt-identifiers", () => {
   });
 
   describe("Identifier case handling", () => {
-    // Matching is case-insensitive and the id table is keyed on the lowercased form, but what
-    // goes in the mapping is the text as it was written: Crockford base32 is upper case, and a
-    // lowercased identifier misses a case-sensitive lookup on the way back out.
+    // Matching ignores case, but the mapping holds the text as the caller wrote it. A ULID
+    // handed back lowercased would miss the caller's case-sensitive lookup.
     test.for([
       {
         shape: "an uppercase UUID",
@@ -508,9 +507,8 @@ describe("prompt-identifiers", () => {
     });
 
     test("pruning the mapping does not hand the next id an index already in use", () => {
-      // Callers trim a long-lived mapping, which decode's own contract allows. The next index
-      // comes from the id table rather than the mapping, so a pruned key leaves a gap instead
-      // of putting two identifiers behind one placeholder.
+      // A caller may prune a long-lived mapping. The next index is the id table's size, not the
+      // mapping's, so a pruned key leaves a gap instead of two ids behind one placeholder.
       const third = "550e8400-e29b-41d4-a716-446655440000";
       const state = createEncodeState();
 
@@ -777,9 +775,8 @@ describe("prompt-identifiers", () => {
       expect(findPlaceholders("see ~a1~ and ~~ and ~-5~", "SafeNumeric")).toEqual([]);
     });
 
-    // A format can be the right type and still carry no shape to match on. Each of these is
-    // readable enough to probe and gives nothing back, so the answer is no placeholders rather
-    // than whatever the probe happened to throw.
+    // A format of the right type can still carry no shape to match on, and probing it can
+    // throw. Either way findPlaceholders answers with no placeholders rather than an error.
     test.for<[string, OutputFormat, string]>([
       ["a formatter that ignores its index", () => "X", "a X b"],
       [
