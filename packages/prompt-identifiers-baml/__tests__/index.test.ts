@@ -572,9 +572,10 @@ describe("prompt-identifiers-baml", () => {
       const input = { id: uuid1 };
 
       // The stubbed clock advances one tick per read, so encode and decode each report the one
-      // tick their own two reads cost. The stub goes up last, so nothing between it and the
+      // tick their own two reads cost. It starts above zero so a reading of the clock itself
+      // cannot pass for an elapsed time. The stub goes up last, so nothing between it and the
       // try can leave it in place.
-      let tick = 0;
+      let tick = 100;
       const realNow = performance.now;
       performance.now = () => {
         const now = tick;
@@ -614,20 +615,36 @@ describe("prompt-identifiers-baml", () => {
       const onEncode = vi.fn();
       const onDecode = vi.fn();
 
-      async function* mockStreamFn(input: { id: string }) {
-        yield { partial: `Processing ${input.id}...` };
-        return { final: `Done for ${input.id}` };
+      // The stubbed clock advances one tick per read, so the encode's two reads cost one tick.
+      // It starts above zero so a reading of the clock itself cannot pass for an elapsed time.
+      // No stream time can land between those two reads: the input is encoded in full before
+      // the function is called. The stub goes up last, so nothing between it and the try can
+      // leave it in place.
+      let tick = 100;
+      const realNow = performance.now;
+      performance.now = () => {
+        const now = tick;
+        tick += 1;
+        return now;
+      };
+      try {
+        async function* mockStreamFn(input: { id: string }) {
+          yield { partial: `Processing ${input.id}...` };
+          return { final: `Done for ${input.id}` };
+        }
+
+        const wrapped = wrapBamlStreamingFunction(mockStreamFn, {
+          config: defaultConfig,
+          debug: true,
+          onEncode,
+          onDecode,
+        });
+
+        const generator = wrapped({ id: uuid1 });
+        while (!(await generator.next()).done) {}
+      } finally {
+        performance.now = realNow;
       }
-
-      const wrapped = wrapBamlStreamingFunction(mockStreamFn, {
-        config: defaultConfig,
-        debug: true,
-        onEncode,
-        onDecode,
-      });
-
-      const generator = wrapped({ id: uuid1 });
-      while (!(await generator.next()).done) {}
 
       // onEncode debugData
       const encodeResult = onEncode.mock.calls[0][0];
@@ -635,6 +652,7 @@ describe("prompt-identifiers-baml", () => {
       expect(encodeResult.debugData.encodedCount).toBe(1);
       expect(encodeResult.debugData.input).toEqual({ id: uuid1 });
       expect(encodeResult.debugData.output).toEqual({ id: "~000~" });
+      expect(encodeResult.debugData.durationMs).toBe(1);
 
       // onDecode debugData
       const decodeResult = onDecode.mock.calls[0][0];
