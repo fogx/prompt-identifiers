@@ -634,12 +634,21 @@ describe("prompt-identifiers-ai-sdk", () => {
       });
     });
 
-    test("leaves a json output alone when it carries no value", async () => {
+    test.each([
+      ["a json output with no value", { type: "json" }],
+      ["a text output with no value", { type: "text" }],
+      ["an error-text output whose value is not a string", { type: "error-text", value: 42 }],
+      [
+        "a content output whose value is not an array",
+        { type: "content", value: "123e4567-e89b-42d3-a456-426655440000" },
+      ],
+      ["an execution-denied output with no reason", { type: "execution-denied" }],
+    ])("leaves %s alone", async (_label, output) => {
       const middleware = createMiddleware({ config: defaultConfig });
 
-      // A json result with nothing in it has no identifier to encode, so it reaches the model
-      // as the tool wrote it rather than gaining a value key that was never there.
-      const output = { type: "json" };
+      // Every arm checks the shape of the payload before walking it. An output carrying a type
+      // the encoder handles but not the shape that type implies reaches the model as the tool
+      // wrote it, rather than gaining a key the tool never set or throwing on the way out.
       const params = createParams([
         toolMessage("call-1", "get_user", output as unknown as { type: "text"; value: string }),
       ]);
