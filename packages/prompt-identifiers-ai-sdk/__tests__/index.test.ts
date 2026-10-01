@@ -805,28 +805,40 @@ describe("prompt-identifiers-ai-sdk", () => {
     }
 
     test("a file part whose data is null is handed on", async () => {
-      const parts = await encodeParts([{ type: "file", mediaType: "text/plain", data: null }]);
+      const id = "123e4567-e89b-42d3-a456-426655440000";
+      const parts = await encodeParts([
+        { type: "file", mediaType: "text/plain", data: null },
+        { type: "text", text: `about ${id}` },
+      ]);
 
       expect((parts[0].content as unknown[])[0]).toEqual({
         type: "file",
         mediaType: "text/plain",
         data: null,
       });
+      // The second part is what says the encode ran at all
+      expect((parts[0].content as { text: string }[])[1].text).toBe("about ~000~");
     });
 
     test("a file part whose data is tagged something other than text is left alone", async () => {
       const id = "123e4567-e89b-42d3-a456-426655440000";
       const data = { type: "binary", text: `see ${id}` };
 
-      const parts = await encodeParts([{ type: "file", mediaType: "text/plain", data }]);
+      const parts = await encodeParts([
+        { type: "file", mediaType: "text/plain", data },
+        { type: "text", text: `about ${id}` },
+      ]);
 
       expect((parts[0].content as { data: { text: string } }[])[0].data.text).toBe(`see ${id}`);
+      expect((parts[0].content as { text: string }[])[1].text).toBe("about ~000~");
     });
 
     test("a content array holding a bare string is handed on", async () => {
-      const parts = await encodeParts(["just a string", null]);
+      const id = "123e4567-e89b-42d3-a456-426655440000";
+      const parts = await encodeParts(["just a string", null, { type: "text", text: id }]);
 
-      expect(parts[0].content).toEqual(["just a string", null]);
+      expect((parts[0].content as unknown[]).slice(0, 2)).toEqual(["just a string", null]);
+      expect((parts[0].content as { text: string }[])[2].text).toBe("~000~");
     });
 
     test("a tool result whose output is null is handed on", async () => {
@@ -3614,7 +3626,7 @@ describe("prompt-identifiers-ai-sdk", () => {
       const core = await import("prompt-identifiers");
       // The real export is a live-binding accessor, so the descriptor goes back rather than the
       // value, which would leave the namespace member a frozen snapshot
-      const real = Object.getOwnPropertyDescriptor(core, "findPlaceholders")!;
+      const descriptor = Object.getOwnPropertyDescriptor(core, "findPlaceholders")!;
       Object.defineProperty(core, "findPlaceholders", { value: undefined, configurable: true });
       try {
         expect(() =>
@@ -3624,7 +3636,7 @@ describe("prompt-identifiers-ai-sdk", () => {
           })
         ).toThrow(/prompt-identifiers 0\.2\.0 or later/);
       } finally {
-        Object.defineProperty(core, "findPlaceholders", real);
+        Object.defineProperty(core, "findPlaceholders", descriptor);
       }
     });
   });
