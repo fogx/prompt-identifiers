@@ -774,6 +774,93 @@ describe("prompt-identifiers-ai-sdk", () => {
       return collectStreamParts(streamed.stream);
     }
 
+    async function encodeParts(parts: unknown[]): Promise<LanguageModelV4Message[]> {
+      const middleware = createMiddleware({ config: defaultConfig });
+      const result = await middleware.transformParams({
+        params: createParams([
+          { role: "user", content: parts } as unknown as LanguageModelV4Message,
+        ]),
+        type: "generate",
+        model: mockModel,
+      });
+      return result.prompt as LanguageModelV4Message[];
+    }
+
+    async function encodeToolCallInput(input: unknown): Promise<unknown> {
+      const middleware = createMiddleware({ config: defaultConfig });
+      const result = await middleware.transformParams({
+        params: createParams([
+          {
+            role: "assistant",
+            content: [{ type: "tool-call", toolCallId: "c1", toolName: "t", input }],
+          } as unknown as LanguageModelV4Message,
+        ]),
+        type: "generate",
+        model: mockModel,
+      });
+      const content = (result.prompt as LanguageModelV4Message[])[0].content as {
+        input: unknown;
+      }[];
+      return content[0].input;
+    }
+
+    test("a file part whose data is null is handed on", async () => {
+      const parts = await encodeParts([{ type: "file", mediaType: "text/plain", data: null }]);
+
+      expect((parts[0].content as unknown[])[0]).toEqual({
+        type: "file",
+        mediaType: "text/plain",
+        data: null,
+      });
+    });
+
+    test("a file part whose data is tagged something other than text is left alone", async () => {
+      const id = "123e4567-e89b-42d3-a456-426655440000";
+      const data = { type: "binary", text: `see ${id}` };
+
+      const parts = await encodeParts([{ type: "file", mediaType: "text/plain", data }]);
+
+      expect((parts[0].content as { data: { text: string } }[])[0].data.text).toBe(`see ${id}`);
+    });
+
+    test("a content array holding a bare string is handed on", async () => {
+      const parts = await encodeParts(["just a string", null]);
+
+      expect(parts[0].content).toEqual(["just a string", null]);
+    });
+
+    test("a tool result whose output is null is handed on", async () => {
+      const middleware = createMiddleware({ config: defaultConfig });
+      const part = { type: "tool-result", toolCallId: "c1", toolName: "t", output: null };
+
+      const result = await middleware.transformParams({
+        params: createParams([
+          { role: "tool", content: [part] } as unknown as LanguageModelV4Message,
+        ]),
+        type: "generate",
+        model: mockModel,
+      });
+
+      expect((firstPart(result.prompt) as { output: unknown }).output).toBe(null);
+    });
+
+    test("a null inside a tool payload survives the walk", async () => {
+      // null is ordinary JSON and reaches the primitive gate every value in a payload passes
+      // through, where `null.toJSON` would throw
+      const id = "123e4567-e89b-42d3-a456-426655440000";
+
+      expect(await encodeToolCallInput({ id, parent: null })).toEqual({
+        id: "~000~",
+        parent: null,
+      });
+    });
+
+    test("a payload carrying a non-callable toJSON key is not called", async () => {
+      const id = "123e4567-e89b-42d3-a456-426655440000";
+
+      expect(await encodeToolCallInput({ id, toJSON: 5 })).toEqual({ id: "~000~", toJSON: 5 });
+    });
+
     test("a tool result with no output is handed on", async () => {
       const middleware = createMiddleware({ config: defaultConfig });
       const part = { type: "tool-result", toolCallId: "call-1", toolName: "get_user" };
@@ -792,6 +879,7 @@ describe("prompt-identifiers-ai-sdk", () => {
     // The streaming decoder concatenates whatever it is handed, so without the guard the literal
     // word "undefined" reaches the consumer: inside the tool input it parses, in the first case
     test.for([
+      ["a text delta", { type: "text-delta", id: "1" }],
       ["a tool input delta", { type: "tool-input-delta", id: "1" }],
       ["a reasoning delta", { type: "reasoning-delta", id: "1" }],
     ])("%s with no delta is handed on", async ([, chunk]) => {
@@ -799,6 +887,39 @@ describe("prompt-identifiers-ai-sdk", () => {
 
       expect(parts[0]).toBe(chunk);
       expect(parts[0]).not.toMatchObject({ delta: "undefined" });
+    });
+
+    test("a text delta with no delta does not reach the decode callback as text", async () => {
+      // accDecodedText is what onDecode is handed as the model's answer, so the word reaches a
+      // caller logging the answer as well as the consumer reading the stream
+      const id = "123e4567-e89b-42d3-a456-426655440000";
+      let reported: string | undefined;
+      const middleware = createMiddleware({
+        config: defaultConfig,
+        onDecode: (result: { output: string }) => {
+          reported = result.output;
+        },
+      });
+      const transformedParams = await middleware.transformParams({
+        params: createParams([userMessage(`Find ${id}`)]),
+        type: "stream",
+        model: mockModel,
+      });
+
+      const streamed = await middleware.wrapStream({
+        doStream: vi.fn().mockResolvedValue({
+          stream: createMockStream([
+            { type: "text-delta", id: "1" },
+            { type: "finish", finishReason: mockFinishReason(), usage: mockUsage() },
+          ] as never),
+        }),
+        doGenerate: vi.fn(),
+        params: transformedParams,
+        model: mockModel,
+      });
+      await collectStreamText(streamed.stream);
+
+      expect(reported).toBe("");
     });
 
     test("a streamed tool call whose input is not a string is handed on", async () => {
@@ -3491,7 +3612,9 @@ describe("prompt-identifiers-ai-sdk", () => {
       // A peer range is a warning under pnpm and CJS resolves a missing export to undefined, so a
       // stale core otherwise runs a whole billed turn before anything notices
       const core = await import("prompt-identifiers");
-      const real = core.findPlaceholders;
+      // The real export is a live-binding accessor, so the descriptor goes back rather than the
+      // value, which would leave the namespace member a frozen snapshot
+      const real = Object.getOwnPropertyDescriptor(core, "findPlaceholders")!;
       Object.defineProperty(core, "findPlaceholders", { value: undefined, configurable: true });
       try {
         expect(() =>
@@ -3501,7 +3624,7 @@ describe("prompt-identifiers-ai-sdk", () => {
           })
         ).toThrow(/prompt-identifiers 0\.2\.0 or later/);
       } finally {
-        Object.defineProperty(core, "findPlaceholders", { value: real, configurable: true });
+        Object.defineProperty(core, "findPlaceholders", real);
       }
     });
   });

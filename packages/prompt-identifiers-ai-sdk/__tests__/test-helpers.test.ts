@@ -57,9 +57,9 @@ describe("countRegExpBuilds", () => {
 
 describe("chargingRead", () => {
   test("charges once however often the key is read, and the charge is not zero", async () => {
-    // A charge of zero would leave every duration assertion reading its own constant, so a span
-    // moved below the work it times would pass again
-    expect(CHARGED_TICKS).toBeGreaterThan(0);
+    // The charge has to outweigh the clock reads a span can pay, or a span timing nothing still
+    // adds up to the asserted number and the mutant it exists to kill passes again
+    expect(CHARGED_TICKS).toBeGreaterThan(4);
 
     const spent = await withStubbedClock(async (advance) => {
       const part = chargingRead({}, "text", "hello", advance) as { text: string };
