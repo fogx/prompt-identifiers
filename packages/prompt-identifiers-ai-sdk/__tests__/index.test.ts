@@ -634,6 +634,25 @@ describe("prompt-identifiers-ai-sdk", () => {
       });
     });
 
+    test("leaves a json output alone when it carries no value", async () => {
+      const middleware = createMiddleware({ config: defaultConfig });
+
+      // A json result with nothing in it has no identifier to encode, so it reaches the model
+      // as the tool wrote it rather than gaining a value key that was never there.
+      const output = { type: "json" };
+      const params = createParams([
+        toolMessage("call-1", "get_user", output as unknown as { type: "text"; value: string }),
+      ]);
+
+      const result = await middleware.transformParams({
+        params,
+        type: "generate",
+        model: mockModel,
+      });
+
+      expect(getToolResultOutput(result.prompt)).toBe(output);
+    });
+
     test("preserves a tool result output type it does not recognise", async () => {
       const middleware = createMiddleware({ config: defaultConfig });
 
@@ -937,11 +956,24 @@ describe("prompt-identifiers-ai-sdk", () => {
       const uuid = "123e4567-e89b-42d3-a456-426655440000";
       const params = createParams([userMessage(`Find user ${uuid}`)]);
 
-      await middleware.transformParams({
-        params,
-        type: "generate",
-        model: mockModel,
-      });
+      // The stubbed clock advances one tick per read, so the encode reports the one tick its
+      // own two reads cost.
+      let tick = 0;
+      const realNow = performance.now;
+      performance.now = () => {
+        const now = tick;
+        tick += 1;
+        return now;
+      };
+      try {
+        await middleware.transformParams({
+          params,
+          type: "generate",
+          model: mockModel,
+        });
+      } finally {
+        performance.now = realNow;
+      }
 
       expect(onEncode).toHaveBeenCalledTimes(1);
       const result = onEncode.mock.calls[0][0];
@@ -950,6 +982,7 @@ describe("prompt-identifiers-ai-sdk", () => {
       expect(result.debugData.encodedCount).toBe(1);
       expect(result.debugData.input).toBe(params.prompt);
       expect(result.debugData.output).toBeDefined();
+      expect(result.debugData.durationMs).toBe(1);
     });
 
     test("onDecode receives debugData on wrapGenerate when debug is true", async () => {
@@ -976,12 +1009,28 @@ describe("prompt-identifiers-ai-sdk", () => {
         warnings: [],
       };
 
-      await middleware.wrapGenerate({
-        doGenerate: vi.fn().mockResolvedValue(mockResult),
-        doStream: vi.fn(),
-        params: transformedParams,
-        model: mockModel,
-      });
+      // The stubbed clock advances one tick per read. The 40 ticks stand for the model's
+      // latency, which falls inside doGenerate and outside the decode.
+      let tick = 0;
+      const realNow = performance.now;
+      performance.now = () => {
+        const now = tick;
+        tick += 1;
+        return now;
+      };
+      try {
+        await middleware.wrapGenerate({
+          doGenerate: vi.fn().mockImplementation(async () => {
+            tick += 40;
+            return mockResult;
+          }),
+          doStream: vi.fn(),
+          params: transformedParams,
+          model: mockModel,
+        });
+      } finally {
+        performance.now = realNow;
+      }
 
       expect(onDecode).toHaveBeenCalledTimes(1);
       const result = onDecode.mock.calls[0][0];
@@ -991,6 +1040,7 @@ describe("prompt-identifiers-ai-sdk", () => {
       expect(result.debugData.decodedCount).toBe(1);
       expect(result.debugData.input).toBe("Found ~000~ in the system.");
       expect(result.debugData.output).toBe(`Found ${uuid} in the system.`);
+      expect(result.debugData.durationMs).toBe(1);
     });
 
     test("counts a placeholder whose format carries a regex metacharacter", async () => {
@@ -1316,16 +1366,6 @@ describe("prompt-identifiers-ai-sdk", () => {
     });
 
     test("the streamed duration is decode time, not the generation's", async () => {
-      // The stubbed clock advances one tick per read. The 40 ticks added between chunks stand
-      // for the model's latency, which a real generation spends outside the transform.
-      let tick = 0;
-      const realNow = performance.now;
-      performance.now = () => {
-        const now = tick;
-        tick += 1;
-        return now;
-      };
-
       const onDecode = vi.fn();
       const uuid = "123e4567-e89b-42d3-a456-426655440000";
       const middleware = createMiddleware({ config: defaultConfig, debug: true, onDecode });
@@ -1335,6 +1375,17 @@ describe("prompt-identifiers-ai-sdk", () => {
         { type: "text-end", id: "1" },
         { type: "finish", finishReason: mockFinishReason(), usage: mockUsage() },
       ];
+
+      // The stubbed clock advances one tick per read. The 40 ticks added between chunks stand
+      // for the model's latency, which a real generation spends outside the transform. The
+      // stub goes up last, so nothing between it and the try can leave it in place.
+      let tick = 0;
+      const realNow = performance.now;
+      performance.now = () => {
+        const now = tick;
+        tick += 1;
+        return now;
+      };
       try {
         const transformedParams = await middleware.transformParams({
           params: createParams([userMessage(`Look up ${uuid}`)]),
