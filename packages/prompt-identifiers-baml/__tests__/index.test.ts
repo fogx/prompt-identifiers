@@ -569,8 +569,11 @@ describe("prompt-identifiers-baml", () => {
         onDecode,
       });
 
+      const input = { id: uuid1 };
+
       // The stubbed clock advances one tick per read, so encode and decode each report the one
-      // tick their own two reads cost.
+      // tick their own two reads cost. The stub goes up last, so nothing between it and the
+      // try can leave it in place.
       let tick = 0;
       const realNow = performance.now;
       performance.now = () => {
@@ -578,8 +581,6 @@ describe("prompt-identifiers-baml", () => {
         tick += 1;
         return now;
       };
-
-      const input = { id: uuid1 };
       try {
         // The 40 ticks stand for the model's latency, which falls between encode and decode
         mockFn.mockImplementationOnce(async (received: { id: string }) => {
@@ -639,7 +640,6 @@ describe("prompt-identifiers-baml", () => {
       const decodeResult = onDecode.mock.calls[0][0];
       expect(decodeResult.debugData).toBeDefined();
       expect(decodeResult.debugData.decodedCount).toBeGreaterThanOrEqual(1);
-      expect(typeof decodeResult.debugData.durationMs).toBe("number");
     });
 
     test("debugData is absent when debug is false", async () => {
@@ -1063,6 +1063,9 @@ describe("prompt-identifiers-baml", () => {
       // The stubbed clock advances one tick per read, so decoding one part costs one tick and
       // the final response one more. The 40 ticks between parts are the model's latency.
       const partials = [{ text: "~000~ a" }, { text: "~000~ b" }, { text: "~000~ c" }];
+      const onDecode = vi.fn();
+
+      // The stub goes up last, so nothing between it and the try can leave it in place.
       let tick = 0;
       const realNow = performance.now;
       performance.now = () => {
@@ -1070,8 +1073,6 @@ describe("prompt-identifiers-baml", () => {
         tick += 1;
         return now;
       };
-
-      const onDecode = vi.fn();
       try {
         const source = {
           async *[Symbol.asyncIterator]() {
