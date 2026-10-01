@@ -201,6 +201,109 @@ describe("the accuracy bench scores every format the same way", () => {
     expect(result.idsNotReproduced).toBe(0);
   });
 
+  test.for([
+    { label: "the same names in another order", names: ["b", "a"], incorrectNames: 0 },
+    { label: "the same names with padding", names: [" b ", "a"], incorrectNames: 0 },
+    { label: "an extra name", names: ["a", "b", "c"], incorrectNames: 1 },
+    { label: "a name missing", names: ["a"], incorrectNames: 1 },
+  ])("a class answered with $label", ({ names, incorrectNames }) => {
+    // The names are compared as sets, so order and padding are the dataset's business and not
+    // the model's error, while a name too many or too few is
+    const expected: ExpectedResult = {
+      aggregations: new Map([[uuids[0], { count: 2, names: ["a", "b"] }]]),
+      originalClassIds: new Set([uuids[0]]),
+    };
+
+    const result = verify(answer([{ class_id: uuids[0], count: 2, names }]), expected);
+
+    expect(result.incorrectNames).toBe(incorrectNames);
+    expect(result.totalErrors).toBe(incorrectNames);
+  });
+
+  test("a class whose expected names are held in another order is still matched", () => {
+    const expected: ExpectedResult = {
+      aggregations: new Map([[uuids[0], { count: 2, names: ["b", "a"] }]]),
+      originalClassIds: new Set([uuids[0]]),
+    };
+
+    const result = verify(answer([{ class_id: uuids[0], count: 2, names: ["a", "b"] }]), expected);
+
+    expect(result.incorrectNames).toBe(0);
+    expect(result.totalErrors).toBe(0);
+  });
+
+  test("a short-format id cut short is not read as the same id in another case", () => {
+    // The case-only return needs equal lengths. Without that half, a two-character answer is no
+    // distance from "000", so it would be charged as a misspelling and "000" marked seen, and
+    // the three-character format would get a discount on a truncation the 36-character one
+    // cannot earn
+    const result = verify(
+      answer([
+        { class_id: "00", count: 1, names: ["a"] },
+        { class_id: "001", count: 1, names: ["a"] },
+        { class_id: "002", count: 1, names: ["a"] },
+      ]),
+      expectedFor(placeholders)
+    );
+
+    expect(result.misspelledIds).toBe(1);
+    expect(result.droppedIds).toBe(1);
+    expect(result.totalErrors).toBe(2);
+    expect(result.idsNotReproduced).toBe(1);
+  });
+
+  test("an encoded format is scored against the placeholders, not the original ids", () => {
+    // createPrompt keys the aggregations by placeholder and keeps the raw UUIDs in
+    // originalClassIds, so scoring against the wrong one would read every encoded run as a
+    // total loss and hand the comparison to the raw baseline
+    const expected: ExpectedResult = {
+      aggregations: new Map([
+        ["~000~", { count: 1, names: ["a"] }],
+        ["~001~", { count: 1, names: ["a"] }],
+      ]),
+      originalClassIds: new Set([uuids[0], uuids[1]]),
+    };
+
+    const result = verify(
+      answer([
+        { class_id: "~000~", count: 1, names: ["a"] },
+        { class_id: "~001~", count: 1, names: ["a"] },
+      ]),
+      expected
+    );
+
+    expect(result.totalErrors).toBe(0);
+    expect(result.idsNotReproduced).toBe(0);
+  });
+
+  test.for([
+    { label: "a result wrapper", key: "result" },
+    { label: "a data wrapper", key: "data" },
+    { label: "a wrapper under some other name", key: "classes" },
+  ])("an answer shaped as $label is scored, not thrown away", ({ key }) => {
+    // The last rung takes any array property whose first row carries a class_id, which is what
+    // keeps a model's own choice of wrapper from losing the whole run
+    const body = JSON.stringify({ [key]: [{ class_id: uuids[0], count: 1, names: ["a"] }] });
+
+    const result = verify(body, expectedFor([uuids[0]]));
+
+    expect(result.parseSuccess).toBe(true);
+    expect(result.totalErrors).toBe(0);
+  });
+
+  test("an answer in a code fence is read out of the fence", () => {
+    // The brace in the prose after the fence is what makes this fail without the fence
+    // extraction: the span from the first brace to the last then ends outside the JSON
+    const body = `Here is the aggregation:\n\`\`\`json\n${answer([
+      { class_id: uuids[0], count: 1, names: ["a"] },
+    ])}\n\`\`\`\nEvery class is listed {complete}.`;
+
+    const result = verify(body, expectedFor([uuids[0]]));
+
+    expect(result.parseSuccess).toBe(true);
+    expect(result.totalErrors).toBe(0);
+  });
+
   test("an answer that does not parse loses every class", () => {
     // The scorer cannot see what the model meant, so every expected id is a miss. Leaving the
     // format-fair count at zero here scores an unusable answer as a perfect one
