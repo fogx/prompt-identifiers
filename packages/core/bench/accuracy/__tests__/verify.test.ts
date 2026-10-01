@@ -171,6 +171,24 @@ describe("the accuracy bench scores every format the same way", () => {
     expect(result.droppedIds).toBe(cut <= 2 ? 0 : 1);
   });
 
+  test("a class answered with the wrong count or the wrong names is charged for it", () => {
+    // Reproducing the identifier is not the whole job: the row behind it has to be right too, so
+    // a format that keeps every id and gets every aggregate wrong is not a format that worked
+    const result = verify(
+      answer([
+        { class_id: uuids[0], count: 7, names: ["a"] },
+        { class_id: uuids[1], count: 1, names: ["b"] },
+        { class_id: uuids[2], count: 1, names: ["a"] },
+      ]),
+      expectedFor(uuids)
+    );
+
+    expect(result.incorrectCounts).toBe(1);
+    expect(result.incorrectNames).toBe(1);
+    expect(result.totalErrors).toBe(2);
+    expect(result.idsNotReproduced).toBe(0);
+  });
+
   test("an answer that does not parse loses every class", () => {
     // The scorer cannot see what the model meant, so every expected id is a miss. Leaving the
     // format-fair count at zero here scores an unusable answer as a perfect one
