@@ -21,6 +21,7 @@ import {
   systemMessage,
   toolMessage,
   userMessage,
+  withStubbedClock,
 } from "./test-helpers";
 
 describe("prompt-identifiers-ai-sdk", () => {
@@ -965,25 +966,15 @@ describe("prompt-identifiers-ai-sdk", () => {
       const uuid = "123e4567-e89b-42d3-a456-426655440000";
       const params = createParams([userMessage(`Find user ${uuid}`)]);
 
-      // The stubbed clock advances one tick per read, so the encode reports the one tick its
-      // own two reads cost. It starts above zero so a reading of the clock itself cannot pass
-      // for an elapsed time.
-      let tick = 100;
-      const realNow = performance.now;
-      performance.now = () => {
-        const now = tick;
-        tick += 1;
-        return now;
-      };
-      try {
+      // Each read of the stubbed clock costs one tick, so the encode reports the one tick its
+      // own two reads cost.
+      await withStubbedClock(async () => {
         await middleware.transformParams({
           params,
           type: "generate",
           model: mockModel,
         });
-      } finally {
-        performance.now = realNow;
-      }
+      });
 
       expect(onEncode).toHaveBeenCalledTimes(1);
       const result = onEncode.mock.calls[0][0];
@@ -1019,28 +1010,20 @@ describe("prompt-identifiers-ai-sdk", () => {
         warnings: [],
       };
 
-      // The stubbed clock advances one tick per read. The 40 ticks stand for the model's
-      // latency, which falls inside doGenerate and outside the decode.
-      let tick = 0;
-      const realNow = performance.now;
-      performance.now = () => {
-        const now = tick;
-        tick += 1;
-        return now;
-      };
-      try {
+      // Each read of the stubbed clock costs one tick, so the decode reports the one tick its
+      // own two reads cost. The 40 ticks stand for the model's latency, which falls inside
+      // doGenerate and outside the decode.
+      await withStubbedClock(async (advance) => {
         await middleware.wrapGenerate({
           doGenerate: vi.fn().mockImplementation(async () => {
-            tick += 40;
+            advance(40);
             return mockResult;
           }),
           doStream: vi.fn(),
           params: transformedParams,
           model: mockModel,
         });
-      } finally {
-        performance.now = realNow;
-      }
+      });
 
       expect(onDecode).toHaveBeenCalledTimes(1);
       const result = onDecode.mock.calls[0][0];
@@ -1386,17 +1369,10 @@ describe("prompt-identifiers-ai-sdk", () => {
         { type: "finish", finishReason: mockFinishReason(), usage: mockUsage() },
       ];
 
-      // The stubbed clock advances one tick per read. The 40 ticks added between chunks stand
-      // for the model's latency, which a real generation spends outside the transform. The
-      // stub goes up last, so nothing between it and the try can leave it in place.
-      let tick = 0;
-      const realNow = performance.now;
-      performance.now = () => {
-        const now = tick;
-        tick += 1;
-        return now;
-      };
-      try {
+      // Each read of the stubbed clock costs one tick, so transforming one chunk costs one.
+      // The 40 ticks added between chunks stand for the model's latency, which a real
+      // generation spends outside the transform.
+      await withStubbedClock(async (advance) => {
         const transformedParams = await middleware.transformParams({
           params: createParams([userMessage(`Look up ${uuid}`)]),
           type: "stream",
@@ -1410,7 +1386,7 @@ describe("prompt-identifiers-ai-sdk", () => {
                 for (const chunk of chunks) {
                   // Yield so the transform runs between chunks, where the latency belongs
                   await Promise.resolve();
-                  tick += 40;
+                  advance(40);
                   controller.enqueue(chunk);
                 }
                 controller.close();
@@ -1423,9 +1399,7 @@ describe("prompt-identifiers-ai-sdk", () => {
         });
 
         await collectStreamText(result.stream);
-      } finally {
-        performance.now = realNow;
-      }
+      });
 
       // One tick per chunk transformed. The 160 ticks added between them are not in the total.
       expect(onDecode.mock.calls[0][0].debugData.durationMs).toBe(chunks.length);
