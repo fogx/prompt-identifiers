@@ -7,7 +7,7 @@ import {
   wrapBamlStreamingFunction,
 } from "../src/index";
 import type { BamlStreamFunction } from "../src/index";
-import { withStubbedClock } from "./test-helpers";
+import { CHARGED_TICKS, chargingRead, withStubbedClock } from "./test-helpers";
 
 describe("prompt-identifiers-baml", () => {
   const defaultConfig: EncodeConfig = {
@@ -570,15 +570,18 @@ describe("prompt-identifiers-baml", () => {
         onDecode,
       });
 
-      const input = { id: uuid1 };
+      let input!: { id: string };
 
-      // Each read of the stubbed clock costs one tick, so encode and decode each report the one
-      // tick their own two reads cost. The 40 ticks stand for the model's latency, which falls
-      // between them.
+      // Encode and decode each report the one tick their own two reads cost plus the ten the
+      // field they walk charges, so a span moved below the walk loses the ten. The 40 ticks
+      // stand for the model's latency, which falls between the two spans.
       await withStubbedClock(async (advance) => {
+        input = chargingRead({}, "id", uuid1, advance) as { id: string };
         mockFn.mockImplementationOnce(async (received: { id: string }) => {
           advance(40);
-          return { result: `Found: ${received.id}` };
+          return chargingRead({}, "result", `Found: ${received.id}`, advance) as {
+            result: string;
+          };
         });
         await wrapped(input);
       });
@@ -590,7 +593,7 @@ describe("prompt-identifiers-baml", () => {
       expect(encodeResult.debugData.encodedCount).toBe(1);
       expect(encodeResult.debugData.input).toEqual({ id: uuid1 });
       expect(encodeResult.debugData.output).toEqual({ id: "~000~" });
-      expect(encodeResult.debugData.durationMs).toBe(1);
+      expect(encodeResult.debugData.durationMs).toBe(1 + CHARGED_TICKS);
 
       // onDecode debugData
       const decodeResult = onDecode.mock.calls[0][0];
@@ -598,17 +601,17 @@ describe("prompt-identifiers-baml", () => {
       expect(decodeResult.debugData.decodedCount).toBe(1);
       expect(decodeResult.debugData.input).toEqual({ result: "Found: ~000~" });
       expect(decodeResult.debugData.output).toEqual({ result: `Found: ${uuid1}` });
-      expect(decodeResult.debugData.durationMs).toBe(1);
+      expect(decodeResult.debugData.durationMs).toBe(1 + CHARGED_TICKS);
     });
 
     test("wrapBamlStreamingFunction populates debugData when debug is true", async () => {
       const onEncode = vi.fn();
       const onDecode = vi.fn();
 
-      // Each read of the stubbed clock costs one tick, so the encode's two reads cost one. No
-      // stream time can land between those two reads: the input is encoded in full before the
-      // function is called.
-      await withStubbedClock(async () => {
+      // The encode reports the one tick its own two reads cost plus the ten the field it walks
+      // charges, so a span moved below the walk loses the ten. No stream time can land between
+      // the two reads, since the input is encoded in full before the function is called.
+      await withStubbedClock(async (advance) => {
         async function* mockStreamFn(input: { id: string }) {
           yield { partial: `Processing ${input.id}...` };
           return { final: `Done for ${input.id}` };
@@ -621,7 +624,7 @@ describe("prompt-identifiers-baml", () => {
           onDecode,
         });
 
-        const generator = wrapped({ id: uuid1 });
+        const generator = wrapped(chargingRead({}, "id", uuid1, advance) as { id: string });
         while (!(await generator.next()).done) {}
       });
 
@@ -631,7 +634,7 @@ describe("prompt-identifiers-baml", () => {
       expect(encodeResult.debugData.encodedCount).toBe(1);
       expect(encodeResult.debugData.input).toEqual({ id: uuid1 });
       expect(encodeResult.debugData.output).toEqual({ id: "~000~" });
-      expect(encodeResult.debugData.durationMs).toBe(1);
+      expect(encodeResult.debugData.durationMs).toBe(1 + CHARGED_TICKS);
 
       // onDecode debugData
       const decodeResult = onDecode.mock.calls[0][0];
@@ -1057,12 +1060,19 @@ describe("prompt-identifiers-baml", () => {
     });
 
     test("the reported duration is decode time summed over the parts", async () => {
-      // Each read of the stubbed clock costs one tick, so decoding one part costs one tick and
-      // the final response one more. The 40 ticks between parts are the model's latency.
-      const partials = [{ text: "~000~ a" }, { text: "~000~ b" }, { text: "~000~ c" }];
+      // Decoding one part costs one tick and the final response one more, plus the ten the
+      // first part's text charges when the decode walks it, so a span moved below the walk
+      // loses the ten. The 40 ticks between parts are the model's latency, which a wall clock
+      // around the stream would carry.
       const onDecode = vi.fn();
+      let partials!: { text: string }[];
 
       await withStubbedClock(async (advance) => {
+        partials = [
+          chargingRead({}, "text", "~000~ a", advance) as { text: string },
+          { text: "~000~ b" },
+          { text: "~000~ c" },
+        ];
         const source = {
           async *[Symbol.asyncIterator]() {
             for (const partial of partials) {
@@ -1086,7 +1096,9 @@ describe("prompt-identifiers-baml", () => {
         await stream.getFinalResponse();
       });
 
-      expect(onDecode.mock.calls[0][0].debugData.durationMs).toBe(partials.length + 1);
+      expect(onDecode.mock.calls[0][0].debugData.durationMs).toBe(
+        partials.length + 1 + CHARGED_TICKS
+      );
     });
 
     test("a final response that throws still reaches the consumer that asked for it", async () => {
