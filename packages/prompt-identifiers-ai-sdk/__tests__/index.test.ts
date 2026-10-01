@@ -751,6 +751,56 @@ describe("prompt-identifiers-ai-sdk", () => {
       expect(result.content[0]).toBe(call);
     });
 
+    async function streamThrough(chunk: unknown): Promise<LanguageModelV4StreamPart[]> {
+      const middleware = createMiddleware({ config: defaultConfig });
+      const transformedParams = await middleware.transformParams({
+        params: createParams([userMessage("Find 123e4567-e89b-42d3-a456-426655440000")]),
+        type: "stream",
+        model: mockModel,
+      });
+
+      const streamed = await middleware.wrapStream({
+        doStream: vi.fn().mockResolvedValue({
+          stream: createMockStream([
+            chunk,
+            { type: "finish", finishReason: mockFinishReason(), usage: mockUsage() },
+          ] as never),
+        }),
+        doGenerate: vi.fn(),
+        params: transformedParams,
+        model: mockModel,
+      });
+
+      return collectStreamParts(streamed.stream);
+    }
+
+    test("a tool result with no output is handed on", async () => {
+      const middleware = createMiddleware({ config: defaultConfig });
+      const part = { type: "tool-result", toolCallId: "call-1", toolName: "get_user" };
+
+      const result = await middleware.transformParams({
+        params: createParams([
+          { role: "tool", content: [part] } as unknown as LanguageModelV4Message,
+        ]),
+        type: "generate",
+        model: mockModel,
+      });
+
+      expect(firstPart(result.prompt)).toBe(part);
+    });
+
+    // The streaming decoder concatenates whatever it is handed, so without the guard the literal
+    // word "undefined" reaches the consumer: inside the tool input it parses, in the first case
+    test.for([
+      ["a tool input delta", { type: "tool-input-delta", id: "1" }],
+      ["a reasoning delta", { type: "reasoning-delta", id: "1" }],
+    ])("%s with no delta is handed on", async ([, chunk]) => {
+      const parts = await streamThrough(chunk);
+
+      expect(parts[0]).toBe(chunk);
+      expect(parts[0]).not.toMatchObject({ delta: "undefined" });
+    });
+
     test("a streamed tool call whose input is not a string is handed on", async () => {
       const middleware = createMiddleware({ config: defaultConfig });
       const uuid = "123e4567-e89b-42d3-a456-426655440000";

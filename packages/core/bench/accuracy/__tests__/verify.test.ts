@@ -294,14 +294,43 @@ describe("the accuracy bench scores every format the same way", () => {
     expect(result.idsNotReproduced).toBe(0);
   });
 
-  test.for([
-    { label: "a result wrapper", key: "result" },
-    { label: "a data wrapper", key: "data" },
-    { label: "a wrapper under some other name", key: "classes" },
-  ])("an answer shaped as $label is scored, not thrown away", ({ key }) => {
+  test("an answer under a wrapper the parser does not name is still scored", () => {
     // The last rung takes any array property whose first row carries a class_id, which is what
     // keeps a model's own choice of wrapper from losing the whole run
-    const body = JSON.stringify({ [key]: [{ class_id: uuids[0], count: 1, names: ["a"] }] });
+    const body = JSON.stringify({ classes: [{ class_id: uuids[0], count: 1, names: ["a"] }] });
+
+    const result = verify(body, expectedFor([uuids[0]]));
+
+    expect(result.parseSuccess).toBe(true);
+    expect(result.totalErrors).toBe(0);
+  });
+
+  // A named rung only decides anything where the generic rung below it cannot answer, and that
+  // one asks for a non-empty array whose first row carries a class_id. An empty array is an
+  // answer: the model listed no classes, which costs every expected id, where an unparseable
+  // answer costs the same and tells the reader the run failed instead
+  test.for([
+    { label: "an empty aggregations array", body: { aggregations: [] }, parsed: true },
+    { label: "an empty result array", body: { result: [] }, parsed: true },
+    { label: "an empty data array", body: { data: [] }, parsed: true },
+    { label: "an empty array under another name", body: { classes: [] }, parsed: false },
+    {
+      label: "rows with no class_id under another name",
+      body: { classes: [{ count: 1 }] },
+      parsed: false,
+    },
+  ])("$label is parsed: $parsed", ({ body, parsed }) => {
+    const result = verify(JSON.stringify(body), expectedFor([uuids[0]]));
+
+    expect(result.parseSuccess).toBe(parsed);
+  });
+
+  test("a fenced answer that is a bare array is scored", () => {
+    // The fence is the only route to a top-level array: without one, the span from the first
+    // brace to the last pulls a single row out of the array instead
+    const body = `\`\`\`json\n${JSON.stringify([
+      { class_id: uuids[0], count: 1, names: ["a"] },
+    ])}\n\`\`\``;
 
     const result = verify(body, expectedFor([uuids[0]]));
 
