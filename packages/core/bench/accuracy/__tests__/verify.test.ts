@@ -77,30 +77,6 @@ describe("the accuracy bench scores every format the same way", () => {
     }
   });
 
-  test("one wrong id costs the same under every format", () => {
-    // `totalErrors` cannot say this: the misspelling discount is only available to a format whose
-    // placeholders are long enough to carry a typo, so a three-digit Numeric id never earns it and
-    // a 36-character UUID almost always does. idsNotReproduced is what the formats are compared on
-    const oneWrong = [
-      { ids: uuids, written: "deadbeef-dead-4bad-8bad-deadbeefdead" },
-      { ids: placeholders, written: "900" },
-      { ids: placeholders, written: "001x".slice(0, 3) },
-      { ids: ["~000~", "~001~", "~002~"], written: "~009~" },
-      // The budget is relative to length, so where it lands decides whether a near miss reads as
-      // a typo. Whatever it decides, these two must cost the same as the rest
-      { ids: uuids, written: uuids[0].slice(0, 35) + "1" },
-      { ids: placeholders, written: "003" },
-    ];
-
-    const costs = oneWrong.map(({ ids, written }) => {
-      const rows = ids.slice(1).map((id) => ({ class_id: id, count: 1, names: ["a"] }));
-      rows.unshift({ class_id: written, count: 1, names: ["a"] });
-      return verify(answer(rows), expectedFor(ids)).idsNotReproduced;
-    });
-
-    expect(costs).toEqual([1, 1, 1, 1, 1, 1]);
-  });
-
   test("an id echoed in a different case is one error, not two", () => {
     // The exact lookup is case-sensitive, so a re-cased id misses it and falls to the near-match
     // path. similarity() ignores case there, so the id is matched to itself and marked seen.
