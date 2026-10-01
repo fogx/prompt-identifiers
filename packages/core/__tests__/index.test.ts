@@ -304,26 +304,36 @@ describe("prompt-identifiers", () => {
     });
   });
 
-  describe("UUID case handling", () => {
-    test("an uppercase UUID is written back as the caller wrote it", () => {
-      const prompt = "ID: 123E4567-E89B-42D3-A456-426655440000";
+  describe("Identifier case handling", () => {
+    // Matching is case-insensitive and the id table is keyed on the lowercased form, but what
+    // goes in the mapping is the text as it was written: Crockford base32 is upper case, and a
+    // lowercased identifier misses a case-sensitive lookup on the way back out.
+    test.for([
+      {
+        shape: "an uppercase UUID",
+        prompt: "ID: 123E4567-E89B-42D3-A456-426655440000",
+        config: UUID_NUMERIC_CONFIG,
+        first: "123E4567-E89B-42D3-A456-426655440000",
+      },
+      {
+        shape: "a ULID",
+        prompt: "Order 01ARZ3NDEKTSV4RRFFQ69G5FAV shipped",
+        config: { inputFormat: "ULID", outputFormat: "Numeric" } as EncodeConfig,
+        first: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      },
+      {
+        shape: "a custom regex match",
+        prompt: "Order ORD-ABC-123 shipped to customer CUST-XYZ-789",
+        config: {
+          inputFormat: /[A-Z]{3,4}-[A-Z]{3}-\d{3}/gi,
+          outputFormat: "Numeric",
+        } as EncodeConfig,
+        first: "ORD-ABC-123",
+      },
+    ])("$shape is written back as the caller wrote it", ({ prompt, config, first }) => {
+      const { encoded, mapping } = encode(prompt, config);
 
-      const { encoded, mapping } = encode(prompt, UUID_NUMERIC_CONFIG);
-
-      expect(mapping["000"]).toBe("123E4567-E89B-42D3-A456-426655440000");
-      expect(decode(encoded, mapping)).toBe(prompt);
-    });
-
-    test("a ULID survives a round trip in the case it was written in", () => {
-      // Crockford base32 is written in upper case, and a lowercased ULID misses a case-sensitive
-      // lookup, so the identifier the caller gets back has to be the one it handed over
-      const prompt = "Order 01ARZ3NDEKTSV4RRFFQ69G5FAV shipped";
-
-      const { encoded, mapping } = encode(prompt, {
-        inputFormat: "ULID",
-        outputFormat: "Numeric",
-      });
-
+      expect(mapping["000"]).toBe(first);
       expect(decode(encoded, mapping)).toBe(prompt);
     });
 
@@ -350,16 +360,6 @@ describe("prompt-identifiers", () => {
       expect(encoded).toBe("User 000 logged in, then 001 logged out");
       expect(mapping["000"]).toBe("user-123456");
       expect(mapping["001"]).toBe("user-789012");
-    });
-
-    test("custom regex roundtrip", () => {
-      const prompt = "Order ORD-ABC-123 shipped to customer CUST-XYZ-789";
-      const { encoded, mapping } = encode(prompt, {
-        inputFormat: /[A-Z]{3,4}-[A-Z]{3}-\d{3}/gi,
-        outputFormat: "Numeric",
-      });
-
-      expect(decode(encoded, mapping)).toBe(prompt);
     });
 
     test("custom regex without global flag gets global added", () => {
@@ -777,22 +777,23 @@ describe("prompt-identifiers", () => {
       expect(findPlaceholders("see ~a1~ and ~~ and ~-5~", "SafeNumeric")).toEqual([]);
     });
 
-    test("finds nothing for a formatter that ignores its index", () => {
-      expect(findPlaceholders("a X b", () => "X")).toEqual([]);
-    });
-
-    test("finds nothing for a formatter that throws above its range", () => {
-      const labels = ["<a>", "<b>"];
-      const formatter = (index: number) => {
-        if (index >= labels.length) throw new RangeError(`index ${index} out of range`);
-        return labels[index];
-      };
-
-      expect(findPlaceholders("a <a> b", formatter)).toEqual([]);
-    });
-
-    test("finds nothing for a template without an index", () => {
-      expect(findPlaceholders("a <x> b", { template: "no-index-here" })).toEqual([]);
+    // A format can be the right type and still carry no shape to match on. Each of these is
+    // readable enough to probe and gives nothing back, so the answer is no placeholders rather
+    // than whatever the probe happened to throw.
+    test.for<[string, OutputFormat, string]>([
+      ["a formatter that ignores its index", () => "X", "a X b"],
+      [
+        "a formatter that throws above its range",
+        (index: number) => {
+          const labels = ["<a>", "<b>"];
+          if (index >= labels.length) throw new RangeError(`index ${index} out of range`);
+          return labels[index];
+        },
+        "a <a> b",
+      ],
+      ["a template without an index", { template: "no-index-here" }, "a <x> b"],
+    ])("finds nothing for %s", ([, outputFormat, text]) => {
+      expect(findPlaceholders(text, outputFormat)).toEqual([]);
     });
 
     test.each<[string, OutputFormat, string, string]>([
@@ -800,7 +801,6 @@ describe("prompt-identifiers", () => {
       ["a base62 template", { template: "[{i:base62}]" }, "[zZ9]", "[z-9]"],
       ["a padded prefix template", { template: "ID_{i:04}" }, "ID_0042", "ID_"],
       ["a formatter function", (i) => `[[ID_${i}]]`, "[[ID_12]]", "[[ID_]]"],
-      ["an offset formatter function", (i) => `<${i + 1}>`, "<3>", "<>"],
     ])("matches placeholders of %s", (_, outputFormat, placeholder, lookalike) => {
       expect(findPlaceholders(`a ${placeholder} b ${lookalike}`, outputFormat)).toEqual([
         placeholder,

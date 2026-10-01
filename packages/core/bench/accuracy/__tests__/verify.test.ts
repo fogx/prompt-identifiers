@@ -86,6 +86,10 @@ describe("the accuracy bench scores every format the same way", () => {
       { ids: placeholders, written: "900" },
       { ids: placeholders, written: "001x".slice(0, 3) },
       { ids: ["~000~", "~001~", "~002~"], written: "~009~" },
+      // The budget is relative to length, so where it lands decides whether a near miss reads as
+      // a typo. Whatever it decides, these two must cost the same as the rest
+      { ids: uuids, written: uuids[0].slice(0, 35) + "1" },
+      { ids: placeholders, written: "003" },
     ];
 
     const costs = oneWrong.map(({ ids, written }) => {
@@ -94,30 +98,7 @@ describe("the accuracy bench scores every format the same way", () => {
       return verify(answer(rows), expectedFor(ids)).idsNotReproduced;
     });
 
-    expect(costs).toEqual([1, 1, 1, 1]);
-  });
-
-  test("a one-character slip is not discounted for one format and charged to another", () => {
-    // The budget is relative to length, so where it lands decides whether a near miss reads as a
-    // typo. Whatever it decides, the comparison the bench publishes must not move with it
-    const nearMissRaw = verify(
-      answer([
-        { class_id: uuids[0].slice(0, 35) + "1", count: 1, names: ["a"] },
-        { class_id: uuids[1], count: 1, names: ["a"] },
-        { class_id: uuids[2], count: 1, names: ["a"] },
-      ]),
-      expectedFor(uuids)
-    );
-    const nearMissNumeric = verify(
-      answer([
-        { class_id: "003", count: 1, names: ["a"] },
-        { class_id: placeholders[1], count: 1, names: ["a"] },
-        { class_id: placeholders[2], count: 1, names: ["a"] },
-      ]),
-      expectedFor(placeholders)
-    );
-
-    expect(nearMissNumeric.idsNotReproduced).toBe(nearMissRaw.idsNotReproduced);
+    expect(costs).toEqual([1, 1, 1, 1, 1, 1]);
   });
 
   test("a three-character id is never read as a typo of another", () => {
