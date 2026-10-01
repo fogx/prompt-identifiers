@@ -252,7 +252,6 @@ function similarity(a: string, b: string): number | undefined {
 
   const minLen = Math.min(a.length, b.length);
   const budget = Math.min(3, Math.floor(minLen / 4));
-  if (budget === 0) return undefined;
 
   let differences = 0;
   for (let i = 0; i < minLen; i++) {
@@ -263,7 +262,12 @@ function similarity(a: string, b: string): number | undefined {
   }
 
   differences += Math.abs(a.length - b.length);
-  return differences <= budget && differences > 0 ? differences : undefined;
+  // No differences at all means the same identifier written in another case. That is not a guess
+  // about which id the model meant, so it is answered whatever the budget allows: refusing it
+  // charges one wrong answer twice, once as a misspelling and again as a dropped id.
+  if (differences === 0) return 0;
+  if (budget === 0) return undefined;
+  return differences <= budget ? differences : undefined;
 }
 
 /**
