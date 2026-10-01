@@ -325,6 +325,33 @@ describe("the accuracy bench scores every format the same way", () => {
     expect(result.parseSuccess).toBe(parsed);
   });
 
+  test("an empty array before the rows is skipped, not read as a failure", () => {
+    // The generic rung walks every array property, so a check for a non-empty one is what keeps
+    // an earlier empty array from throwing out of the loop before the rows are reached
+    const body = JSON.stringify({
+      notes: [],
+      classes: [{ class_id: uuids[0], count: 1, names: ["a"] }],
+    });
+
+    const result = verify(body, expectedFor([uuids[0]]));
+
+    expect(result.parseSuccess).toBe(true);
+    expect(result.totalErrors).toBe(0);
+  });
+
+  test("an unfenced answer with prose around it is read out of the prose", () => {
+    // The span from the first brace to the last is the only route in for an answer that is
+    // neither fenced nor pure JSON, which is the ordinary shape of a model reply
+    const body = `Sure! Here is the aggregation:\n${JSON.stringify({
+      aggregations: [{ class_id: uuids[0], count: 1, names: ["a"] }],
+    })}\nLet me know if you need more.`;
+
+    const result = verify(body, expectedFor([uuids[0]]));
+
+    expect(result.parseSuccess).toBe(true);
+    expect(result.totalErrors).toBe(0);
+  });
+
   test("a fenced answer that is a bare array is scored", () => {
     // The fence is the only route to a top-level array: without one, the span from the first
     // brace to the last pulls a single row out of the array instead

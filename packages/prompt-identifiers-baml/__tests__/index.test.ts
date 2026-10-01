@@ -962,6 +962,9 @@ describe("prompt-identifiers-baml", () => {
       ["encodeObject", () => encodeObject({ id: uuid1 }, defaultConfig)],
     ])("is refused by %s", async (_label, build) => {
       const core = await import("prompt-identifiers");
+      // The real export is a live-binding accessor, so the descriptor goes back rather than the
+      // value, which would leave the namespace member a frozen snapshot
+      const descriptor = Object.getOwnPropertyDescriptor(core, "encode")!;
       const real = core.encode;
       Object.defineProperty(core, "encode", {
         value: (text: string, config: unknown, state?: unknown) =>
@@ -971,8 +974,63 @@ describe("prompt-identifiers-baml", () => {
       try {
         expect(build).toThrow(/prompt-identifiers 0\.2\.0 or later/);
       } finally {
-        Object.defineProperty(core, "encode", { value: real, configurable: true });
+        Object.defineProperty(core, "encode", descriptor);
       }
+    });
+  });
+
+  describe("A source the wrapper has to classify", () => {
+    test("a thrown string does not spread itself across the error frame", () => {
+      // A BAML client that throws a string rather than an Error: without the is-an-object gate
+      // the spread writes one key per character into the frame a reader parses
+      const wrapped = wrapBamlStreamingFunction(
+        () => ({
+          async *[Symbol.asyncIterator]() {
+            yield { text: "~000~ first" };
+          },
+          async getFinalResponse(): Promise<{ text: string }> {
+            throw "coercion failed";
+          },
+        }),
+        { config: defaultConfig }
+      );
+
+      return new Response(wrapped({ id: uuid1 }).toStreamable()).text().then((body) => {
+        const frames = body
+          .trimEnd()
+          .split("\n")
+          .map((entry) => JSON.parse(entry));
+        const frame = frames[frames.length - 1].error;
+
+        expect(Object.keys(frame).sort()).toEqual(["message", "prompt", "raw_output", "type"]);
+        expect(frame.message).toBe("Error in stream processing");
+      });
+    });
+
+    test("a generator carrying a non-callable getFinalResponse is driven as a generator", async () => {
+      // The outer gate lets it through because it answers `next`, so the stream test has to ask
+      // whether getFinalResponse can be called rather than whether the key is there
+      async function* gen(): AsyncGenerator<{ text: string }, { text: string }, unknown> {
+        yield { text: "~000~ first" };
+        return { text: "~000~ final" };
+      }
+      const source = Object.assign(gen(), { getFinalResponse: "not a function" });
+      const wrapped = wrapBamlStreamingFunction(() => source as never, { config: defaultConfig });
+
+      const seen: unknown[] = [];
+      const iterator = wrapped({ id: uuid1 }) as unknown as AsyncGenerator<
+        unknown,
+        unknown,
+        unknown
+      >;
+      let step = await iterator.next();
+      while (!step.done) {
+        seen.push(step.value);
+        step = await iterator.next();
+      }
+
+      expect(seen).toEqual([{ text: `${uuid1} first` }]);
+      expect(step.value).toEqual({ text: `${uuid1} final` });
     });
   });
 
