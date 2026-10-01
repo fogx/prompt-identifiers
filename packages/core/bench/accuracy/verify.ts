@@ -239,7 +239,8 @@ export function verify(
 
 /**
  * How far apart two strings are, counting position by position and then the length difference,
- * or undefined once they are too far apart to be one misspelling of the other.
+ * or undefined once they are too far apart to be one misspelling of the other. Case is ignored,
+ * so a pair that differs only in case is zero apart.
  *
  * The budget is relative as well as absolute, because a flat three characters means something
  * different at either end of the scale. Two random UUIDs differ in about 34 of 36 positions and
@@ -261,9 +262,8 @@ function similarity(a: string, b: string): number | undefined {
     }
   }
 
-  // Same length and not one character apart is the same identifier written in another case. That
-  // is not a guess about which id the model meant, so it is answered whatever the budget allows:
-  // refusing it charges one wrong answer twice, as a misspelling and again as a dropped id.
+  // Zero differences at equal length is the same id in another case, since the loop compares
+  // case-insensitively. It returns before the budget check, which is zero below four characters.
   if (differences === 0 && a.length === b.length) return 0;
 
   differences += Math.abs(a.length - b.length);

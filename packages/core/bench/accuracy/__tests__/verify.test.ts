@@ -102,10 +102,8 @@ describe("the accuracy bench scores every format the same way", () => {
   });
 
   test("an id echoed in a different case is one error, not two", () => {
-    // Matching is case-insensitive everywhere else in the scorer, so an answer that gives the
-    // identifier back with its case changed is one failure: the id did not come back verbatim.
-    // Charging it as a misspelling and again as a drop makes one wrong answer read as two, and
-    // only the formats carrying letters can earn it
+    // The exact lookup is case-sensitive, so a re-cased id misses it and falls to the near-match
+    // path. similarity() ignores case there, so the id is matched to itself and marked seen.
     const result = verify(
       answer([
         { class_id: uuids[0].toUpperCase(), count: 1, names: ["a"] },
@@ -172,8 +170,6 @@ describe("the accuracy bench scores every format the same way", () => {
   });
 
   test("a class answered with the wrong count or the wrong names is charged for it", () => {
-    // Reproducing the identifier is not the whole job: the row behind it has to be right too, so
-    // a format that keeps every id and gets every aggregate wrong is not a format that worked
     const result = verify(
       answer([
         { class_id: uuids[0], count: 7, names: ["a"] },

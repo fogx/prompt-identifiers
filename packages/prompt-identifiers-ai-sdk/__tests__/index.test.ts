@@ -637,9 +637,8 @@ describe("prompt-identifiers-ai-sdk", () => {
     test("preserves a tool result output type it does not recognise", async () => {
       const middleware = createMiddleware({ config: defaultConfig });
 
-      // A later provider version can add an output type at any time. The encoder has nothing to
-      // say about one it cannot read, and saying nothing has to mean handing it on untouched
-      // rather than dropping the tool's answer out of the prompt.
+      // An output type the encoder does not recognise is handed on as it stands, so a type a
+      // later AI SDK version adds still reaches the model with the rest of the prompt.
       const output = { type: "binary-future-output", bytes: [1, 2, 3] };
       const params = createParams([
         toolMessage("call-1", "get_user", output as unknown as { type: "text"; value: string }),
@@ -1317,8 +1316,8 @@ describe("prompt-identifiers-ai-sdk", () => {
     });
 
     test("the streamed duration is decode time, not the generation's", async () => {
-      // The test owns the clock: a read costs one tick, and the model's latency is 40 ticks
-      // added between chunks, which is where a real generation spends it
+      // The stubbed clock advances one tick per read. The 40 ticks added between chunks stand
+      // for the model's latency, which a real generation spends outside the transform.
       let tick = 0;
       const realNow = performance.now;
       performance.now = () => {
@@ -1367,8 +1366,7 @@ describe("prompt-identifiers-ai-sdk", () => {
         performance.now = realNow;
       }
 
-      // One tick per chunk transformed. The 160 the model spent is not in it, and a field
-      // reporting no time at all is as wrong as one reporting the generation's.
+      // One tick per chunk transformed. The 160 ticks added between them are not in the total.
       expect(onDecode.mock.calls[0][0].debugData.durationMs).toBe(chunks.length);
     });
 
