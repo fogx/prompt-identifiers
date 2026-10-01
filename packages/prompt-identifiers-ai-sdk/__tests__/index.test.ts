@@ -957,8 +957,9 @@ describe("prompt-identifiers-ai-sdk", () => {
       const params = createParams([userMessage(`Find user ${uuid}`)]);
 
       // The stubbed clock advances one tick per read, so the encode reports the one tick its
-      // own two reads cost.
-      let tick = 0;
+      // own two reads cost. It starts above zero so a reading of the clock itself cannot pass
+      // for an elapsed time.
+      let tick = 100;
       const realNow = performance.now;
       performance.now = () => {
         const now = tick;
