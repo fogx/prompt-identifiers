@@ -101,6 +101,26 @@ describe("the accuracy bench scores every format the same way", () => {
     expect(costs).toEqual([1, 1, 1, 1, 1, 1]);
   });
 
+  test("an id echoed in a different case is one error, not two", () => {
+    // Matching is case-insensitive everywhere else in the scorer, so an answer that gives the
+    // identifier back with its case changed is one failure: the id did not come back verbatim.
+    // Charging it as a misspelling and again as a drop makes one wrong answer read as two, and
+    // only the formats carrying letters can earn it
+    const result = verify(
+      answer([
+        { class_id: uuids[0].toUpperCase(), count: 1, names: ["a"] },
+        { class_id: uuids[1], count: 1, names: ["a"] },
+        { class_id: uuids[2], count: 1, names: ["a"] },
+      ]),
+      expectedFor(uuids)
+    );
+
+    expect(result.misspelledIds).toBe(1);
+    expect(result.droppedIds).toBe(0);
+    expect(result.totalErrors).toBe(1);
+    expect(result.idsNotReproduced).toBe(1);
+  });
+
   test("a three-character id is never read as a typo of another", () => {
     // There is no room in three digits for a slip that is distinguishable from a different id,
     // so the scorer refuses to guess rather than discount. A budget generous enough to call 900 a
