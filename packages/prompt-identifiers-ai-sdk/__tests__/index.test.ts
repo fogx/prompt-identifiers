@@ -22,6 +22,8 @@ import {
   toolMessage,
   userMessage,
   withStubbedClock,
+  CHARGED_TICKS,
+  chargingRead,
 } from "./test-helpers";
 
 describe("prompt-identifiers-ai-sdk", () => {
@@ -647,9 +649,8 @@ describe("prompt-identifiers-ai-sdk", () => {
     ])("leaves %s alone", async (_label, output) => {
       const middleware = createMiddleware({ config: defaultConfig });
 
-      // Every arm checks the shape of the payload before walking it. An output carrying a type
-      // the encoder handles but not the shape that type implies reaches the model as the tool
-      // wrote it, rather than gaining a key the tool never set or throwing on the way out.
+      // Every arm checks the shape its type implies, so an output that fails the check reaches
+      // the model as the tool wrote it instead of being rebuilt around a value it never had.
       const params = createParams([
         toolMessage("call-1", "get_user", output as unknown as { type: "text"; value: string }),
       ]);
@@ -964,11 +965,17 @@ describe("prompt-identifiers-ai-sdk", () => {
       });
 
       const uuid = "123e4567-e89b-42d3-a456-426655440000";
-      const params = createParams([userMessage(`Find user ${uuid}`)]);
+      let params!: ReturnType<typeof createParams>;
 
-      // Each read of the stubbed clock costs one tick, so the encode reports the one tick its
-      // own two reads cost.
-      await withStubbedClock(async () => {
+      // The encode reports the one tick its own two reads cost plus the ten the prompt text
+      // charges when the encode reads it, so a span moved below the encode loses the ten.
+      await withStubbedClock(async (advance) => {
+        params = createParams([
+          {
+            role: "user",
+            content: [chargingRead({ type: "text" }, "text", `Find user ${uuid}`, advance)],
+          } as unknown as LanguageModelV4Message,
+        ]);
         await middleware.transformParams({
           params,
           type: "generate",
@@ -983,7 +990,7 @@ describe("prompt-identifiers-ai-sdk", () => {
       expect(result.debugData.encodedCount).toBe(1);
       expect(result.debugData.input).toBe(params.prompt);
       expect(result.debugData.output).toBeDefined();
-      expect(result.debugData.durationMs).toBe(1);
+      expect(result.debugData.durationMs).toBe(1 + CHARGED_TICKS);
     });
 
     test("onDecode receives debugData on wrapGenerate when debug is true", async () => {
@@ -1003,17 +1010,18 @@ describe("prompt-identifiers-ai-sdk", () => {
         model: mockModel,
       });
 
-      const mockResult: LanguageModelV4GenerateResult = {
-        content: [{ type: "text", text: "Found ~000~ in the system." }],
-        finishReason: mockFinishReason(),
-        usage: mockUsage(),
-        warnings: [],
-      };
-
-      // Each read of the stubbed clock costs one tick, so the decode reports the one tick its
-      // own two reads cost. The 40 ticks stand for the model's latency, which falls inside
-      // doGenerate and outside the decode.
+      // The decode reports the one tick its own two reads cost plus the ten the answer text
+      // charges when the decode reads it, so a span moved below the decode loses the ten. The
+      // 40 ticks stand for the model's latency, which falls inside doGenerate and outside the
+      // decode, so a span that started before doGenerate would carry them.
       await withStubbedClock(async (advance) => {
+        const mockResult = {
+          content: [chargingRead({ type: "text" }, "text", "Found ~000~ in the system.", advance)],
+          finishReason: mockFinishReason(),
+          usage: mockUsage(),
+          warnings: [],
+        } as unknown as LanguageModelV4GenerateResult;
+
         await middleware.wrapGenerate({
           doGenerate: vi.fn().mockImplementation(async () => {
             advance(40);
@@ -1033,7 +1041,7 @@ describe("prompt-identifiers-ai-sdk", () => {
       expect(result.debugData.decodedCount).toBe(1);
       expect(result.debugData.input).toBe("Found ~000~ in the system.");
       expect(result.debugData.output).toBe(`Found ${uuid} in the system.`);
-      expect(result.debugData.durationMs).toBe(1);
+      expect(result.debugData.durationMs).toBe(1 + CHARGED_TICKS);
     });
 
     test("counts a placeholder whose format carries a regex metacharacter", async () => {
@@ -1362,17 +1370,20 @@ describe("prompt-identifiers-ai-sdk", () => {
       const onDecode = vi.fn();
       const uuid = "123e4567-e89b-42d3-a456-426655440000";
       const middleware = createMiddleware({ config: defaultConfig, debug: true, onDecode });
-      const chunks: LanguageModelV4StreamPart[] = [
-        { type: "text-start", id: "1" },
-        { type: "text-delta", id: "1", delta: "Found ~000~" },
-        { type: "text-end", id: "1" },
-        { type: "finish", finishReason: mockFinishReason(), usage: mockUsage() },
-      ];
+      let chunks!: LanguageModelV4StreamPart[];
 
-      // Each read of the stubbed clock costs one tick, so transforming one chunk costs one.
-      // The 40 ticks added between chunks stand for the model's latency, which a real
-      // generation spends outside the transform.
+      // One tick per chunk transformed, plus the ten the delta charges when the transform
+      // reads it, so a span moved below the transform loses the ten. The 40 ticks added
+      // between chunks stand for the model's latency, which a real generation spends outside
+      // the transform, so a wall clock around the stream would carry them.
       await withStubbedClock(async (advance) => {
+        chunks = [
+          { type: "text-start", id: "1" },
+          chargingRead({ type: "text-delta", id: "1" }, "delta", "Found ~000~", advance),
+          { type: "text-end", id: "1" },
+          { type: "finish", finishReason: mockFinishReason(), usage: mockUsage() },
+        ] as unknown as LanguageModelV4StreamPart[];
+
         const transformedParams = await middleware.transformParams({
           params: createParams([userMessage(`Look up ${uuid}`)]),
           type: "stream",
@@ -1384,8 +1395,6 @@ describe("prompt-identifiers-ai-sdk", () => {
             stream: new ReadableStream<LanguageModelV4StreamPart>({
               async start(controller) {
                 for (const chunk of chunks) {
-                  // Yield so the transform runs between chunks, where the latency belongs
-                  await Promise.resolve();
                   advance(40);
                   controller.enqueue(chunk);
                 }
@@ -1401,8 +1410,9 @@ describe("prompt-identifiers-ai-sdk", () => {
         await collectStreamText(result.stream);
       });
 
-      // One tick per chunk transformed. The 160 ticks added between them are not in the total.
-      expect(onDecode.mock.calls[0][0].debugData.durationMs).toBe(chunks.length);
+      // The 160 ticks added between the chunks are not in the total; the ten the delta charged
+      // inside its own transform are.
+      expect(onDecode.mock.calls[0][0].debugData.durationMs).toBe(chunks.length + CHARGED_TICKS);
     });
 
     test("an escaped mapping keeps a placeholder spelled like a prototype member", async () => {
