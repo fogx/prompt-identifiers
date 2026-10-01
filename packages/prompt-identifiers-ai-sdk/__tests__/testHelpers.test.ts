@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import { withStubbedClock } from "./test-helpers";
+import { countRegExpBuilds, withStubbedClock } from "./test-helpers";
 
 describe("withStubbedClock", () => {
   test("starts above zero and costs one tick per read, plus whatever advance adds", async () => {
@@ -26,5 +26,31 @@ describe("withStubbedClock", () => {
     ).rejects.toThrow("boom");
 
     expect(performance.now).toBe(real);
+  });
+});
+
+describe("countRegExpBuilds", () => {
+  test("counts the constructions and puts the real RegExp back", async () => {
+    const real = globalThis.RegExp;
+
+    const built = await countRegExpBuilds(async () => {
+      new RegExp("a");
+      new RegExp("b");
+    });
+
+    expect(built).toBe(2);
+    expect(globalThis.RegExp).toBe(real);
+  });
+
+  test("puts the real RegExp back when the body throws", async () => {
+    const real = globalThis.RegExp;
+
+    await expect(
+      countRegExpBuilds(async () => {
+        throw new Error("boom");
+      })
+    ).rejects.toThrow("boom");
+
+    expect(globalThis.RegExp).toBe(real);
   });
 });

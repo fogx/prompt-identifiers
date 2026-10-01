@@ -71,6 +71,7 @@ Handles TextPart, ToolResultPart (text + JSON), and tool call inputs.
 - `packages/prompt-identifiers-ai-sdk/src/index.ts` — AI SDK middleware
 - `packages/prompt-identifiers-baml/src/index.ts` — BAML wrapper
 - `packages/prompt-identifiers-ai-sdk/__tests__/test-helpers.ts` — Mock factories for AI SDK tests
+- `packages/prompt-identifiers-baml/__tests__/test-helpers.ts` — Stubbed clock for BAML tests
 
 ## Code Conventions
 
