@@ -7,6 +7,7 @@ import {
   wrapBamlStreamingFunction,
 } from "../src/index";
 import type { BamlStreamFunction } from "../src/index";
+import { withStubbedClock } from "./test-helpers";
 
 describe("prompt-identifiers-baml", () => {
   const defaultConfig: EncodeConfig = {
@@ -571,27 +572,16 @@ describe("prompt-identifiers-baml", () => {
 
       const input = { id: uuid1 };
 
-      // The stubbed clock advances one tick per read, so encode and decode each report the one
-      // tick their own two reads cost. It starts above zero so a reading of the clock itself
-      // cannot pass for an elapsed time. The stub goes up last, so nothing between it and the
-      // try can leave it in place.
-      let tick = 100;
-      const realNow = performance.now;
-      performance.now = () => {
-        const now = tick;
-        tick += 1;
-        return now;
-      };
-      try {
-        // The 40 ticks stand for the model's latency, which falls between encode and decode
+      // Each read of the stubbed clock costs one tick, so encode and decode each report the one
+      // tick their own two reads cost. The 40 ticks stand for the model's latency, which falls
+      // between them.
+      await withStubbedClock(async (advance) => {
         mockFn.mockImplementationOnce(async (received: { id: string }) => {
-          tick += 40;
+          advance(40);
           return { result: `Found: ${received.id}` };
         });
         await wrapped(input);
-      } finally {
-        performance.now = realNow;
-      }
+      });
 
       // onEncode debugData
       const encodeResult = onEncode.mock.calls[0][0];
@@ -615,19 +605,10 @@ describe("prompt-identifiers-baml", () => {
       const onEncode = vi.fn();
       const onDecode = vi.fn();
 
-      // The stubbed clock advances one tick per read, so the encode's two reads cost one tick.
-      // It starts above zero so a reading of the clock itself cannot pass for an elapsed time.
-      // No stream time can land between those two reads: the input is encoded in full before
-      // the function is called. The stub goes up last, so nothing between it and the try can
-      // leave it in place.
-      let tick = 100;
-      const realNow = performance.now;
-      performance.now = () => {
-        const now = tick;
-        tick += 1;
-        return now;
-      };
-      try {
+      // Each read of the stubbed clock costs one tick, so the encode's two reads cost one. No
+      // stream time can land between those two reads: the input is encoded in full before the
+      // function is called.
+      await withStubbedClock(async () => {
         async function* mockStreamFn(input: { id: string }) {
           yield { partial: `Processing ${input.id}...` };
           return { final: `Done for ${input.id}` };
@@ -642,9 +623,7 @@ describe("prompt-identifiers-baml", () => {
 
         const generator = wrapped({ id: uuid1 });
         while (!(await generator.next()).done) {}
-      } finally {
-        performance.now = realNow;
-      }
+      });
 
       // onEncode debugData
       const encodeResult = onEncode.mock.calls[0][0];
@@ -1078,29 +1057,21 @@ describe("prompt-identifiers-baml", () => {
     });
 
     test("the reported duration is decode time summed over the parts", async () => {
-      // The stubbed clock advances one tick per read, so decoding one part costs one tick and
+      // Each read of the stubbed clock costs one tick, so decoding one part costs one tick and
       // the final response one more. The 40 ticks between parts are the model's latency.
       const partials = [{ text: "~000~ a" }, { text: "~000~ b" }, { text: "~000~ c" }];
       const onDecode = vi.fn();
 
-      // The stub goes up last, so nothing between it and the try can leave it in place.
-      let tick = 0;
-      const realNow = performance.now;
-      performance.now = () => {
-        const now = tick;
-        tick += 1;
-        return now;
-      };
-      try {
+      await withStubbedClock(async (advance) => {
         const source = {
           async *[Symbol.asyncIterator]() {
             for (const partial of partials) {
-              tick += 40;
+              advance(40);
               yield partial;
             }
           },
           async getFinalResponse() {
-            tick += 40;
+            advance(40);
             return { text: "~000~ done" };
           },
         };
@@ -1113,9 +1084,7 @@ describe("prompt-identifiers-baml", () => {
         const stream = wrapped({ id: uuid1 });
         for await (const _partial of stream) void _partial;
         await stream.getFinalResponse();
-      } finally {
-        performance.now = realNow;
-      }
+      });
 
       expect(onDecode.mock.calls[0][0].debugData.durationMs).toBe(partials.length + 1);
     });
