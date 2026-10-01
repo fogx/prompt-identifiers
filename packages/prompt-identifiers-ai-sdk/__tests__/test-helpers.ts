@@ -309,3 +309,25 @@ export function chargingRead<T extends object>(
   });
   return part;
 }
+
+/**
+ * Count the RegExp constructions `run` causes. Owning the proxy and the restore keeps a caller
+ * from leaving the global replaced, and a count says the same thing on a loaded machine as on
+ * an idle one, which a duration does not.
+ */
+export async function countRegExpBuilds(run: () => PromiseLike<unknown>): Promise<number> {
+  const RealRegExp = globalThis.RegExp;
+  let built = 0;
+  globalThis.RegExp = new Proxy(RealRegExp, {
+    construct(target, args: ConstructorParameters<typeof RegExp>) {
+      built++;
+      return new target(...args);
+    },
+  });
+  try {
+    await run();
+  } finally {
+    globalThis.RegExp = RealRegExp;
+  }
+  return built;
+}

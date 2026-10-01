@@ -26,6 +26,12 @@ describe("the accuracy bench scores every format the same way", () => {
     "0192b4a1-7b3e-4c4d-8e9f-1a2b3c4d5e6f",
   ];
   const placeholders = ["000", "001", "002"];
+  // Crockford base32, which a ULID prompt writes in upper case
+  const ulids = [
+    "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+    "01BX5ZZKBKACTAV9WEVGEMMVRZ",
+    "01C0VH4KGRTD5FE8M6ZNQX7PJW",
+  ];
 
   test("a hallucinated placeholder costs what a hallucinated UUID costs", () => {
     // The scorer decides what a wrong id is by how close it is to an expected one. Two distinct
@@ -77,22 +83,58 @@ describe("the accuracy bench scores every format the same way", () => {
     }
   });
 
-  test("an id echoed in a different case is one error, not two", () => {
-    // The exact lookup is case-sensitive, so a re-cased id misses it and falls to the near-match
-    // path. similarity() ignores case there, so the id is matched to itself and marked seen.
+  // The exact lookup is case-sensitive, so a re-cased id misses it and falls to the near-match
+  // path. similarity() folds the case on both sides there, so the id is matched to itself and
+  // marked seen. Both directions are here because a ULID prompt arrives in upper case, so only
+  // one of the two folds is exercised by a UUID.
+  test.for([
+    { label: "the answer upper-cases a lowercase identifier", ids: "lower" as const },
+    { label: "the answer lower-cases an upper-case identifier", ids: "upper" as const },
+  ])("an id echoed in a different case is one error, not two: $label", ({ ids }) => {
+    const written =
+      ids === "lower"
+        ? [uuids[0].toUpperCase(), uuids[1], uuids[2]]
+        : [ulids[0].toLowerCase(), ulids[1], ulids[2]];
+
     const result = verify(
-      answer([
-        { class_id: uuids[0].toUpperCase(), count: 1, names: ["a"] },
-        { class_id: uuids[1], count: 1, names: ["a"] },
-        { class_id: uuids[2], count: 1, names: ["a"] },
-      ]),
-      expectedFor(uuids)
+      answer(written.map((id) => ({ class_id: id, count: 1, names: ["a"] }))),
+      expectedFor(ids === "lower" ? uuids : ulids)
     );
 
     expect(result.misspelledIds).toBe(1);
     expect(result.droppedIds).toBe(0);
     expect(result.totalErrors).toBe(1);
     expect(result.idsNotReproduced).toBe(1);
+  });
+
+  test("a one-character typo beats a truncation for the nearest-id blame", () => {
+    // A truncation is not the same id in another case, so it does not answer zero distance and
+    // outrank a real typo of another expected id for the blame in `details`
+    const cutFrom = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const written = cutFrom.slice(0, cutFrom.length - 2);
+    const typoOf = written.slice(0, written.length - 1) + "b";
+
+    const result = verify(
+      answer([{ class_id: written, count: 1, names: ["a"] }]),
+      expectedFor([cutFrom, typoOf])
+    );
+
+    expect(result.details[0]).toMatchObject({ type: "misspelled", expected: typoOf });
+  });
+
+  test("a three-digit id answered with a digit too many is not read as that id", () => {
+    const result = verify(
+      answer([
+        { class_id: "0000", count: 1, names: ["a"] },
+        { class_id: "001", count: 1, names: ["a"] },
+        { class_id: "002", count: 1, names: ["a"] },
+      ]),
+      expectedFor(placeholders)
+    );
+
+    expect(result.misspelledIds).toBe(1);
+    expect(result.droppedIds).toBe(1);
+    expect(result.totalErrors).toBe(2);
   });
 
   test("four characters wrong is a different id, not a misspelling", () => {

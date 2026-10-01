@@ -24,6 +24,7 @@ import {
   withStubbedClock,
   CHARGED_TICKS,
   chargingRead,
+  countRegExpBuilds,
 } from "./test-helpers";
 
 describe("prompt-identifiers-ai-sdk", () => {
@@ -683,6 +684,104 @@ describe("prompt-identifiers-ai-sdk", () => {
       expect(getToolResultOutput(result.prompt)).toEqual(output);
     });
 
+    function firstPart(prompt: LanguageModelV4Message[]): unknown {
+      const message = prompt[prompt.length - 1] as { content: unknown[] };
+      return message.content[0];
+    }
+
+    // The same shape check the tool result arms make, in the four dispatches beside them. Three
+    // of the four throw on the way to or back from the model when the check is gone.
+    test("file data tagged text with no text is handed on", async () => {
+      const middleware = createMiddleware({ config: defaultConfig });
+      const part = { type: "file", mediaType: "text/plain", data: { type: "text" } };
+
+      const result = await middleware.transformParams({
+        params: createParams([
+          { role: "user", content: [part] } as unknown as LanguageModelV4Message,
+        ]),
+        type: "generate",
+        model: mockModel,
+      });
+
+      expect(firstPart(result.prompt)).toBe(part);
+    });
+
+    test("a tool call with no input is handed on", async () => {
+      const middleware = createMiddleware({ config: defaultConfig });
+      const part = { type: "tool-call", toolCallId: "call-1", toolName: "get_user" };
+
+      const result = await middleware.transformParams({
+        params: createParams([
+          { role: "assistant", content: [part] } as unknown as LanguageModelV4Message,
+        ]),
+        type: "generate",
+        model: mockModel,
+      });
+
+      expect(firstPart(result.prompt)).toBe(part);
+    });
+
+    test("a generated tool call whose input is not a string is handed on", async () => {
+      const middleware = createMiddleware({ config: defaultConfig });
+      const uuid = "123e4567-e89b-42d3-a456-426655440000";
+      const transformedParams = await middleware.transformParams({
+        params: createParams([userMessage(`Find ${uuid}`)]),
+        type: "generate",
+        model: mockModel,
+      });
+      const call = {
+        type: "tool-call",
+        toolCallId: "call-1",
+        toolName: "t",
+        input: { id: "~000~" },
+      };
+
+      const result = await middleware.wrapGenerate({
+        doGenerate: vi.fn().mockResolvedValue({
+          content: [call],
+          finishReason: mockFinishReason(),
+          usage: mockUsage(),
+          warnings: [],
+        } as unknown as LanguageModelV4GenerateResult),
+        doStream: vi.fn(),
+        params: transformedParams,
+        model: mockModel,
+      });
+
+      expect(result.content[0]).toBe(call);
+    });
+
+    test("a streamed tool call whose input is not a string is handed on", async () => {
+      const middleware = createMiddleware({ config: defaultConfig });
+      const uuid = "123e4567-e89b-42d3-a456-426655440000";
+      const transformedParams = await middleware.transformParams({
+        params: createParams([userMessage(`Find ${uuid}`)]),
+        type: "stream",
+        model: mockModel,
+      });
+      const chunk = {
+        type: "tool-call",
+        toolCallId: "call-1",
+        toolName: "t",
+        input: { id: "~000~" },
+      };
+
+      const streamed = await middleware.wrapStream({
+        doStream: vi.fn().mockResolvedValue({
+          stream: createMockStream([
+            chunk,
+            { type: "finish", finishReason: mockFinishReason(), usage: mockUsage() },
+          ] as never),
+        }),
+        doGenerate: vi.fn(),
+        params: transformedParams,
+        model: mockModel,
+      });
+      const parts = await collectStreamParts(streamed.stream);
+
+      expect(parts[0]).toBe(chunk);
+    });
+
     test("preserves non-tool-result parts in tool messages", async () => {
       const middleware = createMiddleware({ config: defaultConfig });
 
@@ -1292,16 +1391,8 @@ describe("prompt-identifiers-ai-sdk", () => {
           model: mockModel,
         });
 
-        const RealRegExp = globalThis.RegExp;
-        let built = 0;
-        globalThis.RegExp = new Proxy(RealRegExp, {
-          construct(target, args: ConstructorParameters<typeof RegExp>) {
-            built++;
-            return new target(...args);
-          },
-        });
-        try {
-          await middleware.wrapGenerate({
+        return countRegExpBuilds(() =>
+          middleware.wrapGenerate({
             doGenerate: vi.fn().mockResolvedValue({
               content: [{ type: "text", text: answer }],
               finishReason: mockFinishReason(),
@@ -1311,11 +1402,8 @@ describe("prompt-identifiers-ai-sdk", () => {
             doStream: vi.fn(),
             params: transformedParams,
             model: mockModel,
-          });
-        } finally {
-          globalThis.RegExp = RealRegExp;
-        }
-        return built;
+          })
+        );
       }
 
       expect((await regexpsBuiltWith(true)) - (await regexpsBuiltWith(false))).toBe(ids.length);
@@ -3408,16 +3496,8 @@ describe("prompt-identifiers-ai-sdk", () => {
           model: mockModel,
         });
 
-        const RealRegExp = globalThis.RegExp;
-        let built = 0;
-        globalThis.RegExp = new Proxy(RealRegExp, {
-          construct(target, args: ConstructorParameters<typeof RegExp>) {
-            built++;
-            return new target(...args);
-          },
-        });
-        try {
-          await middleware.wrapGenerate({
+        return countRegExpBuilds(() =>
+          middleware.wrapGenerate({
             doGenerate: vi.fn().mockResolvedValue({
               content: [{ type: "text", text: "~000~ and ~001~" }],
               finishReason: mockFinishReason(),
@@ -3427,11 +3507,8 @@ describe("prompt-identifiers-ai-sdk", () => {
             doStream: vi.fn(),
             params: transformedParams,
             model: mockModel,
-          });
-        } finally {
-          globalThis.RegExp = RealRegExp;
-        }
-        return built;
+          })
+        );
       }
 
       // core memoises a format's shape pattern on first use, so measure only once it is warm
