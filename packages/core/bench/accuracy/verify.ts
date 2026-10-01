@@ -264,7 +264,7 @@ function similarity(a: string, b: string): number | undefined {
   if (differences === 0 && a.length === b.length) return 0;
 
   differences += Math.abs(a.length - b.length);
-  return differences <= budget && differences > 0 ? differences : undefined;
+  return differences <= budget ? differences : undefined;
 }
 
 /**
