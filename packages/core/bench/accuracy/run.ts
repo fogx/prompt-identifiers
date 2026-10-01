@@ -196,7 +196,7 @@ async function runSingleTest(
   runNumber: number,
   verbose: boolean
 ): Promise<RunResult> {
-  const { prompt, mapping, expected } = createPrompt(items, format);
+  const { prompt, expected } = createPrompt(items, format);
 
   if (verbose) {
     console.log(`\n--- Prompt (${format}) ---`);
@@ -212,7 +212,7 @@ async function runSingleTest(
     console.log(response.slice(0, 1000) + (response.length > 1000 ? "..." : ""));
   }
 
-  const verification = verify(response, expected, mapping);
+  const verification = verify(response, expected);
 
   return {
     model,
