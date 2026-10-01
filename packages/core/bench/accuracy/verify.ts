@@ -107,14 +107,9 @@ function parseResponse(response: string): ParsedAggregation[] | null {
  *
  * @param response - Raw LLM response text
  * @param expected - Expected aggregation result
- * @param mapping - Optional mapping from placeholder to original UUID (for decoding)
  * @returns Verification result with error counts and details
  */
-export function verify(
-  response: string,
-  expected: ExpectedResult,
-  mapping?: Record<string, string>
-): VerificationResult {
+export function verify(response: string, expected: ExpectedResult): VerificationResult {
   const result: VerificationResult = {
     misspelledIds: 0,
     droppedIds: 0,
@@ -263,11 +258,12 @@ function similarity(a: string, b: string): number | undefined {
   }
 
   // Zero differences at equal length is the same id in another case, since the loop compares
-  // case-insensitively. It returns before the budget check, which is zero below four characters.
+  // case-insensitively. It returns before the budget is applied, which is zero below four
+  // characters and would otherwise reject the pair. The equal-length test is what keeps a
+  // truncated id out of this branch, where the length term below is the only thing charging it.
   if (differences === 0 && a.length === b.length) return 0;
 
   differences += Math.abs(a.length - b.length);
-  if (budget === 0) return undefined;
   return differences <= budget && differences > 0 ? differences : undefined;
 }
 

@@ -119,6 +119,22 @@ describe("the accuracy bench scores every format the same way", () => {
     expect(result.idsNotReproduced).toBe(1);
   });
 
+  test("four characters wrong is a different id, not a misspelling", () => {
+    // Four of 36 positions differ, one over the budget's cap. Without the cap the relative term
+    // alone would allow nine, so the scorer would blame this on the id it least resembles and
+    // stop counting that id as dropped
+    const written = "ffff" + uuids[0].slice(4);
+
+    const result = verify(
+      answer([{ class_id: written, count: 1, names: ["a"] }]),
+      expectedFor([uuids[0]])
+    );
+
+    expect(result.droppedIds).toBe(1);
+    expect(result.details[0]).toMatchObject({ type: "misspelled", actual: written });
+    expect(result.details[0].expected).toBeUndefined();
+  });
+
   test("a three-character id is never read as a typo of another", () => {
     // There is no room in three digits for a slip that is distinguishable from a different id,
     // so the scorer refuses to guess rather than discount. A budget generous enough to call 900 a
