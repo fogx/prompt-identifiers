@@ -257,12 +257,10 @@ function similarity(a: string, b: string): number | undefined {
     }
   }
 
-  // Zero differences at equal length is the same id in another case, since the loop compares
-  // case-insensitively. It returns before the budget is applied, which is zero below four
-  // characters and would otherwise reject the pair. The equal-length test is what keeps a
-  // truncated id out of this branch, where the length term below is the only thing charging it.
-  if (differences === 0 && a.length === b.length) return 0;
-
+  // The same id in another case is zero apart, since the loop folds the case on both sides and
+  // the length term adds nothing at equal length. A truncation is not: the length term charges
+  // it, so a three-character id answered one character short is refused by a budget of zero
+  // where a 36-character one is charged as a near miss.
   differences += Math.abs(a.length - b.length);
   return differences <= budget ? differences : undefined;
 }

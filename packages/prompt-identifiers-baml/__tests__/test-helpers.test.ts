@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import { countRegExpBuilds, withStubbedClock } from "./test-helpers";
+import { CHARGED_TICKS, chargingRead, withStubbedClock } from "./test-helpers";
 
 describe("withStubbedClock", () => {
   test("starts above zero and costs one tick per read, plus whatever advance adds", async () => {
@@ -29,28 +29,21 @@ describe("withStubbedClock", () => {
   });
 });
 
-describe("countRegExpBuilds", () => {
-  test("counts the constructions and puts the real RegExp back", async () => {
-    const real = globalThis.RegExp;
+describe("chargingRead", () => {
+  test("charges once however often the key is read, and the charge is not zero", async () => {
+    // A charge of zero would leave every duration assertion reading its own constant, so a span
+    // moved below the work it times would pass again
+    expect(CHARGED_TICKS).toBeGreaterThan(0);
 
-    const built = await countRegExpBuilds(async () => {
-      new RegExp("a");
-      new RegExp("b");
+    const spent = await withStubbedClock(async (advance) => {
+      const part = chargingRead({}, "text", "hello", advance) as { text: string };
+      const start = performance.now();
+      void part.text;
+      void part.text;
+      return performance.now() - start;
     });
 
-    expect(built).toBe(2);
-    expect(globalThis.RegExp).toBe(real);
-  });
-
-  test("puts the real RegExp back when the body throws", async () => {
-    const real = globalThis.RegExp;
-
-    await expect(
-      countRegExpBuilds(async () => {
-        throw new Error("boom");
-      })
-    ).rejects.toThrow("boom");
-
-    expect(globalThis.RegExp).toBe(real);
+    // Two reads of the clock plus the charge, paid on the first read of the key and not again
+    expect(spent).toBe(1 + CHARGED_TICKS);
   });
 });
