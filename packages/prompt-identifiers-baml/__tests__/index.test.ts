@@ -569,8 +569,27 @@ describe("prompt-identifiers-baml", () => {
         onDecode,
       });
 
+      // The test owns the clock, so each half's duration is the one tick its own two reads
+      // cost. A duration left at zero, or taken across the whole call, cannot give that.
+      let tick = 0;
+      const realNow = performance.now;
+      performance.now = () => {
+        const now = tick;
+        tick += 1;
+        return now;
+      };
+
       const input = { id: uuid1 };
-      await wrapped(input);
+      try {
+        // The wrapped function is where a real call spends its time, and none of it is ours
+        mockFn.mockImplementationOnce(async (received: { id: string }) => {
+          tick += 40;
+          return { result: `Found: ${received.id}` };
+        });
+        await wrapped(input);
+      } finally {
+        performance.now = realNow;
+      }
 
       // onEncode debugData
       const encodeResult = onEncode.mock.calls[0][0];
@@ -579,7 +598,7 @@ describe("prompt-identifiers-baml", () => {
       expect(encodeResult.debugData.encodedCount).toBe(1);
       expect(encodeResult.debugData.input).toEqual({ id: uuid1 });
       expect(encodeResult.debugData.output).toEqual({ id: "~000~" });
-      expect(typeof encodeResult.debugData.durationMs).toBe("number");
+      expect(encodeResult.debugData.durationMs).toBe(1);
 
       // onDecode debugData
       const decodeResult = onDecode.mock.calls[0][0];
@@ -587,7 +606,7 @@ describe("prompt-identifiers-baml", () => {
       expect(decodeResult.debugData.decodedCount).toBe(1);
       expect(decodeResult.debugData.input).toEqual({ result: "Found: ~000~" });
       expect(decodeResult.debugData.output).toEqual({ result: `Found: ${uuid1}` });
-      expect(typeof decodeResult.debugData.durationMs).toBe("number");
+      expect(decodeResult.debugData.durationMs).toBe(1);
     });
 
     test("wrapBamlStreamingFunction populates debugData when debug is true", async () => {
@@ -1039,6 +1058,49 @@ describe("prompt-identifiers-baml", () => {
       await stream.getFinalResponse();
 
       expect(drives).toBe(1);
+    });
+
+    test("the reported duration is decode time summed over the parts", async () => {
+      // The test owns the clock: every read costs one tick, so decoding one part costs exactly
+      // one, and the model's latency is 40 ticks added between parts, outside the decode. The
+      // total therefore counts parts and cannot see the latency, which is the whole claim.
+      const partials = [{ text: "~000~ a" }, { text: "~000~ b" }, { text: "~000~ c" }];
+      let tick = 0;
+      const realNow = performance.now;
+      performance.now = () => {
+        const now = tick;
+        tick += 1;
+        return now;
+      };
+
+      const onDecode = vi.fn();
+      try {
+        const source = {
+          async *[Symbol.asyncIterator]() {
+            for (const partial of partials) {
+              tick += 40;
+              yield partial;
+            }
+          },
+          async getFinalResponse() {
+            tick += 40;
+            return { text: "~000~ done" };
+          },
+        };
+        const wrapped = wrapBamlStreamingFunction(() => source, {
+          config: defaultConfig,
+          debug: true,
+          onDecode,
+        });
+
+        const stream = wrapped({ id: uuid1 });
+        for await (const _partial of stream) void _partial;
+        await stream.getFinalResponse();
+      } finally {
+        performance.now = realNow;
+      }
+
+      expect(onDecode.mock.calls[0][0].debugData.durationMs).toBe(partials.length + 1);
     });
 
     test("a final response that throws still reaches the consumer that asked for it", async () => {
