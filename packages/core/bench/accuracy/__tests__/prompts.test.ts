@@ -27,6 +27,16 @@ describe("the prompt the accuracy bench sends", () => {
     expect(expected.aggregations.get("~000~")).toEqual({ count: 2, names: ["first", "second"] });
   });
 
+  test("the Numeric arm writes Numeric placeholders, not SafeNumeric ones", () => {
+    // The page compares three arms. An arm that quietly encodes as another one is still printed
+    // under its own heading, and the comparison means nothing
+    const { prompt, expected } = createPrompt(items, "Numeric");
+
+    expect(prompt).toContain("class_id = 000");
+    expect(prompt).not.toContain("~000~");
+    expect([...expected.aggregations.keys()]).toEqual(["000"]);
+  });
+
   test("the raw format sends the identifier as it was written", () => {
     const { prompt, expected } = createPrompt(items, "raw");
 

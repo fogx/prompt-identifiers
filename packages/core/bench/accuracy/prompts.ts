@@ -28,8 +28,6 @@ export interface ExpectedResult {
 export interface PromptResult {
   /** The prompt to send to the LLM */
   prompt: string;
-  /** Mapping from placeholder to original UUID (undefined for 'raw' format) */
-  mapping?: Record<string, string>;
   /** Expected result for verification */
   expected: ExpectedResult;
   /** The format used */
@@ -41,7 +39,7 @@ export interface PromptResult {
  *
  * @param items - Dataset items
  * @param format - Output format: 'raw' (UUIDs), 'SafeNumeric', or 'Numeric'
- * @returns Prompt, optional mapping, and expected result
+ * @returns Prompt and expected result
  */
 export function createPrompt(items: Item[], format: BenchmarkFormat): PromptResult {
   const expectedRaw = getExpectedAggregation(items);
@@ -139,7 +137,6 @@ CRITICAL REQUIREMENTS:
 
   return {
     prompt,
-    mapping,
     expected: {
       aggregations: encodedAggregations,
       originalClassIds,

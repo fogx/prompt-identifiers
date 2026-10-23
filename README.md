@@ -189,7 +189,7 @@ const result = await generateText({
 
 Pass an `instruction` and the middleware appends it to the system message, telling the model to preserve encoded identifiers. This prevents LLMs from stripping delimiter characters (e.g., outputting `000` instead of `~000~` in tool call arguments).
 
-The text is yours: the package ships no instruction of its own. `{format}` becomes an example token in the active output format, such as `~000~`. It goes in on every call, including calls whose prompt carries no ID, so the system message reads the same throughout a conversation and a provider's prompt cache keeps matching it.
+The text is yours, and omitting it sends the package's own. `{format}` becomes an example token in the active output format, such as `~000~`. It goes in on every call, including calls whose prompt carries no ID, so the system message reads the same throughout a conversation and a provider's prompt cache keeps matching it. Pass `false` to send none.
 
 ```typescript
 // Instruction appended to the system message on every call

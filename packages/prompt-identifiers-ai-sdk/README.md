@@ -57,10 +57,11 @@ promptIdentifiersMiddleware({
     outputFormat: "SafeNumeric", // or 'Numeric', 'IdToken', { template: '...' }
   },
 
-  // Required. Appended to the system message on every call ({format} becomes an example token
+  // Optional. Appended to the system message on every call ({format} becomes an example token
   // like ~000~). Prevents LLMs from stripping delimiter characters in tool call arguments. Pass
-  // false and the middleware leaves the system message alone. Under the Passthrough output
-  // format it is ignored, but the option is still required.
+  // false and the middleware leaves the system message alone. Omit it and the package sends its
+  // own text. Ignored under the Passthrough output format, which encodes nothing.
+  // `injectInstruction` and `customInstruction` still work and are deprecated; this wins over both.
   instruction: "IDs use {format} notation. Preserve them exactly.",
 
   // Optional: enable debug mode for detailed diagnostics

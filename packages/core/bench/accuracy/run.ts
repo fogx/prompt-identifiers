@@ -42,7 +42,8 @@ import {
   OPENAI_MODELS,
   OpenAIModel,
 } from "./providers/openai";
-import { VerificationResult, verify } from "./verify";
+import { verify } from "./verify";
+import { averageErrors, BenchmarkResults, ModelResults, RunResult, summaryLines } from "./summary";
 
 // =============================================================================
 // Types
@@ -56,35 +57,6 @@ interface BenchmarkConfig {
   formats: BenchmarkFormat[];
   verbose: boolean;
   outputFile: string;
-}
-
-interface RunResult {
-  model: string;
-  format: BenchmarkFormat;
-  run: number;
-  verification: VerificationResult;
-  latencyMs: number;
-  promptTokens?: number;
-  responseTokens?: number;
-}
-
-interface ModelResults {
-  model: string;
-  modelDisplayName: string;
-  results: RunResult[];
-  /** Undefined for a format whose every run failed, which is not the same as a score of zero. */
-  averageErrors: Record<BenchmarkFormat, number | undefined>;
-  failedRuns: Record<BenchmarkFormat, number>;
-}
-
-interface BenchmarkResults {
-  config: {
-    itemCount: number;
-    classCount: number;
-    runs: number;
-    timestamp: string;
-  };
-  models: ModelResults[];
 }
 
 // =============================================================================
@@ -224,7 +196,7 @@ async function runSingleTest(
   runNumber: number,
   verbose: boolean
 ): Promise<RunResult> {
-  const { prompt, mapping, expected } = createPrompt(items, format);
+  const { prompt, expected } = createPrompt(items, format);
 
   if (verbose) {
     console.log(`\n--- Prompt (${format}) ---`);
@@ -240,7 +212,7 @@ async function runSingleTest(
     console.log(response.slice(0, 1000) + (response.length > 1000 ? "..." : ""));
   }
 
-  const verification = verify(response, expected, mapping);
+  const verification = verify(response, expected);
 
   return {
     model,
@@ -318,10 +290,16 @@ async function runBenchmark(config: BenchmarkConfig): Promise<BenchmarkResults> 
       modelDisplayName: getDisplayName(model),
       results: [],
       averageErrors: {} as Record<BenchmarkFormat, number | undefined>,
+      averageMisses: {} as Record<BenchmarkFormat, number | undefined>,
       failedRuns: {} as Record<BenchmarkFormat, number>,
     };
 
     const errorsByFormat: Record<BenchmarkFormat, number[]> = {
+      raw: [],
+      SafeNumeric: [],
+      Numeric: [],
+    };
+    const missesByFormat: Record<BenchmarkFormat, number[]> = {
       raw: [],
       SafeNumeric: [],
       Numeric: [],
@@ -337,6 +315,7 @@ async function runBenchmark(config: BenchmarkConfig): Promise<BenchmarkResults> 
           const result = await runSingleTest(items, format, model, run, config.verbose);
           modelResults.results.push(result);
           errorsByFormat[format].push(result.verification.totalErrors);
+          missesByFormat[format].push(result.verification.idsNotReproduced);
 
           const v = result.verification;
           console.log(
@@ -368,13 +347,9 @@ async function runBenchmark(config: BenchmarkConfig): Promise<BenchmarkResults> 
       }
     }
 
-    // Calculate averages
-    for (const format of config.formats) {
-      const errors = errorsByFormat[format];
-      modelResults.failedRuns[format] ??= 0;
-      modelResults.averageErrors[format] =
-        errors.length > 0 ? errors.reduce((a, b) => a + b, 0) / errors.length : undefined;
-    }
+    for (const format of config.formats) modelResults.failedRuns[format] ??= 0;
+    modelResults.averageErrors = averageErrors(errorsByFormat, config.formats);
+    modelResults.averageMisses = averageErrors(missesByFormat, config.formats);
 
     results.models.push(modelResults);
   }
@@ -387,58 +362,7 @@ async function runBenchmark(config: BenchmarkConfig): Promise<BenchmarkResults> 
 // =============================================================================
 
 function printSummary(results: BenchmarkResults): void {
-  console.log("\n" + "=".repeat(60));
-  console.log("# Summary\n");
-
-  const { config } = results;
-  console.log(`Items: ${config.itemCount}, Classes: ${config.classCount}, Runs: ${config.runs}\n`);
-
-  for (const modelResult of results.models) {
-    console.log(`## ${modelResult.modelDisplayName}\n`);
-
-    // Print table header
-    const formats = Object.keys(modelResult.averageErrors) as BenchmarkFormat[];
-    const runNumbers = [...new Set(modelResult.results.map((r) => r.run))];
-
-    console.log("| Format | " + runNumbers.map((r) => `Run ${r}`).join(" | ") + " | Average |");
-    console.log("|--------|" + runNumbers.map(() => "-------").join("|") + "|---------|");
-
-    for (const format of formats) {
-      const runs = modelResult.results.filter((r) => r.format === format);
-      const runErrors = runNumbers.map((n) => {
-        const run = runs.find((r) => r.run === n);
-        return run ? run.verification.totalErrors.toString() : "-";
-      });
-      const average = modelResult.averageErrors[format];
-      const avg = average === undefined ? "-" : average.toFixed(1);
-      console.log(
-        `| ${format.padEnd(12)} | ${runErrors
-          .map((e) => e.padStart(5))
-          .join(" | ")} | ${avg.padStart(7)} |`
-      );
-    }
-
-    const failed = Object.entries(modelResult.failedRuns).filter(([, n]) => n > 0);
-    if (failed.length > 0) {
-      console.log(
-        `\nRuns that never reached the model: ${failed
-          .map(([format, n]) => `${format} ${n}`)
-          .join(", ")}. They are not in the averages.`
-      );
-    }
-
-    // Calculate improvement. Both formats have to have been measured: comparing against a format
-    // that was never run, or whose every run failed, is a claim with nothing behind it
-    const rawAvg = modelResult.averageErrors["raw"];
-    const safeAvg = modelResult.averageErrors["SafeNumeric"];
-
-    if (rawAvg !== undefined && rawAvg > 0 && safeAvg !== undefined) {
-      const improvement = ((rawAvg - safeAvg) / rawAvg) * 100;
-      console.log(`\nSafeNumeric reduces errors by ${improvement.toFixed(0)}% vs raw UUIDs.`);
-    }
-
-    console.log("");
-  }
+  console.log("\n" + summaryLines(results).join("\n"));
 }
 
 function saveResults(results: BenchmarkResults, outputFile: string): void {

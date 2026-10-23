@@ -279,6 +279,11 @@ Matches [RFC 4122](https://www.rfc-editor.org/rfc/rfc4122) UUID version 4.
 - ✅ `123E4567-E89B-42D3-A456-426655440000` (case insensitive)
 - ❌ `123e4567-e89b-72d3-a456-426655440000` (wrong version)
 
+**One identifier written two ways is one placeholder.** Matching ignores case for both built-in
+formats and deduplication follows it, so a text carrying `123e45...` and `123E45...` sends one
+placeholder and `decode` writes back the casing of the first occurrence. Both spellings come back
+as that one. Keep to a single spelling where the difference matters to the reader.
+
 ---
 
 ### ULID
@@ -288,12 +293,18 @@ Matches [ULID](https://github.com/ulid/spec) - 26 characters in Crockford Base32
 **Pattern:**
 
 ```regex
-\b[0-9A-HJKMNP-TV-Z]{26}\b
+/\b[0-9A-HJKMNP-TV-Z]{26}\b/gi
 ```
 
-**Character set:** `0-9A-HJKMNP-TV-Z` (excludes I, L, O, U to avoid ambiguity)
+**Character set:** `0-9A-HJKMNP-TV-Z`. I and L are left out because they read as 1, O because it reads
+as 0, and U so that no identifier spells out an obscenity.
 
 **Example:** `01ARZ3NDEKTSV4RRFFQ69G5FAV`
+
+**The `i` flag matches lower case too**, which the ULID spec does not write but callers do. The
+cost is that any 26-character run drawn from that alphabet is taken for a ULID, in either case,
+including an ordinary word of the right length. Pass your own `RegExp` if you need the canonical
+upper-case form alone.
 
 ---
 
@@ -377,13 +388,18 @@ Format: `{ template: string }` where string contains `{i}` or `{i:specifier}`.
 
 **Format specifiers:**
 
-| Specifier    | Description          | Examples                     |
-| ------------ | -------------------- | ---------------------------- |
-| `{i}`        | Plain numeric        | `0`, `1`, `2`, ...           |
-| `{i:02}`     | Zero-pad to 2 digits | `00`, `01`, ..., `99`, `100` |
-| `{i:03}`     | Zero-pad to 3 digits | `000`, `001`, ...            |
-| `{i:04}`     | Zero-pad to 4 digits | `0000`, `0001`, ...          |
-| `{i:base62}` | Base62 encoding      | `0`, `A`, `z`, `10`, ...     |
+| Specifier        | Description          | Examples                     |
+| ---------------- | -------------------- | ---------------------------- |
+| `{i}`            | Plain numeric        | `0`, `1`, `2`, ...           |
+| `{i:02}`         | Zero-pad to 2 digits | `00`, `01`, ..., `99`, `100` |
+| `{i:03}`         | Zero-pad to 3 digits | `000`, `001`, ...            |
+| `{i:04}`         | Zero-pad to 4 digits | `0000`, `0001`, ...          |
+| `{i:base62}`     | Base62 encoding      | `0`, `A`, `z`, `10`, ...     |
+| `{i:zeroFilled}` | Zero-pad to 3 digits | `000`, `001`, ...            |
+
+Any run of digits is a width, with or without a leading zero: `{i:4}` and `{i:04}` both pad to
+four. A placeholder wider than the pad keeps every digit it needs, so the width is a floor rather
+than a limit.
 
 **Examples:**
 
@@ -547,7 +563,7 @@ decode("hello", { "": "X" });
 
 ### Unknown Format Specifier
 
-Unknown format specifiers fall back to plain numeric:
+A specifier that is neither a width, `base62` nor `zeroFilled` falls back to plain numeric:
 
 ```typescript
 encode(text, {
@@ -556,3 +572,6 @@ encode(text, {
 });
 // Uses plain numeric: 0, 1, 2, ...
 ```
+
+A run of digits is a width and does not reach that fallback: `{ template: "{i:4}" }` writes
+`0007`, not `7`.
