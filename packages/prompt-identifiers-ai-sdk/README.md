@@ -22,6 +22,7 @@ const model = wrapLanguageModel({
   model: openai("gpt-4o"),
   middleware: promptIdentifiersMiddleware({
     config: { inputFormat: "UUID", outputFormat: "SafeNumeric" },
+    instruction: "IDs use {format} notation. Preserve them exactly.",
   }),
 });
 
@@ -56,12 +57,10 @@ promptIdentifiersMiddleware({
     outputFormat: "SafeNumeric", // or 'Numeric', 'IdToken', { template: '...' }
   },
 
-  // Inject a format-preservation instruction into the system message (default: true)
-  // Prevents LLMs from stripping delimiter characters in tool call arguments
-  injectInstruction: true,
-
-  // Custom instruction text ({format} is replaced with example token like ~000~)
-  customInstruction: "IDs use {format} notation. Preserve them exactly.",
+  // Required. Appended to the system message on every call ({format} becomes an example token
+  // like ~000~). Prevents LLMs from stripping delimiter characters in tool call arguments. Pass
+  // false, or use the Passthrough output format, and the middleware leaves the system message alone.
+  instruction: "IDs use {format} notation. Preserve them exactly.",
 
   // Optional: enable debug mode for detailed diagnostics
   debug: true,
@@ -134,7 +133,7 @@ for await (const chunk of result.textStream) {
 | Type                    | Meaning                                                                                    |
 | ----------------------- | ------------------------------------------------------------------------------------------ |
 | `surviving_placeholder` | A placeholder from the mapping is still in the decoded output                              |
-| `stripped_delimiter`    | A tool call argument holds a bare index such as `"000"` instead of `~000~`                 |
+| `stripped_delimiter`    | A bare index such as `"000"` appears in quotes where the placeholder should be             |
 | `unknown_placeholder`   | A placeholder such as `~053~` is not in the mapping, so the model invented it and it leaks |
 
 `unknown_placeholder` needs a delimited output format such as `SafeNumeric` or a template. With `Numeric` or `IdToken`, a placeholder cannot be told apart from an ordinary number or word, so nothing is reported.
@@ -159,13 +158,13 @@ import { mistral } from "@ai-sdk/mistral";
 // Anthropic
 const claudeModel = wrapLanguageModel({
   model: anthropic("claude-3-5-sonnet-20241022"),
-  middleware: promptIdentifiersMiddleware({ config }),
+  middleware: promptIdentifiersMiddleware({ config, instruction }),
 });
 
 // Google
 const geminiModel = wrapLanguageModel({
   model: google("gemini-1.5-pro"),
-  middleware: promptIdentifiersMiddleware({ config }),
+  middleware: promptIdentifiersMiddleware({ config, instruction }),
 });
 ```
 

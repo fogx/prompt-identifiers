@@ -29,7 +29,7 @@ describe("prompt-identifiers-ai-sdk", () => {
 
   describe("promptIdentifiersMiddleware", () => {
     test("creates middleware with required hooks", () => {
-      const middleware = promptIdentifiersMiddleware({ config: defaultConfig });
+      const middleware = promptIdentifiersMiddleware({ config: defaultConfig, instruction: false });
 
       expect(middleware.specificationVersion).toBe("v4");
       expect(middleware.transformParams).toBeDefined();
@@ -1066,17 +1066,16 @@ describe("prompt-identifiers-ai-sdk", () => {
     });
   });
 
-  describe("injectInstruction", () => {
+  describe("instruction", () => {
     function getSystemContent(prompt: LanguageModelV4Message[]): string {
       const msg = prompt.find((m) => m.role === "system");
       return msg?.role === "system" ? (msg.content as string) : "";
     }
 
-    test("appends default instruction to system message when IDs are encoded", async () => {
-      const middleware = createMiddleware({
-        config: defaultConfig,
-        injectInstruction: true,
-      });
+    const instruction = "Identifiers look like {format}. Pass them verbatim.";
+
+    test("appends the caller's instruction to the system message", async () => {
+      const middleware = createMiddleware({ config: defaultConfig, instruction });
 
       const params = createParams([
         systemMessage("System prompt."),
@@ -1089,19 +1088,37 @@ describe("prompt-identifiers-ai-sdk", () => {
         model: mockModel,
       });
 
-      const content = getSystemContent(result.prompt);
-      expect(content).toContain("~000~");
+      expect(getSystemContent(result.prompt)).toBe(
+        "System prompt.\n\nIdentifiers look like ~000~. Pass them verbatim."
+      );
     });
 
-    test("does not inject when no IDs are encoded", async () => {
-      const middleware = createMiddleware({
-        config: defaultConfig,
-        injectInstruction: true,
+    test("appends the same instruction when the call carries no ID, so the system message stays byte-identical across calls and the provider's prompt cache still matches", async () => {
+      const middleware = createMiddleware({ config: defaultConfig, instruction });
+
+      const withoutId = await middleware.transformParams({
+        params: createParams([systemMessage("System prompt."), userMessage("Hello there")]),
+        type: "generate",
+        model: mockModel,
       });
+      const withId = await middleware.transformParams({
+        params: createParams([
+          systemMessage("System prompt."),
+          userMessage("Find user 123e4567-e89b-42d3-a456-426655440000"),
+        ]),
+        type: "generate",
+        model: mockModel,
+      });
+
+      expect(getSystemContent(withoutId.prompt)).toBe(getSystemContent(withId.prompt));
+    });
+
+    test("leaves the prompt alone when no instruction is given", async () => {
+      const middleware = createMiddleware({ config: defaultConfig });
 
       const params = createParams([
         systemMessage("You are a helpful assistant."),
-        userMessage("Hello there"),
+        userMessage("Find user 123e4567-e89b-42d3-a456-426655440000"),
       ]);
 
       const result = await middleware.transformParams({
@@ -1113,11 +1130,73 @@ describe("prompt-identifiers-ai-sdk", () => {
       expect(getSystemContent(result.prompt)).toBe("You are a helpful assistant.");
     });
 
-    test("creates system message when none exists", async () => {
+    test("keeps providerOptions on the system message, so a cache breakpoint survives", async () => {
+      const middleware = createMiddleware({ config: defaultConfig, instruction });
+
+      const params = createParams([
+        {
+          role: "system",
+          content: "System prompt.",
+          providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } },
+        },
+        userMessage("Find user 123e4567-e89b-42d3-a456-426655440000"),
+      ]);
+
+      const result = await middleware.transformParams({
+        params,
+        type: "generate",
+        model: mockModel,
+      });
+
+      expect(result.prompt[0].providerOptions).toEqual({
+        anthropic: { cacheControl: { type: "ephemeral" } },
+      });
+    });
+
+    test("appends to the last system message, leaving earlier ones alone", async () => {
+      const middleware = createMiddleware({ config: defaultConfig, instruction });
+
+      const params = createParams([
+        systemMessage("First."),
+        userMessage("Hello"),
+        systemMessage("Second."),
+        userMessage("Find user 123e4567-e89b-42d3-a456-426655440000"),
+      ]);
+
+      const result = await middleware.transformParams({
+        params,
+        type: "generate",
+        model: mockModel,
+      });
+
+      expect(result.prompt[0].content).toBe("First.");
+      expect(result.prompt[2].content).toBe(
+        "Second.\n\nIdentifiers look like ~000~. Pass them verbatim."
+      );
+    });
+
+    test("replaces every {format} in the instruction", async () => {
       const middleware = createMiddleware({
         config: defaultConfig,
-        injectInstruction: true,
+        instruction: "Use {format}, e.g. {format}, verbatim.",
       });
+
+      const result = await middleware.transformParams({
+        params: createParams([
+          systemMessage("System prompt."),
+          userMessage("Find user 123e4567-e89b-42d3-a456-426655440000"),
+        ]),
+        type: "generate",
+        model: mockModel,
+      });
+
+      expect(getSystemContent(result.prompt)).toBe(
+        "System prompt.\n\nUse ~000~, e.g. ~000~, verbatim."
+      );
+    });
+
+    test("creates a system message when none exists", async () => {
+      const middleware = createMiddleware({ config: defaultConfig, instruction });
 
       const params = createParams([userMessage("Find user 123e4567-e89b-42d3-a456-426655440000")]);
 
@@ -1129,97 +1208,6 @@ describe("prompt-identifiers-ai-sdk", () => {
 
       expect(result.prompt[0].role).toBe("system");
       expect(getSystemContent(result.prompt)).toContain("~000~");
-    });
-
-    test("supports custom instruction with {format} placeholder", async () => {
-      const middleware = createMiddleware({
-        config: defaultConfig,
-        injectInstruction: true,
-        customInstruction: "IDs look like {format}. Keep them intact.",
-      });
-
-      const params = createParams([
-        systemMessage("You are a helpful assistant."),
-        userMessage("Find user 123e4567-e89b-42d3-a456-426655440000"),
-      ]);
-
-      const result = await middleware.transformParams({
-        params,
-        type: "generate",
-        model: mockModel,
-      });
-
-      const content = getSystemContent(result.prompt);
-      expect(content).toContain("IDs look like ~000~. Keep them intact.");
-    });
-
-    test("uses correct token format for Numeric output", async () => {
-      const middleware = createMiddleware({
-        config: { inputFormat: "UUID", outputFormat: "Numeric" },
-        injectInstruction: true,
-      });
-
-      const params = createParams([
-        systemMessage("System prompt."),
-        userMessage("Find user 123e4567-e89b-42d3-a456-426655440000"),
-      ]);
-
-      const result = await middleware.transformParams({
-        params,
-        type: "generate",
-        model: mockModel,
-      });
-
-      const content = getSystemContent(result.prompt);
-      expect(content).toContain("000");
-      expect(content).not.toContain("~");
-    });
-
-    test("does not inject when injectInstruction is false", async () => {
-      const middleware = createMiddleware({
-        config: defaultConfig,
-        injectInstruction: false,
-      });
-
-      const params = createParams([
-        systemMessage("You are a helpful assistant."),
-        userMessage("Find user 123e4567-e89b-42d3-a456-426655440000"),
-      ]);
-
-      const result = await middleware.transformParams({
-        params,
-        type: "generate",
-        model: mockModel,
-      });
-
-      expect(getSystemContent(result.prompt)).toBe("You are a helpful assistant.");
-    });
-
-    test("preserves providerOptions on system message", async () => {
-      const middleware = createMiddleware({
-        config: defaultConfig,
-        injectInstruction: true,
-      });
-
-      const params = createParams([
-        {
-          role: "system",
-          content: "You are helpful.",
-          providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } },
-        } as LanguageModelV4Message,
-        userMessage("Find user 123e4567-e89b-42d3-a456-426655440000"),
-      ]);
-
-      const result = await middleware.transformParams({
-        params,
-        type: "generate",
-        model: mockModel,
-      });
-
-      const sysMsg = result.prompt.find((m) => m.role === "system");
-      expect(sysMsg?.providerOptions?.anthropic).toEqual({
-        cacheControl: { type: "ephemeral" },
-      });
     });
   });
 
@@ -1344,12 +1332,9 @@ describe("prompt-identifiers-ai-sdk", () => {
       expect(result.warnings).toBeUndefined();
     });
 
-    async function decodeWith(
-      content: LanguageModelV4GenerateResult["content"],
-      config: EncodeConfig = defaultConfig
-    ) {
+    async function decodeWith(content: LanguageModelV4GenerateResult["content"]) {
       const onDecode = vi.fn();
-      const middleware = createMiddleware({ config, onDecode });
+      const middleware = createMiddleware({ config: defaultConfig, onDecode });
       const transformedParams = await middleware.transformParams({
         params: createParams([userMessage("Find user 123e4567-e89b-42d3-a456-426655440000")]),
         type: "generate",
@@ -1384,6 +1369,105 @@ describe("prompt-identifiers-ai-sdk", () => {
       ]);
     });
 
+    test("detects an invented placeholder that drops the padding", async () => {
+      const result = await decodeWith([
+        {
+          type: "text",
+          text: "See [A](creator://~1~), [B](creator://~2~) and [C](creator://~13~)",
+        },
+      ]);
+
+      expect(result.warnings).toEqual([
+        { type: "unknown_placeholder", value: "~1~", source: "text" },
+        { type: "unknown_placeholder", value: "~2~", source: "text" },
+        { type: "unknown_placeholder", value: "~13~", source: "text" },
+      ]);
+    });
+
+    test("does not report a restored ID that carries the format's own delimiters", async () => {
+      const onDecode = vi.fn();
+      const middleware = createMiddleware({
+        config: { inputFormat: "UUID", outputFormat: { template: "-{i}-" } },
+        onDecode,
+      });
+      const transformedParams = await middleware.transformParams({
+        // An all-digit group, so the restored ID itself carries the format's delimiters
+        params: createParams([userMessage("Find user 123e4567-4567-42d3-a456-426655440000")]),
+        type: "generate",
+        model: mockModel,
+      });
+
+      await middleware.wrapGenerate({
+        doGenerate: vi.fn().mockResolvedValue({
+          content: [{ type: "text", text: "That is -0-." }],
+          finishReason: mockFinishReason(),
+          usage: mockUsage(),
+          warnings: [],
+        }),
+        doStream: vi.fn(),
+        params: transformedParams,
+        model: mockModel,
+      });
+
+      const result = onDecode.mock.calls[0][0];
+      expect(result.output).toBe("That is 123e4567-4567-42d3-a456-426655440000.");
+      expect(result.warnings).toBeUndefined();
+    });
+
+    test("scans every text part of an answer", async () => {
+      const result = await decodeWith([
+        { type: "text", text: "First ~000~." },
+        { type: "text", text: "Then ~777~." },
+      ]);
+
+      expect(result.warnings).toEqual([
+        { type: "unknown_placeholder", value: "~777~", source: "text" },
+      ]);
+    });
+
+    test.each(["generate", "stream"] as const)(
+      "a %s call whose prompt carried no ID reports nothing",
+      async (type) => {
+        const onDecode = vi.fn();
+        const middleware = createMiddleware({ config: defaultConfig, onDecode });
+        const transformedParams = await middleware.transformParams({
+          params: createParams([userMessage("No identifiers here")]),
+          type,
+          model: mockModel,
+        });
+        const content = [{ type: "text" as const, text: "See ~777~ and ~13~." }];
+
+        if (type === "generate") {
+          await middleware.wrapGenerate({
+            doGenerate: vi.fn().mockResolvedValue({
+              content,
+              finishReason: mockFinishReason(),
+              usage: mockUsage(),
+              warnings: [],
+            }),
+            doStream: vi.fn(),
+            params: transformedParams,
+            model: mockModel,
+          });
+        } else {
+          const result = await middleware.wrapStream({
+            doStream: vi.fn().mockResolvedValue({
+              stream: createMockStream([
+                { type: "text-delta", id: "1", delta: content[0].text },
+                { type: "text-end", id: "1" },
+              ]),
+            }),
+            doGenerate: vi.fn(),
+            params: transformedParams,
+            model: mockModel,
+          });
+          await collectStreamText(result.stream);
+        }
+
+        expect(onDecode).not.toHaveBeenCalled();
+      }
+    );
+
     test("detects a placeholder the model invented in tool call arguments", async () => {
       const result = await decodeWith([
         {
@@ -1404,34 +1488,7 @@ describe("prompt-identifiers-ai-sdk", () => {
       ]);
     });
 
-    test("reports each invented placeholder once per source", async () => {
-      const result = await decodeWith([{ type: "text", text: "~053~, ~053~ and ~001000~" }]);
-
-      expect(result.warnings).toEqual([
-        { type: "unknown_placeholder", value: "~053~", source: "text" },
-        { type: "unknown_placeholder", value: "~001000~", source: "text" },
-      ]);
-    });
-
-    test("ignores markdown strikethrough", async () => {
-      const result = await decodeWith([{ type: "text", text: "Price was ~~120~~ now 90." }]);
-
-      expect(result.warnings).toBeUndefined();
-    });
-
-    test.each<OutputFormat>(["Numeric", "IdToken"])(
-      "does not report bare numbers as invented placeholders with %s",
-      async (outputFormat) => {
-        const result = await decodeWith([{ type: "text", text: "Order 053 has 7 items." }], {
-          inputFormat: "UUID",
-          outputFormat,
-        });
-
-        expect(result.warnings).toBeUndefined();
-      }
-    );
-
-    test("names the tool for each tool call in a stream", async () => {
+    async function streamDecodeWith(parts: Parameters<typeof createMockStream>[0]) {
       const onDecode = vi.fn();
       const middleware = createMiddleware({ config: defaultConfig, onDecode });
       const transformedParams = await middleware.transformParams({
@@ -1441,24 +1498,28 @@ describe("prompt-identifiers-ai-sdk", () => {
       });
 
       const result = await middleware.wrapStream({
-        doStream: vi.fn().mockResolvedValue({
-          stream: createMockStream([
-            { type: "tool-call", toolCallId: "c1", toolName: "get_user", input: '{"id":"~000~"}' },
-            {
-              type: "tool-call",
-              toolCallId: "c2",
-              toolName: "evaluate_results",
-              input: '{"ids":["~081~"]}',
-            },
-          ]),
-        }),
+        doStream: vi.fn().mockResolvedValue({ stream: createMockStream(parts) }),
         doGenerate: vi.fn(),
         params: transformedParams,
         model: mockModel,
       });
       await collectStreamText(result.stream);
 
-      expect(onDecode.mock.calls[0][0].warnings).toEqual([
+      return onDecode.mock.calls[0][0];
+    }
+
+    test("names the tool for each tool call in a stream", async () => {
+      const result = await streamDecodeWith([
+        { type: "tool-call", toolCallId: "c1", toolName: "get_user", input: '{"id":"~000~"}' },
+        {
+          type: "tool-call",
+          toolCallId: "c2",
+          toolName: "evaluate_results",
+          input: '{"ids":["~081~"]}',
+        },
+      ]);
+
+      expect(result.warnings).toEqual([
         {
           type: "unknown_placeholder",
           value: "~081~",
@@ -1469,6 +1530,26 @@ describe("prompt-identifiers-ai-sdk", () => {
     });
 
     test("detects an invented placeholder in a stream", async () => {
+      const result = await streamDecodeWith([
+        { type: "text-delta", id: "1", delta: "Also [B](creator://~0" },
+        { type: "text-delta", id: "1", delta: "53~)." },
+        { type: "text-end", id: "1" },
+      ]);
+
+      expect(result.warnings).toEqual([
+        { type: "unknown_placeholder", value: "~053~", source: "text" },
+      ]);
+    });
+
+    test("a stream that ends mid-placeholder still reports the buffered tail", async () => {
+      const result = await streamDecodeWith([
+        { type: "text-delta", id: "1", delta: "See ~000~ and also ~13" },
+      ]);
+
+      expect(result.output).toBe("See 123e4567-e89b-42d3-a456-426655440000 and also ~13");
+    });
+
+    test("reports text the consumer already holds when the stream dies", async () => {
       const onDecode = vi.fn();
       const middleware = createMiddleware({ config: defaultConfig, onDecode });
       const transformedParams = await middleware.transformParams({
@@ -1476,21 +1557,26 @@ describe("prompt-identifiers-ai-sdk", () => {
         type: "stream",
         model: mockModel,
       });
+      let controller!: ReadableStreamDefaultController<LanguageModelV4StreamPart>;
+      const stream = new ReadableStream<LanguageModelV4StreamPart>({
+        start: (c) => {
+          controller = c;
+        },
+      });
 
       const result = await middleware.wrapStream({
-        doStream: vi.fn().mockResolvedValue({
-          stream: createMockStream([
-            { type: "text-delta", id: "1", delta: "Also [B](creator://~0" },
-            { type: "text-delta", id: "1", delta: "53~)." },
-            { type: "text-end", id: "1" },
-          ]),
-        }),
+        doStream: vi.fn().mockResolvedValue({ stream }),
         doGenerate: vi.fn(),
         params: transformedParams,
         model: mockModel,
       });
-      await collectStreamText(result.stream);
+      const reader = result.stream.getReader();
+      controller.enqueue({ type: "text-delta", id: "1", delta: "See ~000~ and ~053~" });
+      await reader.read();
+      controller.error(new Error("upstream ended"));
+      await expect(reader.read()).rejects.toThrow("upstream ended");
 
+      expect(onDecode).toHaveBeenCalledTimes(1);
       expect(onDecode.mock.calls[0][0].warnings).toEqual([
         { type: "unknown_placeholder", value: "~053~", source: "text" },
       ]);
