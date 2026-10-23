@@ -100,8 +100,8 @@ export interface DecodeWarning {
   /** The problematic value found in the output */
   value: string;
   /** Where it was found */
-  source: "text" | "tool_call";
-  /** The tool whose call arguments contained the value, when source is "tool_call" */
+  source: "text" | "tool_call" | "tool_result";
+  /** The tool the value came from, when source is "tool_call" or "tool_result" */
   toolName?: string;
 }
 
@@ -119,11 +119,19 @@ interface DecodedToolCall {
 const ID_MASK = "\u0001";
 
 /**
+ * Indices spread far enough apart that a format's padding differs across them, so what they share
+ * is its literals. The widest is 16 digits, and a format padded wider keeps some of its padding in
+ * the shared prefix.
+ */
+const PROBE_INDICES = [0, 123456789, 987654321, Number.MAX_SAFE_INTEGER];
+
+/**
  * The bodies of a call's placeholders: each one with the format's fixed prefix and suffix removed.
  *
- * The affixes are read off the format rather than guessed, by writing two placeholders far apart
- * and keeping what they share at each end, so a literal carrying its own digits (`v1_{i:03}`)
- * contributes nothing and a body split by a literal is still found. A format with nothing fixed at
+ * The affixes are read off the format rather than guessed, by writing a placeholder at several
+ * spread-out indices and keeping only what all of them share at each end, so a literal carrying
+ * its own digits (`v1_{i:03}`) contributes nothing and neither does padding up to the width of the
+ * widest probe, which one index alone cannot tell from a delimiter. A format with nothing fixed at
  * either end has no delimiters for a model to strip, which is the case the warning cannot report.
  */
 function placeholderBodies(
@@ -133,29 +141,54 @@ function placeholderBodies(
   const bodies = new Set<string>();
   if (outputFormat === "Passthrough") return bodies;
 
-  let low: string;
-  let high: string;
+  // A template says where its index sits, so its literals are the affixes exactly, at any pad
+  // width. Only a bare FormatterFn has to be probed.
+  if (typeof outputFormat === "object" && typeof outputFormat.template === "string") {
+    const slot = outputFormat.template.match(/\{i(?::[^}]+)?\}/);
+    if (slot) {
+      return bodiesFrom(
+        placeholders,
+        slot.index!,
+        outputFormat.template.length - slot.index! - slot[0].length,
+        bodies
+      );
+    }
+  }
+
+  let probes: string[];
   try {
     const formatter = createFormatter(outputFormat);
-    low = formatter(0);
-    high = formatter(123456789);
+    probes = PROBE_INDICES.map(formatter);
   } catch {
     // A formatter that refuses an index cannot be probed, so report nothing rather than guess
     return bodies;
   }
+  if (!probes.every((probe) => typeof probe === "string" && probe.length > 0)) return bodies;
+
+  const [low] = probes;
+  const shortest = Math.min(...probes.map((probe) => probe.length));
 
   let prefix = 0;
-  while (prefix < low.length && prefix < high.length && low[prefix] === high[prefix]) prefix++;
+  while (prefix < shortest && probes.every((probe) => probe[prefix] === low[prefix])) prefix++;
 
   let suffix = 0;
   while (
-    suffix < low.length - prefix &&
-    suffix < high.length - prefix &&
-    low[low.length - 1 - suffix] === high[high.length - 1 - suffix]
+    suffix < shortest - prefix &&
+    probes.every((probe) => probe[probe.length - 1 - suffix] === low[low.length - 1 - suffix])
   ) {
     suffix++;
   }
 
+  return bodiesFrom(placeholders, prefix, suffix, bodies);
+}
+
+/** Each placeholder with the format's fixed prefix and suffix cut off. */
+function bodiesFrom(
+  placeholders: string[],
+  prefix: number,
+  suffix: number,
+  bodies: Set<string>
+): Set<string> {
   if (prefix === 0 && suffix === 0) return bodies;
 
   for (const placeholder of placeholders) {
@@ -182,6 +215,7 @@ const CUT_SHORT = new Set(["length", "content-filter", "error"]);
 function detectDecodeWarnings(
   decodedText: string,
   decodedToolCalls: DecodedToolCall[],
+  decodedToolResults: DecodedToolCall[],
   mapping: Record<string, string>,
   config: EncodeConfig,
   isTruncated: boolean
@@ -238,6 +272,9 @@ function detectDecodeWarnings(
   if (decodedText) check(decodedText, { source: "text" });
   for (const { toolName, input } of decodedToolCalls) {
     check(input, { source: "tool_call", toolName });
+  }
+  for (const { toolName, input } of decodedToolResults) {
+    check(input, { source: "tool_result", toolName });
   }
 
   return warnings;
@@ -381,6 +418,40 @@ function encodeJsonValue(
 }
 
 /**
+ * Restore every identifier inside a parsed JSON value, in its keys as well as its strings.
+ *
+ * A provider that runs a tool itself is handed the encoded arguments, so the result it sends back
+ * carries the same placeholders, and a model grouping its answer can put one in a key position.
+ */
+function decodeJsonValue(
+  value: unknown,
+  mapping: Record<string, string>,
+  open: Set<object> = new Set()
+): unknown {
+  if (typeof value === "string") return decode(value, mapping);
+  if (typeof value !== "object" || value === null) return value;
+
+  // The walk reaches a self-reference before the stack runs out, which is the only place that can
+  // say which side of the exchange the payload came from
+  if (open.has(value)) {
+    throw new TypeError("Converting circular structure to JSON in a tool result.");
+  }
+  open.add(value);
+  try {
+    if (Array.isArray(value)) return value.map((item) => decodeJsonValue(item, mapping, open));
+
+    return Object.fromEntries(
+      Object.entries(value).map(([name, item]) => [
+        decode(name, mapping),
+        decodeJsonValue(item, mapping, open),
+      ])
+    );
+  } finally {
+    open.delete(value);
+  }
+}
+
+/**
  * What `JSON.stringify` would serialise in this value's place, asked for exactly once.
  *
  * The provider stringifies the payload after the middleware has encoded it. Walking a value as it
@@ -396,9 +467,11 @@ function jsonFormOf(value: unknown, key: string): unknown {
   const resolved = typeof withToJson.toJSON === "function" ? withToJson.toJSON(key) : value;
   if (resolved === null || typeof resolved !== "object") return resolved;
 
-  if (resolved instanceof String) return String(resolved);
-  if (resolved instanceof Number) return Number(resolved);
-  if (resolved instanceof Boolean) return Boolean(resolved);
+  // valueOf, not the wrapper's own conversion: Boolean(new Boolean(false)) is true, because the
+  // box is an object before it is a false
+  if (resolved instanceof String) return resolved.valueOf();
+  if (resolved instanceof Number) return resolved.valueOf();
+  if (resolved instanceof Boolean) return resolved.valueOf();
 
   return resolved;
 }
@@ -509,7 +582,49 @@ function countPlaceholders(text: string, mapping: Record<string, string>): numbe
  * The input is always a stringified JSON in tool calls.
  */
 function decodeToolInputString(input: string, mapping: Record<string, string>): string {
-  return decode(input, mapping);
+  return decode(input, jsonSafeMapping(mapping));
+}
+
+/**
+ * Escaped mappings, keyed on the mapping they came from so decode keeps its compiled pattern. The
+ * key list is stored alongside, because a mapping grows in place as a call mints placeholders and
+ * an entry added after the first lookup would otherwise never be escaped.
+ */
+const jsonSafeMappings = new WeakMap<
+  Record<string, string>,
+  { keys: string[]; escaped: Record<string, string> }
+>();
+
+/**
+ * The same mapping with every identifier written the way JSON would write it inside a string.
+ *
+ * Tool input is serialised JSON rewritten as text rather than parsed, so an identifier carrying a
+ * quote, a backslash or a control character has to arrive escaped or the SDK can no longer parse
+ * what the tool is called with. A built-in format matches none of those, and the mapping itself is
+ * returned when nothing needs escaping, which keeps decode on its cached pattern.
+ */
+function jsonSafeMapping(mapping: Record<string, string>): Record<string, string> {
+  const keys = Object.keys(mapping);
+  const known = jsonSafeMappings.get(mapping);
+  if (known && sameKeys(known.keys, keys)) return known.escaped;
+
+  const escaped: Record<string, string> = {};
+  let changed = false;
+  for (const placeholder of keys) {
+    const id = mapping[placeholder];
+    const safe = JSON.stringify(id).slice(1, -1);
+    if (safe !== id) changed = true;
+    escaped[placeholder] = safe;
+  }
+
+  const result = changed ? escaped : mapping;
+  jsonSafeMappings.set(mapping, { keys, escaped: result });
+  return result;
+}
+
+function sameKeys(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  return a.every((key, index) => key === b[index]);
 }
 
 // =============================================================================
@@ -640,6 +755,16 @@ export function promptIdentifiersMiddleware(
         "system message, or false to send none."
     );
   }
+  // A peer range is a warning rather than a wall, and a CJS require of a core too old to export
+  // this reads it as undefined, so a stale pair would otherwise run a whole billed turn before
+  // the decode path touched it
+  if (typeof findPlaceholders !== "function") {
+    throw new Error(
+      "promptIdentifiersMiddleware needs prompt-identifiers 0.2.0 or later. The installed copy " +
+        "does not export findPlaceholders."
+    );
+  }
+
   // A tool payload reaches the model as JSON and comes back as JSON text the decoder scans without
   // parsing, so a placeholder JSON has to escape is written one way and read another
   const example =
@@ -710,6 +835,9 @@ export function promptIdentifiersMiddleware(
       // Decode text and tool call inputs in content array
       let totalCount = 0;
       const decodedToolCalls: DecodedToolCall[] = [];
+      // Keyed by tool call, because a preliminary result is replaced by the next one for that
+      // call and only the last of them is the content the answer was built from
+      const decodedToolResults = new Map<string, DecodedToolCall>();
       const decodedContent = result.content.map((item) => {
         if (item.type === "text") {
           const decoded = decode(item.text, mapping);
@@ -729,6 +857,18 @@ export function promptIdentifiersMiddleware(
           decodedToolCalls.push({ toolName: item.toolName, input: decodedInput });
           return { ...item, input: decodedInput };
         }
+        if (item.type === "tool-result" && item.result !== undefined) {
+          const decodedResult = decodeJsonValue(item.result, mapping);
+          // Serialising is the warning scan's own cost and a provider-run tool returns whole
+          // documents, so nothing pays it unheard
+          if (onDecode) {
+            decodedToolResults.set(item.toolCallId, {
+              toolName: item.toolName,
+              input: JSON.stringify(decodedResult),
+            });
+          }
+          return { ...item, result: decodedResult as typeof item.result };
+        }
         return item;
       });
 
@@ -737,6 +877,7 @@ export function promptIdentifiersMiddleware(
         ? detectDecodeWarnings(
             decodedText,
             decodedToolCalls,
+            [...decodedToolResults.values()],
             mapping,
             config,
             // The opposite default to the streamed path, deliberately: doGenerate returning at
@@ -778,6 +919,9 @@ export function promptIdentifiersMiddleware(
 
       let accDecodedText = "";
       const accDecodedToolCalls: DecodedToolCall[] = [];
+      // Keyed by tool call, because a preliminary result is replaced by the next one for that
+      // call and only the last of them is the content the answer was built from
+      const accDecodedToolResults = new Map<string, DecodedToolCall>();
 
       // Debug-only accumulation state
       let streamStartTime = 0;
@@ -802,6 +946,7 @@ export function promptIdentifiersMiddleware(
           ? detectDecodeWarnings(
               accDecodedText,
               accDecodedToolCalls,
+              [...accDecodedToolResults.values()],
               mapping,
               config,
               // A stream that never reported one did not finish, which is a cut the generate
@@ -832,7 +977,10 @@ export function promptIdentifiersMiddleware(
       function decoderFor(decoders: Decoders, id: string) {
         let decoder = decoders.get(id);
         if (!decoder) {
-          decoder = createStreamingDecoder(mapping);
+          // Tool input arrives as serialised JSON rewritten in place, the same as the assembled
+          // tool call, so its identifiers have to go back escaped or the deltas stop parsing
+          const forBlock = decoders === toolInputDecoders ? jsonSafeMapping(mapping) : mapping;
+          decoder = createStreamingDecoder(forBlock);
           decoders.set(id, decoder);
         }
         return decoder;
@@ -942,6 +1090,20 @@ export function promptIdentifiersMiddleware(
               ...chunk,
               input: decodedInput,
             });
+            return;
+          }
+
+          if (chunk.type === "tool-result" && chunk.result !== undefined) {
+            const decodedResult = decodeJsonValue(chunk.result, mapping);
+            // Serialising is the warning scan's own cost and a provider-run tool returns whole
+            // documents, so nothing pays it unheard
+            if (onDecode) {
+              accDecodedToolResults.set(chunk.toolCallId, {
+                toolName: chunk.toolName,
+                input: JSON.stringify(decodedResult),
+              });
+            }
+            controller.enqueue({ ...chunk, result: decodedResult as typeof chunk.result });
             return;
           }
 

@@ -1416,6 +1416,20 @@ describe("prompt-identifiers-ai-sdk", () => {
       ]);
     });
 
+    test("a template's affixes are its literals at any pad width", async () => {
+      expect(
+        await warningsFor({ template: "ID{i:020}" }, '{"ref": "00000000000000000000"}')
+      ).toEqual([["stripped_delimiter", "00000000000000000000"]]);
+    });
+
+    test("a format padded wider than a probe reports the whole stripped body", async () => {
+      // A probe pair that both carry the pad's leading zeros would read them as the affix and
+      // leave the reported body short of what the model actually wrote
+      expect(await warningsFor({ template: "ID{i:012}" }, '{"ref": "000000000000"}')).toEqual([
+        ["stripped_delimiter", "000000000000"],
+      ]);
+    });
+
     test("a formatter that refuses a high index still decodes the answer", async () => {
       // The probe asks a custom formatter for an index far past anything the call minted, and a
       // lookup table that runs out throws there. Decoding is not the place to surface that.
@@ -1835,6 +1849,781 @@ describe("prompt-identifiers-ai-sdk", () => {
       }
     );
   });
+  describe("An identifier JSON escapes", () => {
+    // A custom input format can match anything, including characters JSON writes with a backslash.
+    // Tool input is rewritten as serialised text, so a raw one would break the JSON the SDK parses.
+    const config: EncodeConfig = {
+      inputFormat: /REF\\[a-z]+/g,
+      outputFormat: "SafeNumeric",
+    };
+    const identifier = "REF\\qbeta";
+
+    async function decodedToolInput(input: string) {
+      const middleware = createMiddleware({ config });
+      const transformedParams = await middleware.transformParams({
+        params: createParams([userMessage(`Look up ${identifier}`)]),
+        type: "generate",
+        model: mockModel,
+      });
+
+      const result = await middleware.wrapGenerate({
+        doGenerate: vi.fn().mockResolvedValue({
+          content: [{ type: "tool-call", toolCallId: "call-1", toolName: "lookup", input }],
+          finishReason: mockFinishReason(),
+          usage: mockUsage(),
+          warnings: [],
+        }),
+        doStream: vi.fn(),
+        params: transformedParams,
+        model: mockModel,
+      });
+
+      return (result.content[0] as { input: string }).input;
+    }
+
+    test("it is escaped back into tool call input, which stays parseable", async () => {
+      const input = await decodedToolInput('{"id":"~000~"}');
+
+      expect(JSON.parse(input)).toEqual({ id: identifier });
+    });
+
+    test("the answer's own text carries the identifier unescaped", async () => {
+      const middleware = createMiddleware({ config });
+      const transformedParams = await middleware.transformParams({
+        params: createParams([userMessage(`Look up ${identifier}`)]),
+        type: "stream",
+        model: mockModel,
+      });
+
+      const streamed = await middleware.wrapStream({
+        doStream: vi.fn().mockResolvedValue({
+          stream: createMockStream([
+            { type: "text-start", id: "a" },
+            { type: "text-delta", id: "a", delta: "found ~000~" },
+            { type: "text-end", id: "a" },
+            { type: "finish", finishReason: mockFinishReason(), usage: mockUsage() },
+          ] as LanguageModelV4StreamPart[]),
+        }),
+        doGenerate: vi.fn(),
+        params: transformedParams,
+        model: mockModel,
+      });
+
+      // Prose is not JSON, so escaping it would show the reader a backslash the model never wrote
+      expect(await collectStreamText(streamed.stream)).toBe(`found ${identifier}`);
+    });
+
+    test("the streamed deltas reassemble to what the tool call carries", async () => {
+      const middleware = createMiddleware({ config });
+      const transformedParams = await middleware.transformParams({
+        params: createParams([userMessage(`Look up ${identifier}`)]),
+        type: "stream",
+        model: mockModel,
+      });
+
+      const wire = '{"id":"~000~"}';
+      const streamed = await middleware.wrapStream({
+        doStream: vi.fn().mockResolvedValue({
+          stream: createMockStream([
+            { type: "tool-input-start", id: "call-1", toolName: "lookup" },
+            ...wire.split("").map((piece) => ({
+              type: "tool-input-delta" as const,
+              id: "call-1",
+              delta: piece,
+            })),
+            { type: "tool-input-end", id: "call-1" },
+            {
+              type: "tool-call",
+              toolCallId: "call-1",
+              toolName: "lookup",
+              input: wire,
+            },
+            { type: "finish", finishReason: mockFinishReason(), usage: mockUsage() },
+          ] as LanguageModelV4StreamPart[]),
+        }),
+        doGenerate: vi.fn(),
+        params: transformedParams,
+        model: mockModel,
+      });
+
+      const parts = await collectStreamParts(streamed.stream);
+      const reassembled = parts
+        .filter((part) => part.type === "tool-input-delta")
+        .map((part) => (part as { delta: string }).delta)
+        .join("");
+      const call = parts.find((part) => part.type === "tool-call") as { input: string };
+
+      expect(JSON.parse(reassembled)).toEqual({ id: identifier });
+      expect(reassembled).toBe(call.input);
+    });
+
+    test("an identifier JSON carries unchanged is written unchanged", async () => {
+      const plain: EncodeConfig = { inputFormat: "UUID", outputFormat: "SafeNumeric" };
+      const uuid = "123e4567-e89b-42d3-a456-426655440000";
+      const middleware = createMiddleware({ config: plain });
+      const transformedParams = await middleware.transformParams({
+        params: createParams([userMessage(`Look up ${uuid}`)]),
+        type: "generate",
+        model: mockModel,
+      });
+
+      const result = await middleware.wrapGenerate({
+        doGenerate: vi.fn().mockResolvedValue({
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call-1",
+              toolName: "lookup",
+              input: '{"id":"~000~"}',
+            },
+          ],
+          finishReason: mockFinishReason(),
+          usage: mockUsage(),
+          warnings: [],
+        }),
+        doStream: vi.fn(),
+        params: transformedParams,
+        model: mockModel,
+      });
+
+      expect((result.content[0] as { input: string }).input).toBe(`{"id":"${uuid}"}`);
+    });
+  });
+
+  describe("A tool the provider ran itself", () => {
+    const config: EncodeConfig = { inputFormat: "UUID", outputFormat: "SafeNumeric" };
+    const uuid = "123e4567-e89b-42d3-a456-426655440000";
+
+    test("its result is decoded and scanned on the generated path", async () => {
+      const onDecode = vi.fn();
+      const middleware = createMiddleware({ config, onDecode });
+      const transformedParams = await middleware.transformParams({
+        params: createParams([userMessage(`Look up ${uuid}`)]),
+        type: "generate",
+        model: mockModel,
+      });
+
+      const result = await middleware.wrapGenerate({
+        doGenerate: vi.fn().mockResolvedValue({
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "call-1",
+              toolName: "web_search",
+              result: { query: "~000~", hits: [{ owner: "~000~", note: "also saw ~777~" }] },
+            },
+          ],
+          finishReason: mockFinishReason(),
+          usage: mockUsage(),
+          warnings: [],
+        }),
+        doStream: vi.fn(),
+        params: transformedParams,
+        model: mockModel,
+      });
+
+      expect(result.content[0]).toMatchObject({
+        result: { query: uuid, hits: [{ owner: uuid, note: `also saw ~777~` }] },
+      });
+      expect(onDecode.mock.calls[0][0].warnings).toEqual([
+        {
+          type: "unknown_placeholder",
+          value: "~777~",
+          source: "tool_result",
+          toolName: "web_search",
+        },
+      ]);
+    });
+
+    test("its result is decoded and scanned on the streamed path", async () => {
+      const onDecode = vi.fn();
+      const middleware = createMiddleware({ config, onDecode });
+      const transformedParams = await middleware.transformParams({
+        params: createParams([userMessage(`Look up ${uuid}`)]),
+        type: "stream",
+        model: mockModel,
+      });
+
+      const streamed = await middleware.wrapStream({
+        doStream: vi.fn().mockResolvedValue({
+          stream: createMockStream([
+            {
+              type: "tool-result",
+              toolCallId: "call-1",
+              toolName: "web_search",
+              result: { query: "~000~", note: "also saw ~777~" },
+            },
+            { type: "finish", finishReason: mockFinishReason(), usage: mockUsage() },
+          ] as LanguageModelV4StreamPart[]),
+        }),
+        doGenerate: vi.fn(),
+        params: transformedParams,
+        model: mockModel,
+      });
+
+      const parts = await collectStreamParts(streamed.stream);
+
+      expect(parts[0]).toMatchObject({ result: { query: uuid, note: "also saw ~777~" } });
+      expect(onDecode.mock.calls[0][0].warnings).toEqual([
+        {
+          type: "unknown_placeholder",
+          value: "~777~",
+          source: "tool_result",
+          toolName: "web_search",
+        },
+      ]);
+    });
+
+    test("a placeholder in a result key is decoded", async () => {
+      const onDecode = vi.fn();
+      const middleware = createMiddleware({ config, onDecode });
+      const transformedParams = await middleware.transformParams({
+        params: createParams([userMessage(`Look up ${uuid}`)]),
+        type: "generate",
+        model: mockModel,
+      });
+
+      const result = await middleware.wrapGenerate({
+        doGenerate: vi.fn().mockResolvedValue({
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "call-1",
+              toolName: "web_search",
+              result: { "~000~": { hits: 3 } },
+            },
+          ],
+          finishReason: mockFinishReason(),
+          usage: mockUsage(),
+          warnings: [],
+        }),
+        doStream: vi.fn(),
+        params: transformedParams,
+        model: mockModel,
+      });
+
+      expect(result.content[0]).toMatchObject({ result: { [uuid]: { hits: 3 } } });
+    });
+
+    test("a result the provider left undefined is passed through", async () => {
+      const onDecode = vi.fn();
+      const middleware = createMiddleware({ config, onDecode });
+      const transformedParams = await middleware.transformParams({
+        params: createParams([userMessage(`Look up ${uuid}`)]),
+        type: "generate",
+        model: mockModel,
+      });
+
+      const result = await middleware.wrapGenerate({
+        doGenerate: vi.fn().mockResolvedValue({
+          content: [
+            { type: "text", text: "Nothing came back." },
+            {
+              type: "tool-result",
+              toolCallId: "call-1",
+              toolName: "web_search",
+              result: undefined,
+            },
+          ],
+          finishReason: mockFinishReason(),
+          usage: mockUsage(),
+          warnings: [],
+        }),
+        doStream: vi.fn(),
+        params: transformedParams,
+        model: mockModel,
+      });
+
+      expect(result.content[1]).toMatchObject({ result: undefined });
+      expect(onDecode.mock.calls[0][0].warnings).toBeUndefined();
+    });
+
+    test("a preliminary result and its replacement report one warning", async () => {
+      const onDecode = vi.fn();
+      const middleware = createMiddleware({ config, onDecode });
+      const transformedParams = await middleware.transformParams({
+        params: createParams([userMessage(`Look up ${uuid}`)]),
+        type: "stream",
+        model: mockModel,
+      });
+
+      // A provider streaming previews sends the same content again under a final result
+      const streamed = await middleware.wrapStream({
+        doStream: vi.fn().mockResolvedValue({
+          stream: createMockStream([
+            {
+              type: "tool-result",
+              toolCallId: "call-1",
+              toolName: "web_search",
+              result: { note: "saw ~777~" },
+              preliminary: true,
+            },
+            {
+              type: "tool-result",
+              toolCallId: "call-1",
+              toolName: "web_search",
+              result: { note: "saw ~777~" },
+            },
+            { type: "finish", finishReason: mockFinishReason(), usage: mockUsage() },
+          ] as LanguageModelV4StreamPart[]),
+        }),
+        doGenerate: vi.fn(),
+        params: transformedParams,
+        model: mockModel,
+      });
+
+      const parts = await collectStreamParts(streamed.stream);
+
+      expect(parts[0]).toMatchObject({ result: { note: "saw ~777~" }, preliminary: true });
+      expect(onDecode.mock.calls[0][0].warnings).toEqual([
+        {
+          type: "unknown_placeholder",
+          value: "~777~",
+          source: "tool_result",
+          toolName: "web_search",
+        },
+      ]);
+    });
+
+    test("a preliminary result with no final one still reports", async () => {
+      const onDecode = vi.fn();
+      const middleware = createMiddleware({ config, onDecode });
+      const transformedParams = await middleware.transformParams({
+        params: createParams([userMessage(`Look up ${uuid}`)]),
+        type: "stream",
+        model: mockModel,
+      });
+
+      // The stream ends before the final result the provider promised
+      const streamed = await middleware.wrapStream({
+        doStream: vi.fn().mockResolvedValue({
+          stream: createMockStream([
+            {
+              type: "tool-result",
+              toolCallId: "call-1",
+              toolName: "web_search",
+              result: { note: "saw ~777~" },
+              preliminary: true,
+            },
+          ] as LanguageModelV4StreamPart[]),
+        }),
+        doGenerate: vi.fn(),
+        params: transformedParams,
+        model: mockModel,
+      });
+
+      await collectStreamParts(streamed.stream);
+
+      expect(onDecode.mock.calls[0][0].warnings).toEqual([
+        {
+          type: "unknown_placeholder",
+          value: "~777~",
+          source: "tool_result",
+          toolName: "web_search",
+        },
+      ]);
+    });
+
+    test("a generated preliminary result and its replacement report one warning", async () => {
+      const onDecode = vi.fn();
+      const middleware = createMiddleware({ config, onDecode });
+      const transformedParams = await middleware.transformParams({
+        params: createParams([userMessage(`Look up ${uuid}`)]),
+        type: "generate",
+        model: mockModel,
+      });
+
+      await middleware.wrapGenerate({
+        doGenerate: vi.fn().mockResolvedValue({
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "call-1",
+              toolName: "web_search",
+              result: { note: "saw ~777~" },
+              preliminary: true,
+            },
+            {
+              type: "tool-result",
+              toolCallId: "call-1",
+              toolName: "web_search",
+              result: { note: "saw ~777~" },
+            },
+          ],
+          finishReason: mockFinishReason(),
+          usage: mockUsage(),
+          warnings: [],
+        }),
+        doStream: vi.fn(),
+        params: transformedParams,
+        model: mockModel,
+      });
+
+      expect(onDecode.mock.calls[0][0].warnings).toEqual([
+        {
+          type: "unknown_placeholder",
+          value: "~777~",
+          source: "tool_result",
+          toolName: "web_search",
+        },
+      ]);
+    });
+
+    test("a generated answer carrying only a preliminary result still reports", async () => {
+      const onDecode = vi.fn();
+      const middleware = createMiddleware({ config, onDecode });
+      const transformedParams = await middleware.transformParams({
+        params: createParams([userMessage(`Look up ${uuid}`)]),
+        type: "generate",
+        model: mockModel,
+      });
+
+      await middleware.wrapGenerate({
+        doGenerate: vi.fn().mockResolvedValue({
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "call-1",
+              toolName: "web_search",
+              result: { note: "saw ~777~" },
+              preliminary: true,
+            },
+          ],
+          finishReason: mockFinishReason(),
+          usage: mockUsage(),
+          warnings: [],
+        }),
+        doStream: vi.fn(),
+        params: transformedParams,
+        model: mockModel,
+      });
+
+      expect(onDecode.mock.calls[0][0].warnings).toEqual([
+        {
+          type: "unknown_placeholder",
+          value: "~777~",
+          source: "tool_result",
+          toolName: "web_search",
+        },
+      ]);
+    });
+
+    test("a streamed result the provider left undefined is passed through", async () => {
+      const onDecode = vi.fn();
+      const middleware = createMiddleware({ config, onDecode });
+      const transformedParams = await middleware.transformParams({
+        params: createParams([userMessage(`Look up ${uuid}`)]),
+        type: "stream",
+        model: mockModel,
+      });
+
+      const streamed = await middleware.wrapStream({
+        doStream: vi.fn().mockResolvedValue({
+          stream: createMockStream([
+            {
+              type: "tool-result",
+              toolCallId: "call-1",
+              toolName: "web_search",
+              result: undefined,
+            },
+            { type: "finish", finishReason: mockFinishReason(), usage: mockUsage() },
+          ] as LanguageModelV4StreamPart[]),
+        }),
+        doGenerate: vi.fn(),
+        params: transformedParams,
+        model: mockModel,
+      });
+
+      const parts = await collectStreamParts(streamed.stream);
+
+      expect(parts[0]).toMatchObject({ result: undefined });
+      expect(onDecode.mock.calls[0][0].warnings).toBeUndefined();
+    });
+
+    test("a streamed result is not serialised when nothing is listening", async () => {
+      async function stringifyCalls(onDecode?: () => void) {
+        const middleware = createMiddleware({ config, ...(onDecode && { onDecode }) });
+        const transformedParams = await middleware.transformParams({
+          params: createParams([userMessage(`Look up ${uuid}`)]),
+          type: "stream",
+          model: mockModel,
+        });
+
+        const realStringify = JSON.stringify;
+        let calls = 0;
+        JSON.stringify = ((...args: Parameters<typeof JSON.stringify>) => {
+          calls++;
+          return realStringify(...args);
+        }) as typeof JSON.stringify;
+        try {
+          const streamed = await middleware.wrapStream({
+            doStream: vi.fn().mockResolvedValue({
+              stream: createMockStream([
+                {
+                  type: "tool-result",
+                  toolCallId: "call-1",
+                  toolName: "web_search",
+                  result: { note: "~000~" },
+                },
+                { type: "finish", finishReason: mockFinishReason(), usage: mockUsage() },
+              ] as LanguageModelV4StreamPart[]),
+            }),
+            doGenerate: vi.fn(),
+            params: transformedParams,
+            model: mockModel,
+          });
+          await collectStreamParts(streamed.stream);
+        } finally {
+          JSON.stringify = realStringify;
+        }
+        return calls;
+      }
+
+      expect(await stringifyCalls()).toBe(0);
+      expect(await stringifyCalls(vi.fn())).toBeGreaterThan(0);
+    });
+
+    test("a result reaching the same object twice is not a cycle", async () => {
+      const middleware = createMiddleware({ config });
+      const transformedParams = await middleware.transformParams({
+        params: createParams([userMessage(`Look up ${uuid}`)]),
+        type: "generate",
+        model: mockModel,
+      });
+
+      const shared = { note: "~000~" };
+      const result = await middleware.wrapGenerate({
+        doGenerate: vi.fn().mockResolvedValue({
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "call-1",
+              toolName: "web_search",
+              result: { from: shared, to: shared },
+            },
+          ],
+          finishReason: mockFinishReason(),
+          usage: mockUsage(),
+          warnings: [],
+        }),
+        doStream: vi.fn(),
+        params: transformedParams,
+        model: mockModel,
+      });
+
+      expect(result.content[0]).toMatchObject({
+        result: { from: { note: uuid }, to: { note: uuid } },
+      });
+    });
+
+    test("two parallel calls to one tool each report", async () => {
+      const onDecode = vi.fn();
+      const middleware = createMiddleware({ config, onDecode });
+      const transformedParams = await middleware.transformParams({
+        params: createParams([userMessage(`Look up ${uuid}`)]),
+        type: "generate",
+        model: mockModel,
+      });
+
+      await middleware.wrapGenerate({
+        doGenerate: vi.fn().mockResolvedValue({
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "call-1",
+              toolName: "web_search",
+              result: { note: "saw ~777~" },
+            },
+            {
+              type: "tool-result",
+              toolCallId: "call-2",
+              toolName: "web_search",
+              result: { note: "saw ~888~" },
+            },
+          ],
+          finishReason: mockFinishReason(),
+          usage: mockUsage(),
+          warnings: [],
+        }),
+        doStream: vi.fn(),
+        params: transformedParams,
+        model: mockModel,
+      });
+
+      expect(onDecode.mock.calls[0][0].warnings).toEqual([
+        {
+          type: "unknown_placeholder",
+          value: "~777~",
+          source: "tool_result",
+          toolName: "web_search",
+        },
+        {
+          type: "unknown_placeholder",
+          value: "~888~",
+          source: "tool_result",
+          toolName: "web_search",
+        },
+      ]);
+    });
+
+    test("the final result replaces what the preview said", async () => {
+      const onDecode = vi.fn();
+      const middleware = createMiddleware({ config, onDecode });
+      const transformedParams = await middleware.transformParams({
+        params: createParams([userMessage(`Look up ${uuid}`)]),
+        type: "generate",
+        model: mockModel,
+      });
+
+      // A preview is a guess at the answer, so only what replaced it describes the response
+      await middleware.wrapGenerate({
+        doGenerate: vi.fn().mockResolvedValue({
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "call-1",
+              toolName: "web_search",
+              result: { note: "saw ~777~" },
+              preliminary: true,
+            },
+            {
+              type: "tool-result",
+              toolCallId: "call-1",
+              toolName: "web_search",
+              result: { note: "saw ~888~" },
+            },
+          ],
+          finishReason: mockFinishReason(),
+          usage: mockUsage(),
+          warnings: [],
+        }),
+        doStream: vi.fn(),
+        params: transformedParams,
+        model: mockModel,
+      });
+
+      expect(onDecode.mock.calls[0][0].warnings).toEqual([
+        {
+          type: "unknown_placeholder",
+          value: "~888~",
+          source: "tool_result",
+          toolName: "web_search",
+        },
+      ]);
+    });
+
+    test("a tool result that references itself says so", async () => {
+      const middleware = createMiddleware({ config });
+      const transformedParams = await middleware.transformParams({
+        params: createParams([userMessage(`Look up ${uuid}`)]),
+        type: "generate",
+        model: mockModel,
+      });
+
+      const cyclic: Record<string, unknown> = { note: "~000~" };
+      cyclic.self = cyclic;
+
+      await expect(
+        middleware.wrapGenerate({
+          doGenerate: vi.fn().mockResolvedValue({
+            content: [
+              {
+                type: "tool-result",
+                toolCallId: "call-1",
+                toolName: "web_search",
+                result: cyclic,
+              },
+            ],
+            finishReason: mockFinishReason(),
+            usage: mockUsage(),
+            warnings: [],
+          }),
+          doStream: vi.fn(),
+          params: transformedParams,
+          model: mockModel,
+        })
+      ).rejects.toThrow(/circular/i);
+    });
+
+    test("a large result is not serialised when nothing is listening", async () => {
+      async function stringifyCalls(onDecode?: () => void) {
+        const middleware = createMiddleware({ config, ...(onDecode && { onDecode }) });
+        const transformedParams = await middleware.transformParams({
+          params: createParams([userMessage(`Look up ${uuid}`)]),
+          type: "generate",
+          model: mockModel,
+        });
+
+        const realStringify = JSON.stringify;
+        let calls = 0;
+        JSON.stringify = ((...args: Parameters<typeof JSON.stringify>) => {
+          calls++;
+          return realStringify(...args);
+        }) as typeof JSON.stringify;
+        try {
+          await middleware.wrapGenerate({
+            doGenerate: vi.fn().mockResolvedValue({
+              content: [
+                {
+                  type: "tool-result",
+                  toolCallId: "call-1",
+                  toolName: "web_search",
+                  result: { note: "~000~" },
+                },
+              ],
+              finishReason: mockFinishReason(),
+              usage: mockUsage(),
+              warnings: [],
+            }),
+            doStream: vi.fn(),
+            params: transformedParams,
+            model: mockModel,
+          });
+        } finally {
+          JSON.stringify = realStringify;
+        }
+        return calls;
+      }
+
+      expect(await stringifyCalls()).toBe(0);
+      expect(await stringifyCalls(vi.fn())).toBeGreaterThan(0);
+    });
+
+    test("a result holding no placeholder is handed back unchanged", async () => {
+      const onDecode = vi.fn();
+      const middleware = createMiddleware({ config, onDecode });
+      const transformedParams = await middleware.transformParams({
+        params: createParams([userMessage(`Look up ${uuid}`)]),
+        type: "generate",
+        model: mockModel,
+      });
+
+      const result = await middleware.wrapGenerate({
+        doGenerate: vi.fn().mockResolvedValue({
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "call-1",
+              toolName: "web_search",
+              result: { count: 3, ok: true, rows: [null, "plain"] },
+            },
+          ],
+          finishReason: mockFinishReason(),
+          usage: mockUsage(),
+          warnings: [],
+        }),
+        doStream: vi.fn(),
+        params: transformedParams,
+        model: mockModel,
+      });
+
+      expect(result.content[0]).toMatchObject({
+        result: { count: 3, ok: true, rows: [null, "plain"] },
+      });
+      expect(onDecode.mock.calls[0][0].warnings).toBeUndefined();
+    });
+  });
+
   describe("Ids inside a JSON payload", () => {
     const config: EncodeConfig = { inputFormat: "UUID", outputFormat: "SafeNumeric" };
     const ids = Array.from(
@@ -1919,6 +2708,9 @@ describe("prompt-identifiers-ai-sdk", () => {
         '{"v":"~000~"}',
       ],
       ["a toJSON returning a boxed number", { v: { toJSON: () => new Number(42) } }, '{"v":42}'],
+      ["a boxed false", { v: new Boolean(false) }, '{"v":false}'],
+      ["a boxed empty string", { v: new String("") }, '{"v":""}'],
+      ["a boxed zero", { v: new Number(0) }, '{"v":0}'],
       ["a property holding a function", { v: () => ids[0], n: 1 }, '{"n":1}'],
     ])("%s serialises the way the provider would", async (_label, input, expected) => {
       expect(await toolCallInputOnTheWire(input)).toBe(expected);
@@ -1954,6 +2746,26 @@ describe("prompt-identifiers-ai-sdk", () => {
 
       const wire = JSON.stringify(result.prompt);
       for (const id of ids) expect(wire).not.toContain(id);
+    });
+  });
+
+  describe("A core too old to serve the middleware", () => {
+    test("is refused where the middleware is built", async () => {
+      // A peer range is a warning under pnpm and CJS resolves a missing export to undefined, so a
+      // stale core otherwise runs a whole billed turn before anything notices
+      const core = await import("prompt-identifiers");
+      const real = core.findPlaceholders;
+      Object.defineProperty(core, "findPlaceholders", { value: undefined, configurable: true });
+      try {
+        expect(() =>
+          promptIdentifiersMiddleware({
+            config: { inputFormat: "UUID", outputFormat: "SafeNumeric" },
+            instruction: false,
+          })
+        ).toThrow(/prompt-identifiers 0\.2\.0 or later/);
+      } finally {
+        Object.defineProperty(core, "findPlaceholders", { value: real, configurable: true });
+      }
     });
   });
 

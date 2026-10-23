@@ -498,7 +498,7 @@ describe("prompt-identifiers-baml", () => {
       const result = await wrapped({ id: ulid });
 
       expect(mockFn).toHaveBeenCalledWith({ id: "~000~" });
-      expect(result.result).toBe(ulid.toLowerCase()); // ULIDs are normalized to lowercase
+      expect(result.result).toBe(ulid);
     });
   });
 
@@ -628,6 +628,172 @@ describe("prompt-identifiers-baml", () => {
 
       expect(onEncode.mock.calls[0][0].debugData).toBeUndefined();
       expect(onDecode.mock.calls[0][0].debugData).toBeUndefined();
+    });
+  });
+
+  describe("An identifier in an object key", () => {
+    test("a map keyed by identifier is encoded when the caller asks", async () => {
+      const mockFn = vi.fn(async (input: { byId: Record<string, string> }) => ({
+        seen: Object.keys(input.byId).join(" "),
+      }));
+
+      const wrapped = wrapBamlFunction(mockFn, { config: defaultConfig, encodeKeys: true });
+      await wrapped({ byId: { [uuid1]: "active", [uuid2]: "idle" } });
+
+      expect(mockFn).toHaveBeenCalledWith({ byId: { "~000~": "active", "~001~": "idle" } });
+    });
+
+    test("one identifier in a key and in a value shares a placeholder", async () => {
+      const mockFn = vi.fn(async () => ({ ok: true }));
+
+      const wrapped = wrapBamlFunction(mockFn, { config: defaultConfig, encodeKeys: true });
+      await wrapped({ byId: { [uuid1]: `owner ${uuid1}` } });
+
+      expect(mockFn).toHaveBeenCalledWith({ byId: { "~000~": "owner ~000~" } });
+    });
+
+    test("a field name is left alone unless the caller asks for keys", async () => {
+      // A custom format can match a class's own field names, and rewriting one calls the BAML
+      // function with an object its class does not describe
+      const mockFn = vi.fn(async () => ({ ok: true }));
+
+      const wrapped = wrapBamlFunction(mockFn, {
+        config: { inputFormat: /cust_[a-z0-9]+/g, outputFormat: "SafeNumeric" },
+      });
+      await wrapped({ cust_identifier: "cust_abc123", note: "hello" });
+
+      expect(mockFn).toHaveBeenCalledWith({ cust_identifier: "~000~", note: "hello" });
+    });
+
+    test("an encoded key named __proto__ stays an own property", async () => {
+      const mockFn = vi.fn(async (_input: Record<string, string>) => ({ ok: true }));
+
+      const wrapped = wrapBamlFunction(mockFn, { config: defaultConfig, encodeKeys: true });
+      await wrapped(JSON.parse('{"__proto__": "x", "note": "y"}'));
+
+      const sent = mockFn.mock.calls[0][0];
+      expect(Object.getOwnPropertyNames(sent)).toEqual(["__proto__", "note"]);
+      expect(Object.getPrototypeOf(sent)).toBe(Object.prototype);
+    });
+
+    test.each([
+      ["one identifier in two cases", { [uuid1]: "a", [uuid1.toUpperCase()]: "b" }],
+      ["a key already shaped like the placeholder", { [uuid1]: "a", "~000~": "b" }],
+      ["that key first", { "~000~": "b", [uuid1]: "a" }],
+    ])("two keys that encode to one placeholder are refused: %s", async (_label, byId) => {
+      const mockFn = vi.fn(async () => ({ ok: true }));
+
+      const wrapped = wrapBamlFunction(mockFn, { config: defaultConfig, encodeKeys: true });
+
+      await expect(wrapped({ byId })).rejects.toThrow(/same placeholder/i);
+    });
+
+    test("an explicit encodeFields leaves keys alone, since a path names a value", async () => {
+      const mockFn = vi.fn(async () => ({ ok: true }));
+
+      const wrapped = wrapBamlFunction(mockFn, {
+        config: defaultConfig,
+        encodeKeys: true,
+        encodeFields: ["note"],
+      });
+      await wrapped({ byId: { [uuid1]: "active" }, note: `owner ${uuid1}` });
+
+      expect(mockFn).toHaveBeenCalledWith({
+        byId: { [uuid1]: "active" },
+        note: "owner ~000~",
+      });
+    });
+  });
+
+  describe("A placeholder in an object key", () => {
+    test("a result grouped by id is decoded in its keys", async () => {
+      const mockFn = vi.fn(async (input: { ids: string }) => ({
+        byId: { "~000~": "active", "~001~": "idle" },
+        summary: `Both seen: ${input.ids}`,
+      }));
+
+      const wrapped = wrapBamlFunction(mockFn, { config: defaultConfig });
+      const result = await wrapped({ ids: `${uuid1} ${uuid2}` });
+
+      expect(result.byId).toEqual({ [uuid1]: "active", [uuid2]: "idle" });
+    });
+
+    test("decodeObject restores a key as well as a value", () => {
+      expect(decodeObject({ "~000~": "active" }, { "~000~": uuid1 })).toEqual({
+        [uuid1]: "active",
+      });
+    });
+
+    test("a decoded key named __proto__ stays an own property", () => {
+      const decoded = decodeObject<Record<string, unknown>>(
+        { "~000~": "value" },
+        { "~000~": "__proto__" }
+      );
+
+      expect(Object.getOwnPropertyNames(decoded)).toEqual(["__proto__"]);
+      expect(Object.getPrototypeOf(decoded)).toBe(Object.prototype);
+    });
+
+    test("a decoded key counts towards the debug total", async () => {
+      const onDecode = vi.fn();
+      const mockFn = vi.fn(async () => ({ byId: { "~000~": "active" } }));
+
+      const wrapped = wrapBamlFunction(mockFn, {
+        config: defaultConfig,
+        debug: true,
+        onDecode,
+      });
+      await wrapped({ id: uuid1 });
+
+      expect(onDecode.mock.calls[0][0].debugData.decodedCount).toBe(1);
+    });
+  });
+
+  describe("A consumer that stops reading a stream early", () => {
+    test("the wrapped generator is closed", async () => {
+      let closed = false;
+      async function* source() {
+        try {
+          yield { text: "~000~ first" };
+          yield { text: "~000~ second" };
+          return { text: "~000~ done" };
+        } finally {
+          closed = true;
+        }
+      }
+
+      const wrapped = wrapBamlStreamingFunction(() => source(), { config: defaultConfig });
+
+      for await (const partial of wrapped({ id: uuid1 })) {
+        expect(partial.text).toBe(`${uuid1} first`);
+        break;
+      }
+
+      expect(closed).toBe(true);
+    });
+
+    test("a consumer throwing inside the loop closes the generator", async () => {
+      let closed = false;
+      async function* source() {
+        try {
+          yield { text: "~000~ first" };
+          return { text: "~000~ done" };
+        } finally {
+          closed = true;
+        }
+      }
+
+      const wrapped = wrapBamlStreamingFunction(() => source(), { config: defaultConfig });
+
+      await expect(
+        (async () => {
+          for await (const _partial of wrapped({ id: uuid1 })) {
+            throw new Error("the consumer gave up");
+          }
+        })()
+      ).rejects.toThrow("the consumer gave up");
+
+      expect(closed).toBe(true);
     });
   });
 });

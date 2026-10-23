@@ -251,12 +251,26 @@ describe("prompt-identifiers", () => {
   });
 
   describe("UUID case handling", () => {
-    test("uppercase UUIDs are normalized to lowercase", () => {
+    test("an uppercase UUID is written back as the caller wrote it", () => {
       const prompt = "ID: 123E4567-E89B-42D3-A456-426655440000";
 
-      const { mapping } = encode(prompt, UUID_NUMERIC_CONFIG);
-      // Should store lowercase version
-      expect(mapping["000"]).toBe("123e4567-e89b-42d3-a456-426655440000");
+      const { encoded, mapping } = encode(prompt, UUID_NUMERIC_CONFIG);
+
+      expect(mapping["000"]).toBe("123E4567-E89B-42D3-A456-426655440000");
+      expect(decode(encoded, mapping)).toBe(prompt);
+    });
+
+    test("a ULID survives a round trip in the case it was written in", () => {
+      // Crockford base32 is written in upper case, and a lowercased ULID misses a case-sensitive
+      // lookup, so the identifier the caller gets back has to be the one it handed over
+      const prompt = "Order 01ARZ3NDEKTSV4RRFFQ69G5FAV shipped";
+
+      const { encoded, mapping } = encode(prompt, {
+        inputFormat: "ULID",
+        outputFormat: "Numeric",
+      });
+
+      expect(decode(encoded, mapping)).toBe(prompt);
     });
 
     test("mixed case UUIDs deduplicate correctly", () => {
@@ -264,9 +278,10 @@ describe("prompt-identifiers", () => {
         "ID: 123e4567-e89b-42d3-a456-426655440000 and 123E4567-E89B-42D3-A456-426655440000";
 
       const { encoded, mapping } = encode(prompt, UUID_NUMERIC_CONFIG);
-      // Both should map to same placeholder
+      // Both map to the same placeholder, and the casing seen first is the one written back
       expect(encoded).toBe("ID: 000 and 000");
       expect(Object.keys(mapping).length).toBe(1);
+      expect(mapping["000"]).toBe("123e4567-e89b-42d3-a456-426655440000");
     });
   });
 
@@ -290,9 +305,7 @@ describe("prompt-identifiers", () => {
         outputFormat: "Numeric",
       });
 
-      const decoded = decode(encoded, mapping);
-      // IDs are lowercased, surrounding text preserved
-      expect(decoded).toBe("Order ord-abc-123 shipped to customer cust-xyz-789");
+      expect(decode(encoded, mapping)).toBe(prompt);
     });
 
     test("custom regex without global flag gets global added", () => {
@@ -507,6 +520,84 @@ describe("prompt-identifiers", () => {
 
       expect(encoded).toBe("see ~000~ and ~001~ here");
       expect(Object.keys(mapping)).toHaveLength(2);
+    });
+
+    test("a template with nothing around its index has no shape to find", () => {
+      // Nothing fixed at either end means no delimiter a scan could anchor on
+      expect(findPlaceholders("see 000 and 7", { template: "{i:03}" })).toEqual([]);
+    });
+
+    test("a formatter padded past the widest probe keeps only what starts with its padding", () => {
+      // The probes all carry the pad's leading zeros, so those read as prefix. The real
+      // placeholder still matches and an invention that does not begin with them does not.
+      const format = (index: number) => `ID${String(index).padStart(20, "0")}`;
+      const text = "see ID00000000000000000007 and ID99999999999999999999";
+
+      expect(findPlaceholders(text, format)).toEqual(["ID00000000000000000007"]);
+      expect(findPlaceholders(text, { template: "ID{i:020}" })).toEqual([
+        "ID00000000000000000007",
+        "ID99999999999999999999",
+      ]);
+    });
+
+    test("a formatter padded wider than nine digits is probed wide enough", () => {
+      // A bare function cannot be read, so its affixes come from probes, and a narrow set of them
+      // would share the padding and pass it off as a delimiter
+      const format = (index: number) => `ID${String(index).padStart(12, "0")}`;
+
+      expect(findPlaceholders("see ID000000000007 and ID999999999999", format)).toEqual([
+        "ID000000000007",
+        "ID999999999999",
+      ]);
+    });
+
+    // findPlaceholders answers which tokens look like placeholders, so a format it cannot read is
+    // a format with no shape rather than a reason to end the call
+    test.each([
+      ["a template that is not a string", { template: 123 }],
+      ["null", null],
+      ["undefined", undefined],
+      ["a number", 42],
+      ["a boolean", true],
+      ["an array", []],
+      ["an unknown name", "Nope"],
+      ["an object with no template", {}],
+    ])("a caller with no types gets an answer, not a throw: %s", (_label, format) => {
+      expect(findPlaceholders("see ~000~", format as unknown as OutputFormat)).toEqual([]);
+    });
+
+    test("a template's affixes are its literals at any pad width", () => {
+      // A template says where its index sits, so no probe has to outgrow the padding
+      const format = { template: "ID{i:020}" };
+
+      expect(
+        findPlaceholders("see ID00000000000000000007 and ID99999999999999999999", format)
+      ).toEqual(["ID00000000000000000007", "ID99999999999999999999"]);
+    });
+
+    test("a format padded wider than a probe still has its padding read as body", () => {
+      // Probing only nine-digit indices leaves every probe sharing the leading zeros of a wider
+      // pad, which would read the padding as part of the fixed prefix
+      const format = { template: "ID{i:012}" };
+
+      expect(findPlaceholders("see ID000000000007 and ID999999999999", format)).toEqual([
+        "ID000000000007",
+        "ID999999999999",
+      ]);
+    });
+
+    test("an input format that matches nothing at all is refused", () => {
+      // /\d*/ matches the empty string between every pair of characters, which would mint a
+      // placeholder with nothing behind it and stuff one into every gap in the prompt
+      expect(() => encode("ab12cd", { inputFormat: /\d*/g, outputFormat: "SafeNumeric" })).toThrow(
+        /empty/i
+      );
+    });
+
+    test("an input format matching a single character is fine", () => {
+      const { encoded } = encode("a 7 b", { inputFormat: /\d/g, outputFormat: "SafeNumeric" });
+
+      expect(encoded).toBe("a ~000~ b");
     });
 
     test("an empty key would match everywhere, so it is refused", () => {
