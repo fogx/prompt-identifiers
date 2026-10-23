@@ -120,11 +120,19 @@ const streamAnalysis = wrapBamlStreamingFunction(b.stream.AnalyzeUser, {
   config: { inputFormat: "UUID", outputFormat: "SafeNumeric" },
 });
 
+const stream = streamAnalysis({ user_id: uuid });
+
 // IDs are decoded in real-time as partials arrive
-for await (const partial of streamAnalysis({ user_id: uuid })) {
+for await (const partial of stream) {
   console.log(partial);
 }
+
+const final = await stream.getFinalResponse();
 ```
+
+The wrapper mirrors what it was given: pass `b.stream.<Fn>`, which returns a `BamlStream`, and you get a stream back with the same `getFinalResponse()` and the same `toStreamable()`, whose newline-delimited JSON carries the decoded partials and the decoded final. Pass a plain async generator and you get an async generator, whose return value is the decoded final.
+
+`getFinalResponse()` decodes once however often it is called, and `onDecode` fires once per stream, where the consumption that finishes first ends: at the end of the loop, at `getFinalResponse()` for a consumer that calls it without iterating, or at the error that ends either one. Its counts cover what had been decoded by then. Iterating and then asking for the final counts both; asking for the final first counts the final alone; a generation that dies part way through counts the partials the consumer already read. A consumer that breaks out of the loop early is not reported to, because it stopped reading rather than finished.
 
 ## Utility Functions
 
@@ -143,7 +151,13 @@ const wrapped = wrapBamlFunction(b.AnalyzeUsers, {
 
 It is off by default because nothing at runtime tells a map key from a class's own field name, so a custom input format matching a field name would rewrite the class's shape. It is ignored when `encodeFields` is given, because a field path names a value. Two keys that encode to one placeholder are refused rather than collapsed.
 
-Decoding reads keys either way, since a key only changes when it matches a placeholder the call minted.
+Decoding reads keys either way, since a key only changes when it matches a placeholder the call minted. Two keys that decode to one identifier are refused rather than collapsed, the same as on the way out.
+
+### What is walked
+
+A value is walked when its state is in its own enumerable keys. A `Date`, a `Map`, a `Set`, a `RegExp`, a `Promise`, an `Error` and a typed array keep theirs in internal slots that no rebuild can copy, and each says so through its own `Object.prototype.toString` tag, whether or not it also carries a field. A BAML media argument (`image`, `audio`, `pdf`, `video`) is a native handle with no tag and no keys. All of them reach the function as themselves, and an identifier inside one reaches the model as it is written and is not in the mapping. An object that gives itself a `Symbol.toStringTag` is read the same way, so keep identifiers out of one.
+
+Everything else is walked and rebuilt on its own prototype, so a class instance and a record built with no prototype have their identifiers encoded and keep their methods and their type. What a rebuild cannot carry is state that is not an own enumerable field: a `#private` field is gone from the copy, and a `Proxy` is read through to its target. Pass either of those as a field of a plain record, not as the record itself.
 
 `encodeObject` takes the same switch as its fourth argument: `encodeObject(obj, config, undefined, true)`.
 

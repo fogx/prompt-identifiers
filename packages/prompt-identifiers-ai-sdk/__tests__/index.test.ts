@@ -982,6 +982,75 @@ describe("prompt-identifiers-ai-sdk", () => {
       expect(typeof result.debugData.durationMs).toBe("number");
     });
 
+    test("counts a placeholder whose format carries a regex metacharacter", async () => {
+      // The count compiles each placeholder into a pattern, so a format whose literals carry a
+      // metacharacter counts a character class rather than the text, or fails to compile at all
+      const onDecode = vi.fn();
+      const uuid = "123e4567-e89b-42d3-a456-426655440000";
+
+      for (const template of ["+{i:03}+", "[[{i:03}]]"]) {
+        onDecode.mockClear();
+        const middleware = createMiddleware({
+          config: { inputFormat: "UUID", outputFormat: { template } },
+          debug: true,
+          onDecode,
+        });
+        const transformedParams = await middleware.transformParams({
+          params: createParams([userMessage(`creator ${uuid}`)]),
+          type: "generate",
+          model: mockModel,
+        });
+        const placeholder = template.replace("{i:03}", "000");
+
+        await middleware.wrapGenerate({
+          doGenerate: vi.fn().mockResolvedValue({
+            content: [{ type: "text", text: `saw ${placeholder}` }],
+            finishReason: mockFinishReason(),
+            usage: mockUsage(),
+            warnings: [],
+          }),
+          doStream: vi.fn(),
+          params: transformedParams,
+          model: mockModel,
+        });
+
+        expect(onDecode.mock.calls[0][0].debugData.decodedCount, template).toBe(1);
+      }
+    });
+
+    test("a placeholder split across two text parts is reported once", async () => {
+      // Decode never sees it whole, so it survives. Reporting it as invented as well would tell
+      // the consumer the model made up a placeholder the middleware itself minted
+      const onDecode = vi.fn();
+      const middleware = createMiddleware({ config: defaultConfig, onDecode });
+      const uuid = "123e4567-e89b-42d3-a456-426655440000";
+
+      const transformedParams = await middleware.transformParams({
+        params: createParams([userMessage(`creator ${uuid}`)]),
+        type: "generate",
+        model: mockModel,
+      });
+
+      await middleware.wrapGenerate({
+        doGenerate: vi.fn().mockResolvedValue({
+          content: [
+            { type: "text", text: "see ~0" },
+            { type: "text", text: "00~" },
+          ],
+          finishReason: mockFinishReason(),
+          usage: mockUsage(),
+          warnings: [],
+        }),
+        doStream: vi.fn(),
+        params: transformedParams,
+        model: mockModel,
+      });
+
+      expect(onDecode.mock.calls[0][0].warnings).toEqual([
+        { type: "surviving_placeholder", value: "~000~", source: "text" },
+      ]);
+    });
+
     test("counts the placeholders in every text part of an answer, not just the last one", async () => {
       const onDecode = vi.fn();
       const middleware = createMiddleware({ config: defaultConfig, debug: true, onDecode });
@@ -1388,6 +1457,24 @@ describe("prompt-identifiers-ai-sdk", () => {
       expect(await warningsFor("SafeNumeric", "revenue was 1000 EUR across 2000 posts")).toEqual(
         []
       );
+    });
+
+    test("a formatter padded wider than the probes still reports a stripped body", async () => {
+      // A formatter function cannot be read, only probed, and a probe that stops at nine digits
+      // has the padding of a wider one read as part of its prefix. Core's half of this is pinned
+      // by its own probe table; this is the middleware's half
+      expect(
+        await warningsFor(
+          (i: number) => `ID${String(i).padStart(12, "0")}`,
+          '{"ref": "000000000000"}'
+        )
+      ).toEqual([["stripped_delimiter", "000000000000"]]);
+    });
+
+    test("an identifier written between two delimiter fragments reports nothing", async () => {
+      // The restored identifier is masked before the scan, and a mask of nothing would close the
+      // fragments on either side of it back into a placeholder the decode never missed
+      expect(await warningsFor("SafeNumeric", "~00~000~0~")).toEqual([]);
     });
 
     test("a format whose literal part carries a digit contributes no bare index", async () => {
@@ -2185,6 +2272,122 @@ describe("prompt-identifiers-ai-sdk", () => {
       ]);
     });
 
+    test("two calls to one tool each report their own result", async () => {
+      // Keyed by tool name rather than by call, the second call's result would stand for both and
+      // the first call's warning would never be reported
+      const onDecode = vi.fn();
+      const middleware = createMiddleware({ config, onDecode });
+      const transformedParams = await middleware.transformParams({
+        params: createParams([userMessage(`Look up ${uuid}`)]),
+        type: "stream",
+        model: mockModel,
+      });
+
+      const streamed = await middleware.wrapStream({
+        doStream: vi.fn().mockResolvedValue({
+          stream: createMockStream([
+            {
+              type: "tool-result",
+              toolCallId: "call-1",
+              toolName: "web_search",
+              result: { note: "saw ~777~" },
+            },
+            {
+              type: "tool-result",
+              toolCallId: "call-2",
+              toolName: "web_search",
+              result: { note: "saw ~888~" },
+            },
+            { type: "finish", finishReason: mockFinishReason(), usage: mockUsage() },
+          ] as LanguageModelV4StreamPart[]),
+        }),
+        doGenerate: vi.fn(),
+        params: transformedParams,
+        model: mockModel,
+      });
+
+      await collectStreamParts(streamed.stream);
+
+      expect(onDecode.mock.calls[0][0].warnings.map((w: { value: string }) => w.value)).toEqual([
+        "~777~",
+        "~888~",
+      ]);
+    });
+
+    test("two result keys that decode to one identifier are refused", async () => {
+      // The encode half refuses the mirror of this. Collapsing them here drops a whole entry from
+      // what the caller is handed, with nothing said
+      const middleware = createMiddleware({ config });
+      const transformedParams = await middleware.transformParams({
+        params: createParams([userMessage(`Look up ${uuid}`)]),
+        type: "generate",
+        model: mockModel,
+      });
+
+      await expect(
+        middleware.wrapGenerate({
+          doGenerate: vi.fn().mockResolvedValue({
+            content: [
+              {
+                type: "tool-result",
+                toolCallId: "call-1",
+                toolName: "rank",
+                result: { "~000~": { rank: 1 }, [uuid]: { rank: 2 } },
+              },
+            ],
+            finishReason: mockFinishReason(),
+            usage: mockUsage(),
+            warnings: [],
+          }),
+          doStream: vi.fn(),
+          params: transformedParams,
+          model: mockModel,
+        })
+      ).rejects.toThrow(/same identifier/i);
+    });
+
+    test("a replaced preliminary result reports the content it was replaced with", async () => {
+      // A preview is not the content the answer was built from, so the last result for a call is
+      // the one that speaks for it
+      const onDecode = vi.fn();
+      const middleware = createMiddleware({ config, onDecode });
+      const transformedParams = await middleware.transformParams({
+        params: createParams([userMessage(`Look up ${uuid}`)]),
+        type: "stream",
+        model: mockModel,
+      });
+
+      const streamed = await middleware.wrapStream({
+        doStream: vi.fn().mockResolvedValue({
+          stream: createMockStream([
+            {
+              type: "tool-result",
+              toolCallId: "call-1",
+              toolName: "web_search",
+              result: { note: "saw ~777~" },
+              preliminary: true,
+            },
+            {
+              type: "tool-result",
+              toolCallId: "call-1",
+              toolName: "web_search",
+              result: { note: "saw ~888~" },
+            },
+            { type: "finish", finishReason: mockFinishReason(), usage: mockUsage() },
+          ] as LanguageModelV4StreamPart[]),
+        }),
+        doGenerate: vi.fn(),
+        params: transformedParams,
+        model: mockModel,
+      });
+
+      await collectStreamParts(streamed.stream);
+
+      expect(onDecode.mock.calls[0][0].warnings.map((w: { value: string }) => w.value)).toEqual([
+        "~888~",
+      ]);
+    });
+
     test("a preliminary result with no final one still reports", async () => {
       const onDecode = vi.fn();
       const middleware = createMiddleware({ config, onDecode });
@@ -2686,6 +2889,99 @@ describe("prompt-identifiers-ai-sdk", () => {
       expect(wire).not.toContain(ids[0]);
     });
 
+    test("two keys that encode to one placeholder are refused", async () => {
+      // One entry standing for two is data lost before the model sees it, and the payload is the
+      // caller's, so the caller is the one who can fix it
+      await expect(
+        toolCallInputOnTheWire({ [ids[0]]: "a", [ids[0].toUpperCase()]: "b" })
+      ).rejects.toThrow(/same placeholder/i);
+
+      await expect(toolCallInputOnTheWire({ [ids[0]]: "a", "~000~": "b" })).rejects.toThrow(
+        /same placeholder/i
+      );
+    });
+
+    test("a payload key named __proto__ stays an own key on the wire", async () => {
+      // JSON.parse produces `__proto__` as an own key, and plain assignment would hand it to the
+      // prototype setter instead: the field never reaches the model and the payload's prototype
+      // becomes whatever was under it
+      const wire = await toolCallInputOnTheWire(
+        JSON.parse(`{"note":"see ${ids[0]}","__proto__":{"id":"${ids[0]}"}}`)
+      );
+
+      expect(wire).toBe('{"note":"see ~000~","__proto__":{"id":"~000~"}}');
+    });
+
+    test("an invented placeholder spelled like a prototype member is still reported", async () => {
+      // The mapping is a plain record, so reading a model-controlled token off it finds whatever
+      // Object.prototype carries and the token is taken for one this call minted
+      const seen: unknown[] = [];
+      const middleware = createMiddleware({
+        config: { inputFormat: "UUID", outputFormat: { template: "__prot{i:base62}__" } },
+        onDecode: (result) => seen.push(result.warnings),
+      });
+      const transformedParams = await middleware.transformParams({
+        params: createParams([userMessage(`Look up ${ids[0]}`)]),
+        type: "generate",
+        model: mockModel,
+      });
+
+      await middleware.wrapGenerate({
+        doGenerate: vi.fn().mockResolvedValue({
+          content: [{ type: "text", text: "saw __proto__ and __protZ__" }],
+          finishReason: mockFinishReason(),
+          usage: mockUsage(),
+          warnings: [],
+        }),
+        doStream: vi.fn(),
+        params: transformedParams,
+        model: mockModel,
+      });
+
+      // `__protZ__` is the control: the same shape, spelling nothing Object.prototype carries
+      expect(seen[0]).toEqual([
+        { type: "unknown_placeholder", value: "__proto__", source: "text" },
+        { type: "unknown_placeholder", value: "__protZ__", source: "text" },
+      ]);
+    });
+
+    test("a payload key named toString is not read as a collision", async () => {
+      // Every object inherits one, so a membership test that walks the prototype chain refuses a
+      // payload that is perfectly well formed
+      expect(await toolCallInputOnTheWire({ toString: "x", note: `see ${ids[0]}` })).toBe(
+        '{"toString":"x","note":"see ~000~"}'
+      );
+    });
+
+    test("an ordinary key spelled like a bare placeholder is refused too", async () => {
+      // Numeric mints `000` and IdToken mints `0`, so a counter map or an array serialised as an
+      // object holds a key the call is about to mint. The delimited formats have no such pair
+      const middleware = createMiddleware({
+        config: { inputFormat: "UUID", outputFormat: "Numeric" },
+      });
+      const wire = () =>
+        middleware.transformParams({
+          params: createParams([
+            {
+              role: "assistant",
+              content: [
+                {
+                  type: "tool-call",
+                  toolCallId: "call-1",
+                  toolName: "lookup",
+                  input: { "000": 1, [ids[0]]: 2 },
+                },
+              ],
+            } as LanguageModelV4Message,
+          ]),
+          type: "generate",
+          model: mockModel,
+        });
+
+      await expect(wire()).rejects.toThrow(/same placeholder "000"/);
+      expect(await toolCallInputOnTheWire({ "000": 1, [ids[0]]: 2 })).toBe('{"000":1,"~000~":2}');
+    });
+
     test("a payload that reaches the same object twice is not a cycle", async () => {
       const shared = { note: `see ${ids[0]}` };
 
@@ -2870,7 +3166,9 @@ describe("prompt-identifiers-ai-sdk", () => {
       });
 
       await expect(collectStreamText(result.stream)).resolves.toBe(`found ${many[0]}`);
-    });
+      // 150,000 ids is what it takes to pass the spread limit, and encoding them runs about 2.5s
+      // on a quiet machine, which leaves nothing against vitest's default on a loaded one
+    }, 20_000);
   });
 
   describe("An answer cut off mid-placeholder", () => {

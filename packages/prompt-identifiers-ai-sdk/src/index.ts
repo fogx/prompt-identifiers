@@ -250,7 +250,9 @@ function detectDecodeWarnings(
     }
 
     for (const token of findPlaceholders(masked, config.outputFormat)) {
-      if (mapping[token] !== undefined) continue;
+      // The token is the model's, so reading it off the mapping with `in` or an index would find
+      // whatever Object.prototype carries and take an invented placeholder for a minted one
+      if (Object.prototype.hasOwnProperty.call(mapping, token)) continue;
 
       // A cut leaves half a placeholder behind, and an answer carrying several blocks has one per
       // block, so position says nothing about which of them the cut made
@@ -402,16 +404,32 @@ function encodeJsonValue(
       );
     }
 
-    return Object.fromEntries(
-      Object.entries(resolved)
-        // A function is not JSON, and carrying one through would hand the provider a `toJSON` that
-        // runs on the encoded payload and writes an identifier the encoder never saw
-        .filter(([, item]) => typeof item !== "function")
-        .map(([name, item]) => [
-          encode(name, config, state).encoded,
-          encodeJsonValue(item, config, state, name, open),
-        ])
-    );
+    const encoded: Record<string, unknown> = {};
+    for (const [name, item] of Object.entries(resolved)) {
+      // A function is not JSON, and carrying one through would hand the provider a `toJSON` that
+      // runs on the encoded payload and writes an identifier the encoder never saw
+      if (typeof item === "function") continue;
+
+      const encodedName = encode(name, config, state).encoded;
+      // One identifier written two ways, or a key already spelled like a placeholder this call
+      // mints, would otherwise leave one entry standing for two
+      if (Object.prototype.hasOwnProperty.call(encoded, encodedName)) {
+        throw new Error(
+          `Two keys in a tool payload encode to the same placeholder ${JSON.stringify(encodedName)}, ` +
+            `so one of them would be lost. Give the object one key per identifier, or choose an ` +
+            `output format whose placeholders an ordinary key cannot spell.`
+        );
+      }
+      // Defining the property keeps a key of `__proto__`, which JSON.parse produces as an own
+      // key, off the prototype setter that would drop the field and reshape the payload
+      Object.defineProperty(encoded, encodedName, {
+        value: encodeJsonValue(item, config, state, name, open),
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
+    }
+    return encoded;
   } finally {
     open.delete(resolved);
   }
@@ -440,12 +458,26 @@ function decodeJsonValue(
   try {
     if (Array.isArray(value)) return value.map((item) => decodeJsonValue(item, mapping, open));
 
-    return Object.fromEntries(
-      Object.entries(value).map(([name, item]) => [
-        decode(name, mapping),
-        decodeJsonValue(item, mapping, open),
-      ])
-    );
+    const decoded: Record<string, unknown> = {};
+    for (const [name, item] of Object.entries(value)) {
+      const decodedName = decode(name, mapping);
+      // A placeholder beside the identifier it stands for lands on one key, and the encode half
+      // refuses the mirror of this rather than let one entry stand for two
+      if (Object.prototype.hasOwnProperty.call(decoded, decodedName)) {
+        throw new Error(
+          `Two keys in a tool result decode to the same identifier ${JSON.stringify(decodedName)}, ` +
+            `so one of them would be lost.`
+        );
+      }
+      // Defining the property keeps a decoded key of `__proto__` off the prototype setter
+      Object.defineProperty(decoded, decodedName, {
+        value: decodeJsonValue(item, mapping, open),
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
+    }
+    return decoded;
   } finally {
     open.delete(value);
   }

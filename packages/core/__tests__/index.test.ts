@@ -562,6 +562,14 @@ describe("prompt-identifiers", () => {
       ["an array", []],
       ["an unknown name", "Nope"],
       ["an object with no template", {}],
+      [
+        "a template that throws when it is read",
+        {
+          get template(): string {
+            throw new Error("no template here");
+          },
+        },
+      ],
     ])("a caller with no types gets an answer, not a throw: %s", (_label, format) => {
       expect(findPlaceholders("see ~000~", format as unknown as OutputFormat)).toEqual([]);
     });
