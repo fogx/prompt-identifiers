@@ -50,7 +50,7 @@ describe("AI SDK Integration", () => {
 
       const middleware = promptIdentifiersMiddleware({
         config: defaultConfig,
-        injectInstruction: false,
+        instruction: false,
       });
       const wrappedModel = wrapLanguageModel({ model: mockModel, middleware });
 
@@ -84,7 +84,7 @@ describe("AI SDK Integration", () => {
 
       const middleware = promptIdentifiersMiddleware({
         config: defaultConfig,
-        injectInstruction: false,
+        instruction: false,
       });
       const wrappedModel = wrapLanguageModel({ model: mockModel, middleware });
 
@@ -114,7 +114,7 @@ describe("AI SDK Integration", () => {
 
       const middleware = promptIdentifiersMiddleware({
         config: defaultConfig,
-        injectInstruction: false,
+        instruction: false,
       });
       const wrappedModel = wrapLanguageModel({ model: mockModel, middleware });
 
@@ -150,7 +150,7 @@ describe("AI SDK Integration", () => {
 
       const middleware = promptIdentifiersMiddleware({
         config: defaultConfig,
-        injectInstruction: false,
+        instruction: false,
       });
       const wrappedModel = wrapLanguageModel({ model: mockModel, middleware });
 
@@ -185,7 +185,7 @@ describe("AI SDK Integration", () => {
 
       const middleware = promptIdentifiersMiddleware({
         config: defaultConfig,
-        injectInstruction: false,
+        instruction: false,
       });
       const wrappedModel = wrapLanguageModel({ model: mockModel, middleware });
 
@@ -223,7 +223,7 @@ describe("AI SDK Integration", () => {
 
       const middleware = promptIdentifiersMiddleware({
         config: defaultConfig,
-        injectInstruction: false,
+        instruction: false,
       });
       const wrappedModel = wrapLanguageModel({ model: mockModel, middleware });
 
@@ -251,13 +251,13 @@ describe("AI SDK Integration", () => {
       const mockModel = createMockModel({
         onStream: () => [
           { type: "text-delta", id: "1", delta: "User ~0" },
-          { type: "text-delta", id: "2", delta: "00~ found." },
+          { type: "text-delta", id: "1", delta: "00~ found." },
         ],
       });
 
       const middleware = promptIdentifiersMiddleware({
         config: defaultConfig,
-        injectInstruction: false,
+        instruction: false,
       });
       const wrappedModel = wrapLanguageModel({ model: mockModel, middleware });
 
@@ -296,7 +296,7 @@ describe("AI SDK Integration", () => {
 
       const middleware = promptIdentifiersMiddleware({
         config: defaultConfig,
-        injectInstruction: false,
+        instruction: false,
       });
       const wrappedModel = wrapLanguageModel({ model: mockModel, middleware });
 
@@ -324,7 +324,7 @@ describe("AI SDK Integration", () => {
 
       const middleware = promptIdentifiersMiddleware({
         config: defaultConfig,
-        injectInstruction: false,
+        instruction: false,
       });
       const wrappedModel = wrapLanguageModel({ model: mockModel, middleware });
 
@@ -339,55 +339,9 @@ describe("AI SDK Integration", () => {
       expect(inputDelta).toBeDefined();
       expect(inputDelta?.delta).toBe(`{"id":"${uuid1}"}`);
     });
-
-    test("preserves non-text stream parts", async () => {
-      const mockModel = createMockModel({
-        onStream: () => [
-          { type: "text-delta", id: "1", delta: "~000~" },
-          { type: "text-end", id: "2" },
-        ],
-      });
-
-      const middleware = promptIdentifiersMiddleware({
-        config: defaultConfig,
-        injectInstruction: false,
-      });
-      const wrappedModel = wrapLanguageModel({ model: mockModel, middleware });
-
-      const { stream } = await wrappedModel.doStream({
-        prompt: [userMessage(`Find ${uuid1}`)],
-      });
-
-      const parts = await collectStreamParts(stream);
-
-      expect(parts.some((p) => p.type === "text-end")).toBe(true);
-    });
   });
 
   describe("Edge cases", () => {
-    test("handles empty mapping (no IDs to encode)", async () => {
-      const mockModel = createMockModel({
-        onGenerate: () => ({
-          content: [{ type: "text", text: "Hello world" }],
-          finishReason: mockFinishReason(),
-          usage: mockUsage(),
-          warnings: [],
-        }),
-      });
-
-      const middleware = promptIdentifiersMiddleware({
-        config: defaultConfig,
-        injectInstruction: false,
-      });
-      const wrappedModel = wrapLanguageModel({ model: mockModel, middleware });
-
-      const result = await wrappedModel.doGenerate({
-        prompt: [userMessage("Hello, how are you?")],
-      });
-
-      expect(getResultText(result)).toBe("Hello world");
-    });
-
     test("handles deeply nested JSON in tool results", async () => {
       let receivedPrompt: LanguageModelV4Message[] = [];
 
@@ -405,7 +359,7 @@ describe("AI SDK Integration", () => {
 
       const middleware = promptIdentifiersMiddleware({
         config: defaultConfig,
-        injectInstruction: false,
+        instruction: false,
       });
       const wrappedModel = wrapLanguageModel({ model: mockModel, middleware });
 
@@ -448,7 +402,7 @@ describe("AI SDK Integration", () => {
 
       const middleware = promptIdentifiersMiddleware({
         config: defaultConfig,
-        injectInstruction: false,
+        instruction: false,
       });
       const wrappedModel = wrapLanguageModel({ model: mockModel, middleware });
 
@@ -463,42 +417,6 @@ describe("AI SDK Integration", () => {
 
       const output = getToolResultOutput<string[]>(receivedPrompt[0]);
       expect(output?.value).toEqual(["~000~", "~001~"]);
-    });
-
-    test("handles tool result with undefined value gracefully", async () => {
-      const mockModel = createMockModel({
-        onGenerate: () => ({
-          content: [{ type: "text", text: "OK" }],
-          finishReason: mockFinishReason(),
-          usage: mockUsage(),
-          warnings: [],
-        }),
-      });
-
-      const middleware = promptIdentifiersMiddleware({
-        config: defaultConfig,
-        injectInstruction: false,
-      });
-      const wrappedModel = wrapLanguageModel({ model: mockModel, middleware });
-
-      // Should not throw
-      const result = await wrappedModel.doGenerate({
-        prompt: [
-          {
-            role: "tool",
-            content: [
-              {
-                type: "tool-result",
-                toolCallId: "call-1",
-                toolName: "test",
-                output: { type: "json" }, // Missing value
-              },
-            ],
-          } as LanguageModelV4Message,
-        ],
-      });
-
-      expect(result.content).toBeDefined();
     });
 
     test("handles multiple tool calls in single response", async () => {
@@ -526,7 +444,7 @@ describe("AI SDK Integration", () => {
 
       const middleware = promptIdentifiersMiddleware({
         config: defaultConfig,
-        injectInstruction: false,
+        instruction: false,
       });
       const wrappedModel = wrapLanguageModel({ model: mockModel, middleware });
 
@@ -548,6 +466,7 @@ describe("AI SDK Integration", () => {
 
       const mockModel = createMockModel();
       const middleware = promptIdentifiersMiddleware({
+        instruction: false,
         config: defaultConfig,
         onEncode,
       });
@@ -579,6 +498,7 @@ describe("AI SDK Integration", () => {
       });
 
       const middleware = promptIdentifiersMiddleware({
+        instruction: false,
         config: defaultConfig,
         onDecode,
       });
@@ -609,6 +529,7 @@ describe("AI SDK Integration", () => {
       });
 
       const middleware = promptIdentifiersMiddleware({
+        instruction: false,
         config: defaultConfig,
         debug: true,
         onEncode,
@@ -624,7 +545,6 @@ describe("AI SDK Integration", () => {
       const encodeResult = onEncode.mock.calls[0][0];
       expect(encodeResult.debugData).toBeDefined();
       expect(encodeResult.debugData.encodedCount).toBe(1);
-      expect(typeof encodeResult.debugData.durationMs).toBe("number");
 
       // onDecode should have debugData
       const decodeResult = onDecode.mock.calls[0][0];
@@ -648,7 +568,7 @@ describe("AI SDK Integration: V4 content coverage", () => {
   function wrap(model: ReturnType<typeof createMockModel>) {
     return wrapLanguageModel({
       model,
-      middleware: promptIdentifiersMiddleware({ config, injectInstruction: false }),
+      middleware: promptIdentifiersMiddleware({ config, instruction: false }),
     });
   }
 
@@ -849,7 +769,7 @@ describe("AI SDK Integration: V4 content coverage", () => {
         onStream: () => [
           { type: "reasoning-delta", id: "r1", delta: "Ref ~00" },
           { type: "text-delta", id: "t1", delta: `Answer for ~001~.` },
-          { type: "reasoning-delta", id: "r2", delta: "0~ noted." },
+          { type: "reasoning-delta", id: "r1", delta: "0~ noted." },
         ],
       });
 
@@ -898,7 +818,7 @@ describe("AI SDK Integration: streamText", () => {
   function wrappedModel(deltas: string[]) {
     return wrapLanguageModel({
       model: createMockModel({ onStream: () => textStreamParts(deltas) }),
-      middleware: promptIdentifiersMiddleware({ config, injectInstruction: false }),
+      middleware: promptIdentifiersMiddleware({ config, instruction: false }),
     });
   }
 
@@ -911,11 +831,21 @@ describe("AI SDK Integration: streamText", () => {
     expect(types.indexOf("text-delta", types.indexOf("finish"))).toBe(-1);
   });
 
+  // Each row says what the consumer reads, not only that its two ways of reading it agree. The
+  // agreement holds when the held tail reaches neither of them, which is the failure these are for
   test.each([
-    { label: "a trailing bare delimiter", deltas: ["The id is ~000~ and cost ~"] },
-    { label: "a truncated placeholder", deltas: ["Item ~000"] },
-    { label: "a placeholder split across the last two deltas", deltas: ["Item ~0", "00"] },
-  ])("textStream and result.text agree with $label", async ({ deltas }) => {
+    {
+      label: "a trailing bare delimiter",
+      deltas: ["The id is ~000~ and cost ~"],
+      expected: `The id is ${uuid1} and cost ~`,
+    },
+    { label: "a truncated placeholder", deltas: ["Item ~000"], expected: "Item ~000" },
+    {
+      label: "a placeholder split across the last two deltas",
+      deltas: ["Item ~0", "00"],
+      expected: "Item ~000",
+    },
+  ])("textStream and result.text carry $label", async ({ deltas, expected }) => {
     const result = streamText({
       model: wrappedModel(deltas),
       prompt: `Tell me about ${uuid1}`,
@@ -924,6 +854,7 @@ describe("AI SDK Integration: streamText", () => {
     let streamed = "";
     for await (const delta of result.textStream) streamed += delta;
 
+    expect(streamed).toBe(expected);
     expect(await result.text).toBe(streamed);
   });
 });

@@ -25,7 +25,7 @@ export interface EncodeDebugData {
 
 /** Debug data included in onDecode callback when debug is true */
 export interface DecodeDebugData {
-  /** Number of fields containing decoded placeholders */
+  /** Number of fields and keys whose placeholders were decoded */
   decodedCount: number;
   /** Raw output from LLM (encoded) */
   input: unknown;
@@ -56,6 +56,14 @@ export interface WrapBamlFunctionOptions {
   encodeFields?: string[];
 
   /**
+   * Encode identifiers sitting in object keys, for an input keyed by identifier such as a BAML
+   * `map<string, T>`. Off by default: nothing at runtime tells such a key from a class's own field
+   * name, so a custom input format that matches a field name would rewrite the class's shape.
+   * Ignored when `encodeFields` is given, because a field path names a value.
+   */
+  encodeKeys?: boolean;
+
+  /**
    * Enable debug mode to populate debugData in callbacks with
    * input/output snapshots, counts, and timing information.
    */
@@ -69,7 +77,11 @@ export interface WrapBamlFunctionOptions {
   onEncode?: (result: { mapping: Record<string, string>; debugData?: EncodeDebugData }) => void;
 
   /**
-   * Optional callback fired after decoding IDs in the output.
+   * Optional callback fired after decoding IDs in the output. A stream fires it once, where the
+   * consumption that finishes first ends: the end of the loop, `getFinalResponse()` for a consumer
+   * that calls it without iterating, or the error that ends either one. Its counts cover what had
+   * been decoded by then, so a consumer that asks for the final before it iterates is told about
+   * the final alone.
    * When debug is true, receives debugData with input, output, counts, and timing.
    */
   onDecode?: (result: { debugData?: DecodeDebugData }) => void;
@@ -78,10 +90,48 @@ export interface WrapBamlFunctionOptions {
 /** A BAML function type (sync or async) */
 export type BamlFunction<TInput, TOutput> = (input: TInput) => Promise<TOutput>;
 
+/** What `b.stream.<Fn>(input)` returns: async iterable partials, final response on demand */
+export interface BamlStream<TPartial, TFinal> extends AsyncIterable<TPartial> {
+  getFinalResponse(): Promise<TFinal>;
+}
+
+/**
+ * What the wrapper hands back. `toStreamable` is the Next.js path, and the wrapper always carries
+ * one, including for a client old enough not to have had it.
+ */
+export interface WrappedBamlStream<TPartial, TFinal> extends BamlStream<TPartial, TFinal> {
+  toStreamable(): ReadableStream<Uint8Array>;
+}
+
 /** A BAML streaming function type */
 export type BamlStreamingFunction<TInput, TPartial, TFinal> = (
   input: TInput
 ) => AsyncGenerator<TPartial, TFinal, unknown>;
+
+/** A streaming function as the generated BAML client writes it */
+export type BamlStreamFunction<TInput, TPartial, TFinal> = (
+  input: TInput
+) => BamlStream<TPartial, TFinal>;
+
+/**
+ * Refuse a `prompt-identifiers` older than the one that writes an identifier back in the case it
+ * was written in.
+ *
+ * A peer range is a warning rather than a wall, and every export this package uses exists on the
+ * older versions too, so nothing fails to link and nothing reads undefined. What changed is
+ * behaviour, so the probe is behavioural: an uppercase ULID that comes back lowercased is a core
+ * that would hand the caller an identifier no case-sensitive lookup finds.
+ */
+function requireCurrentCore() {
+  const probe = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+  const { mapping } = encode(probe, { inputFormat: "ULID", outputFormat: "SafeNumeric" });
+  if (!Object.values(mapping).includes(probe)) {
+    throw new Error(
+      "prompt-identifiers-baml needs prompt-identifiers 0.2.0 or later. The installed copy " +
+        "lowercases identifiers, so a ULID does not survive a round trip."
+    );
+  }
+}
 
 // =============================================================================
 // Field Path Matching
@@ -158,14 +208,20 @@ function matchesFieldPath(currentPath: string[], targetSegments: string[]): bool
 interface EncodeContext {
   config: EncodeConfig;
   fieldPaths: string[][] | null; // null means auto-detect mode
+  encodeKeys: boolean;
   state: EncodeState;
 }
 
 /**
- * Deep traverse and encode IDs in an object.
- * Returns a new object with IDs replaced by placeholders.
+ * Deep traverse and encode IDs in an object. Returns a rebuilt object where it walks, and the
+ * value it was given where it does not.
  */
-function deepEncode<T>(value: T, ctx: EncodeContext, path: string[] = []): T {
+function deepEncode<T>(
+  value: T,
+  ctx: EncodeContext,
+  path: string[] = [],
+  open: Set<object> = new Set()
+): T {
   // Handle null/undefined
   if (value === null || value === undefined) {
     return value;
@@ -187,29 +243,133 @@ function deepEncode<T>(value: T, ctx: EncodeContext, path: string[] = []): T {
 
   // Handle arrays
   if (Array.isArray(value)) {
-    return value.map((item, index) => deepEncode(item, ctx, [...path, String(index)])) as T;
+    if (open.has(value)) {
+      throw new TypeError("Converting circular structure to JSON in a BAML argument.");
+    }
+    open.add(value);
+    try {
+      return value.map((item, index) => deepEncode(item, ctx, [...path, String(index)], open)) as T;
+    } finally {
+      open.delete(value);
+    }
   }
 
   // Handle objects
   if (typeof value === "object") {
-    const result: Record<string, unknown> = {};
-
-    for (const [key, val] of Object.entries(value)) {
-      result[key] = deepEncode(val, ctx, [...path, key]);
+    // A value is rebuildable from its own enumerable keys only when its state is in those keys. A
+    // Date, a Map, a Set, a RegExp, a Promise, an Error and a typed array keep theirs in internal
+    // slots that no rebuild can copy, and each of them says so through its own tag, whether or
+    // not it also carries a field. A BAML media argument is a native handle with no tag and no
+    // keys. Everything else is walked, prototype and all, so a class instance and a record built
+    // with no prototype reach the function encoded and intact.
+    if (
+      Object.prototype.toString.call(value) !== "[object Object]" ||
+      Object.keys(value).length === 0
+    ) {
+      return value;
     }
 
-    return result as T;
+    // The walk reaches a self-reference before the stack does, and it is the only place that can
+    // say the cycle came in rather than out. The same value under two keys is not one, so it is
+    // dropped again on the way back up
+    if (open.has(value)) {
+      throw new TypeError("Converting circular structure to JSON in a BAML argument.");
+    }
+    open.add(value);
+    try {
+      return encodeEntries(value, ctx, path, open) as T;
+    } finally {
+      open.delete(value);
+    }
   }
 
   // Primitives (numbers, booleans) - return as-is
   return value;
 }
 
+function encodeEntries(
+  value: object,
+  ctx: EncodeContext,
+  path: string[],
+  open: Set<object>
+): Record<string, unknown> {
+  const result: Record<string, unknown> = Object.create(Object.getPrototypeOf(value));
+
+  for (const [key, val] of Object.entries(value)) {
+    // A key is only a candidate when the caller says the object is keyed by identifier. Nothing
+    // at runtime tells a map key from a class's own field name, and rewriting a field name calls
+    // the BAML function with an object its class does not describe.
+    const encodeThisKey = ctx.encodeKeys && ctx.fieldPaths === null;
+    const encodedKey = encodeThisKey ? encode(key, ctx.config, ctx.state).encoded : key;
+    // Two keys holding one identifier in different cases, or a key already shaped like the
+    // placeholder, would otherwise leave one entry standing for both
+    if (encodeThisKey && Object.prototype.hasOwnProperty.call(result, encodedKey)) {
+      throw new Error(
+        `Two keys encode to the same placeholder ${JSON.stringify(encodedKey)}, so one of them ` +
+          `would be lost. Give the object one key per identifier, or choose an output format ` +
+          `whose placeholders an ordinary key cannot spell.`
+      );
+    }
+    // Defining the property keeps a key of `__proto__`, which JSON.parse produces as an own
+    // key, off the prototype setter that would drop the field and reshape the object
+    Object.defineProperty(result, encodedKey, {
+      value: deepEncode(val, ctx, [...path, key], open),
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+  }
+
+  return result;
+}
+
 /**
- * Deep traverse and decode placeholders in an object.
- * Returns a new object with placeholders replaced by original IDs.
+ * Decode the text a failed generation carries. The client raises an error holding the prompt it
+ * sent and the raw output it could not parse, so both are this call's placeholders, and the
+ * message quotes them. The strings are written back onto the error itself rather than onto a
+ * rebuilt one, so a consumer testing the class, the prototype or `instanceof` still finds them.
  */
-function deepDecode<T>(value: T, mapping: Record<string, string>, countRef: { count: number }): T {
+function decodeThrown(error: unknown, mapping: Record<string, string>): unknown {
+  if (typeof error === "string") {
+    return decode(error, mapping);
+  }
+  if (typeof error !== "object" || error === null) {
+    return error;
+  }
+
+  // `message` and `stack` are own but not enumerable, and `stack` repeats the message, so a
+  // consumer logging the error whole reads the placeholders back out of it
+  const fields = new Set(Object.keys(error));
+  if (error instanceof Error) {
+    fields.add("message");
+    fields.add("stack");
+  }
+
+  for (const field of fields) {
+    const value = (error as Record<string, unknown>)[field];
+    if (typeof value !== "string") continue;
+    const decoded = decode(value, mapping);
+    if (decoded === value) continue;
+    try {
+      (error as Record<string, unknown>)[field] = decoded;
+    } catch {
+      // A frozen error, or one holding this field behind a getter, keeps the text it has. The
+      // write would throw a TypeError in its place and lose the failure the consumer waits for
+    }
+  }
+  return error;
+}
+
+/**
+ * Deep traverse and decode placeholders in an object. Returns a rebuilt object where it walks,
+ * and the value it was given where it does not.
+ */
+function deepDecode<T>(
+  value: T,
+  mapping: Record<string, string>,
+  countRef: { count: number },
+  open: Set<object> = new Set()
+): T {
   // Handle null/undefined
   if (value === null || value === undefined) {
     return value;
@@ -227,22 +387,79 @@ function deepDecode<T>(value: T, mapping: Record<string, string>, countRef: { co
 
   // Handle arrays
   if (Array.isArray(value)) {
-    return value.map((item) => deepDecode(item, mapping, countRef)) as T;
+    if (open.has(value)) {
+      throw new TypeError("Converting circular structure to JSON in a BAML answer.");
+    }
+    open.add(value);
+    try {
+      return value.map((item) => deepDecode(item, mapping, countRef, open)) as T;
+    } finally {
+      open.delete(value);
+    }
   }
 
   // Handle objects
   if (typeof value === "object") {
-    const result: Record<string, unknown> = {};
-
-    for (const [key, val] of Object.entries(value)) {
-      result[key] = deepDecode(val, mapping, countRef);
+    // The same rule the encode side walks by: a value the function returned that carries its own
+    // tag holds state a rebuild cannot copy, a media handle has neither tag nor keys, and
+    // anything else is rebuilt on its own prototype
+    if (
+      Object.prototype.toString.call(value) !== "[object Object]" ||
+      Object.keys(value).length === 0
+    ) {
+      return value;
     }
 
-    return result as T;
+    // The same door the encode half has. A function that hands back a value pointing at itself
+    // is named here rather than left to run the stack out
+    if (open.has(value)) {
+      throw new TypeError("Converting circular structure to JSON in a BAML answer.");
+    }
+    open.add(value);
+    try {
+      return decodeEntries(value, mapping, countRef, open) as T;
+    } finally {
+      open.delete(value);
+    }
   }
 
   // Primitives - return as-is
   return value;
+}
+
+function decodeEntries(
+  value: object,
+  mapping: Record<string, string>,
+  countRef: { count: number },
+  open: Set<object>
+): Record<string, unknown> {
+  const result: Record<string, unknown> = Object.create(Object.getPrototypeOf(value));
+
+  for (const [key, val] of Object.entries(value)) {
+    // A model asked to group its answer puts an identifier in the key position, so a key
+    // carries a placeholder as readily as a string does
+    const decodedKey = decode(key, mapping);
+    if (decodedKey !== key) {
+      countRef.count++;
+    }
+    // The encode half refuses two keys that land on one placeholder, and a model asked to group
+    // its answer can hand back the identifier in one key and its placeholder in another
+    if (Object.prototype.hasOwnProperty.call(result, decodedKey)) {
+      throw new Error(
+        `Two keys decode to the same identifier ${JSON.stringify(decodedKey)}, so one of them ` +
+          `would be lost.`
+      );
+    }
+    // Defining the property keeps a decoded key of `__proto__` off the prototype
+    Object.defineProperty(result, decodedKey, {
+      value: deepDecode(val, mapping, countRef, open),
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+  }
+
+  return result;
 }
 
 // =============================================================================
@@ -273,7 +490,8 @@ export function wrapBamlFunction<TInput, TOutput>(
   fn: BamlFunction<TInput, TOutput>,
   options: WrapBamlFunctionOptions
 ): BamlFunction<TInput, TOutput> {
-  const { config, encodeFields, onEncode, onDecode, debug } = options;
+  requireCurrentCore();
+  const { config, encodeFields, encodeKeys = false, onEncode, onDecode, debug } = options;
 
   // Pre-parse field paths if provided
   const fieldPaths = encodeFields ? encodeFields.map(parseFieldPath) : null;
@@ -283,6 +501,7 @@ export function wrapBamlFunction<TInput, TOutput>(
     const ctx: EncodeContext = {
       config,
       fieldPaths,
+      encodeKeys,
       state: createEncodeState(),
     };
 
@@ -303,7 +522,12 @@ export function wrapBamlFunction<TInput, TOutput>(
     });
 
     // Call the original function
-    const output = await fn(encodedInput);
+    let output: TOutput;
+    try {
+      output = await fn(encodedInput);
+    } catch (error) {
+      throw decodeThrown(error, ctx.state.mapping);
+    }
 
     // Decode output
     const countRef = { count: 0 };
@@ -339,25 +563,41 @@ export function wrapBamlFunction<TInput, TOutput>(
  *   config: { inputFormat: 'UUID', outputFormat: 'SafeNumeric' },
  * });
  *
- * for await (const partial of streamAnalysis({ user_id: 'uuid-here' })) {
+ * const stream = streamAnalysis({ user_id: '123e4567-e89b-42d3-a456-426655440000' });
+ *
+ * for await (const partial of stream) {
  *   console.log(partial); // IDs decoded in real-time
  * }
+ *
+ * const final = await stream.getFinalResponse();
  * ```
  */
 export function wrapBamlStreamingFunction<TInput, TPartial, TFinal>(
+  fn: BamlStreamFunction<TInput, TPartial, TFinal>,
+  options: WrapBamlFunctionOptions
+): (input: TInput) => WrappedBamlStream<TPartial, TFinal>;
+export function wrapBamlStreamingFunction<TInput, TPartial, TFinal>(
   fn: BamlStreamingFunction<TInput, TPartial, TFinal>,
   options: WrapBamlFunctionOptions
-): BamlStreamingFunction<TInput, TPartial, TFinal> {
-  const { config, encodeFields, onEncode, onDecode, debug } = options;
+): BamlStreamingFunction<TInput, TPartial, TFinal>;
+export function wrapBamlStreamingFunction<TInput, TPartial, TFinal>(
+  fn:
+    BamlStreamFunction<TInput, TPartial, TFinal> | BamlStreamingFunction<TInput, TPartial, TFinal>,
+  options: WrapBamlFunctionOptions
+): (
+  input: TInput
+) => WrappedBamlStream<TPartial, TFinal> | AsyncGenerator<TPartial, TFinal, unknown> {
+  requireCurrentCore();
+  const { config, encodeFields, encodeKeys = false, onEncode, onDecode, debug } = options;
 
   // Pre-parse field paths if provided
   const fieldPaths = encodeFields ? encodeFields.map(parseFieldPath) : null;
 
-  return async function* (input: TInput): AsyncGenerator<TPartial, TFinal, unknown> {
-    // Encode input
+  function encodeInput(input: TInput) {
     const ctx: EncodeContext = {
       config,
       fieldPaths,
+      encodeKeys,
       state: createEncodeState(),
     };
 
@@ -377,50 +617,203 @@ export function wrapBamlStreamingFunction<TInput, TPartial, TFinal>(
       }),
     });
 
-    // Call the original streaming function
-    const generator = fn(encodedInput);
+    return { ctx, encodedInput };
+  }
+
+  return function (input: TInput) {
+    const { ctx, encodedInput } = encodeInput(input);
+    const source = fn(encodedInput);
+
+    // A stream answers getFinalResponse and a generator answers next. Anything else, such as the
+    // promise a consumer hands back when they put a step in front of the call, would reach the
+    // generator branch and die on the first iteration with `generator.next is not a function`
+    if (
+      source === null ||
+      typeof source !== "object" ||
+      typeof (source as { then?: unknown }).then === "function" ||
+      (typeof (source as BamlStream<TPartial, TFinal>).getFinalResponse !== "function" &&
+        typeof (source as AsyncGenerator<TPartial, TFinal, unknown>).next !== "function")
+    ) {
+      throw new TypeError(
+        "wrapBamlStreamingFunction needs a function that returns the stream itself, as " +
+          "`b.stream.<Fn>` does. A promise, or anything that is not a stream or an async " +
+          "generator, cannot be decoded as it arrives."
+      );
+    }
     let totalDecoded = 0;
-    const startDecode = debug ? performance.now() : 0;
+    // A stream is decoded a partial at a time with the model's latency in between, so the answer
+    // to 'time spent decoding' is the sum of those pieces rather than the wall clock around them
+    let decodeMs = 0;
 
-    while (true) {
-      const { value, done } = await generator.next();
+    function decodePart<T>(value: T): T {
+      const countRef = { count: 0 };
+      const startPart = debug ? performance.now() : 0;
+      const decoded = deepDecode(value, ctx.state.mapping, countRef);
+      if (debug) decodeMs += performance.now() - startPart;
+      totalDecoded += countRef.count;
+      return decoded;
+    }
 
-      if (done) {
-        // Final value
-        const countRef = { count: 0 };
-        const decodedValue = deepDecode(value, ctx.state.mapping, countRef);
-        totalDecoded += countRef.count;
-        const decodeDurationMs = debug ? performance.now() - startDecode : 0;
+    let reported = false;
+    function reportFinal(input: unknown, output: unknown) {
+      if (reported) return;
+      reported = true;
+      onDecode?.({
+        ...(debug && {
+          debugData: {
+            decodedCount: totalDecoded,
+            input,
+            output,
+            durationMs: decodeMs,
+          },
+        }),
+      });
+    }
 
-        onDecode?.({
-          ...(debug && {
-            debugData: {
-              decodedCount: totalDecoded,
-              input: value,
-              output: decodedValue,
-              durationMs: decodeDurationMs,
-            },
-          }),
-        });
-        return decodedValue;
+    // The generated BAML client hands back a stream rather than a generator: it iterates, and its
+    // final response is a separate call the consumer makes when it wants one
+    if (isBamlStream<TPartial, TFinal>(source)) {
+      const bamlSource = source;
+      // The real stream memoises the task it drives, so asking it twice is one run. Decoding
+      // twice would count the same placeholders twice, so the wrapper memoises its side as well
+      let openLoops = 0;
+      let decodedFinal: Promise<TFinal> | undefined;
+      function finalOnce() {
+        decodedFinal ??= (async () => {
+          const final = await bamlSource.getFinalResponse();
+          const decoded = decodePart(final);
+          reportFinal(final, decoded);
+          return decoded;
+        })();
+        return decodedFinal;
       }
 
-      // Partial value
-      const countRef = { count: 0 };
-      const decodedValue = deepDecode(value, ctx.state.mapping, countRef);
-      totalDecoded += countRef.count;
-      yield decodedValue;
+      const stream: WrappedBamlStream<TPartial, TFinal> = {
+        async *[Symbol.asyncIterator](): AsyncGenerator<TPartial, void, unknown> {
+          let lastPartial: TPartial | undefined;
+          let lastDecoded: TPartial | undefined;
+
+          openLoops++;
+          try {
+            for await (const partial of bamlSource) {
+              lastPartial = partial;
+              lastDecoded = decodePart(partial);
+              yield lastDecoded;
+            }
+          } catch (error) {
+            // The client raises a validation error, a timeout and an abort from inside its own
+            // iterator, so a consumer holding decoded partials is told what it got before the
+            // error reaches it. A consumer that breaks does not come through here
+            reportFinal(lastPartial, lastDecoded);
+            throw decodeThrown(error, ctx.state.mapping);
+          } finally {
+            openLoops--;
+          }
+
+          // A consumer that only iterates never asks for the final, so the loop asks once on its
+          // behalf. A throwing final belongs to the consumer that asked, and this one did not, so
+          // the catch reports the last partial it read
+          await finalOnce().catch(() => reportFinal(lastPartial, lastDecoded));
+        },
+        getFinalResponse: () =>
+          // The consumption ended, and it ended in an error. A consumer can hold this promise
+          // while it reads the partials, and then the loop's catch has the partials to report
+          // and this one has nothing, so the reader that is still reading answers for it
+          finalOnce().catch((error) => {
+            if (openLoops === 0) reportFinal(undefined, undefined);
+            throw decodeThrown(error, ctx.state.mapping);
+          }),
+        toStreamable(): ReadableStream<Uint8Array> {
+          // Forwarding the source's own would serialise the partials and the final as the model
+          // wrote them, placeholders and all, because it drives the stream it was defined on
+          const encoder = new TextEncoder();
+          const line = (message: unknown) => encoder.encode(JSON.stringify(message) + "\n");
+
+          return new ReadableStream({
+            async start(controller) {
+              try {
+                for await (const partial of stream) controller.enqueue(line({ partial }));
+                controller.enqueue(line({ final: await stream.getFinalResponse() }));
+              } catch (error) {
+                // JSON.stringify cannot see an Error's message, so it is copied across, and the
+                // prompt and raw output carry this call's placeholders, so the frame is decoded
+                controller.enqueue(
+                  line({
+                    error: decodePart({
+                      type: "StreamError",
+                      message:
+                        error instanceof Error ? error.message : "Error in stream processing",
+                      prompt: "",
+                      raw_output: "",
+                      // Spread last, so an error that carries these fields speaks for them. Above
+                      // the defaults it would blank whatever the error had
+                      ...(typeof error === "object" && error !== null ? error : {}),
+                    }),
+                  })
+                );
+              }
+              controller.close();
+            },
+          });
+        },
+      };
+
+      return stream;
     }
+
+    const generator = source;
+    return (async function* (): AsyncGenerator<TPartial, TFinal, unknown> {
+      // A consumer that breaks out of its loop, or throws inside it, returns this generator and
+      // nothing else tells the wrapped one to stop, which would leave the stream open
+      let lastPartial: TPartial | undefined;
+      let lastDecoded: TPartial | undefined;
+
+      try {
+        while (true) {
+          const { value, done } = await generator.next();
+
+          if (done) {
+            const decodedValue = decodePart(value);
+            reportFinal(value, decodedValue);
+            return decodedValue;
+          }
+
+          lastPartial = value;
+          lastDecoded = decodePart(value);
+          yield lastDecoded;
+        }
+      } catch (error) {
+        // The same door as the stream branch: a generation that dies part way through still
+        // decoded everything the consumer already read
+        reportFinal(lastPartial, lastDecoded);
+        throw decodeThrown(error, ctx.state.mapping);
+      } finally {
+        await generator.return?.(undefined as TFinal);
+      }
+    })();
   };
+}
+
+function isBamlStream<TPartial, TFinal>(
+  source: AsyncGenerator<TPartial, TFinal, unknown> | BamlStream<TPartial, TFinal>
+): source is BamlStream<TPartial, TFinal> {
+  return typeof (source as BamlStream<TPartial, TFinal>).getFinalResponse === "function";
 }
 
 /**
  * Utility function to encode a plain object (useful for manual encoding).
  *
+ * `encodeKeys` encodes identifiers sitting in object keys, for an object keyed by identifier. It
+ * is off by default because nothing at runtime tells such a key from a class's own field name, and
+ * it is ignored when `encodeFields` is given, because a field path names a value. A non-delimited
+ * format spells its placeholders the way a caller spells an ordinary key, so `Numeric` and
+ * `IdToken` refuse an object holding both an identifier and a key written `"000"` or `"0"`, and
+ * `IdToken` moves the key it encodes to the front because an integer-like key is ordered first.
+ *
  * @example
  * ```typescript
  * const { encoded, mapping } = encodeObject(
- *   { user_id: 'uuid-here', data: { owner: 'other-uuid' } },
+ *   { user_id: '123e4567-e89b-42d3-a456-426655440000', data: { owner: '987fcdeb-51a2-43f7-8d9c-0123456789ab' } },
  *   { inputFormat: 'UUID', outputFormat: 'SafeNumeric' }
  * );
  * ```
@@ -428,13 +821,16 @@ export function wrapBamlStreamingFunction<TInput, TPartial, TFinal>(
 export function encodeObject<T>(
   obj: T,
   config: EncodeConfig,
-  encodeFields?: string[]
+  encodeFields?: string[],
+  encodeKeys = false
 ): { encoded: T; mapping: Record<string, string> } {
+  requireCurrentCore();
   const fieldPaths = encodeFields ? encodeFields.map(parseFieldPath) : null;
 
   const ctx: EncodeContext = {
     config,
     fieldPaths,
+    encodeKeys,
     state: createEncodeState(),
   };
 
@@ -449,8 +845,8 @@ export function encodeObject<T>(
  * @example
  * ```typescript
  * const decoded = decodeObject(
- *   { user_id: '«000»', summary: 'User «000» is active' },
- *   { '«000»': 'uuid-here' }
+ *   { user_id: '~000~', summary: 'User ~000~ is active' },
+ *   { '~000~': '123e4567-e89b-42d3-a456-426655440000' }
  * );
  * ```
  */

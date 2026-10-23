@@ -1,13 +1,14 @@
 /**
  * Dedicated streaming decoder tests.
  *
- * Covers 4 output formats × ~15 test cases each, with focus on
- * symmetric delimiter handling (the primary bug fix).
+ * The formats table runs the same cases over five delimiter arrangements, including the ones
+ * where a closing delimiter is a prefix of an opening one. The describes after it cover bodies
+ * that are not digits, formats with no closing delimiter, and the stream's own bookkeeping.
  */
 
 import { describe, test, expect, vi } from "vitest";
 import type { LanguageModelV4StreamPart } from "@ai-sdk/provider";
-import { encode, type EncodeConfig } from "prompt-identifiers";
+import { decode, encode, type EncodeConfig } from "prompt-identifiers";
 import { promptIdentifiersMiddleware } from "../src/index";
 import {
   collectStreamParts,
@@ -16,7 +17,9 @@ import {
   createMockModel,
   createMockStream,
   createParams,
+  mockFinishReason,
   mockModel,
+  mockUsage,
   userMessage,
 } from "./test-helpers";
 
@@ -27,7 +30,6 @@ import {
 interface FormatDef {
   label: string;
   config: EncodeConfig;
-  type: "asymmetric" | "symmetric";
   /** Example placeholder for the first ID (index 0) */
   p0: string;
   /** Example placeholder for the second ID (index 1) */
@@ -42,7 +44,6 @@ const formats: FormatDef[] = [
   {
     label: "SafeNumeric ~000~",
     config: { inputFormat: "UUID", outputFormat: "SafeNumeric" },
-    type: "symmetric",
     p0: "~000~",
     p1: "~001~",
     open: "~",
@@ -54,7 +55,6 @@ const formats: FormatDef[] = [
       inputFormat: "UUID",
       outputFormat: { template: "<{i:zeroFilled}>" },
     },
-    type: "asymmetric",
     p0: "<000>",
     p1: "<001>",
     open: "<",
@@ -66,7 +66,6 @@ const formats: FormatDef[] = [
       inputFormat: "UUID",
       outputFormat: { template: "[[{i:zeroFilled}]]" },
     },
-    type: "asymmetric",
     p0: "[[000]]",
     p1: "[[001]]",
     open: "[[",
@@ -78,7 +77,6 @@ const formats: FormatDef[] = [
       inputFormat: "UUID",
       outputFormat: { template: "~ID{i:zeroFilled}~" },
     },
-    type: "asymmetric",
     p0: "~ID000~",
     p1: "~ID001~",
     open: "~ID",
@@ -90,7 +88,6 @@ const formats: FormatDef[] = [
       inputFormat: "UUID",
       outputFormat: { template: "~{i:zeroFilled}ID~" },
     },
-    type: "asymmetric",
     p0: "~000ID~",
     p1: "~001ID~",
     open: "~",
@@ -129,9 +126,10 @@ async function streamAndCollect(
     model: mockModel,
   });
 
-  const streamParts: LanguageModelV4StreamPart[] = chunks.map((delta, i) => ({
+  // Every delta of one block carries that block's id, which is what a provider sends
+  const streamParts: LanguageModelV4StreamPart[] = chunks.map((delta) => ({
     type: partType,
-    id: String(i),
+    id: "block-1",
     delta,
   }));
 
@@ -211,11 +209,6 @@ describe.each(formats)("Streaming decoder: $label", (fmt) => {
     expect(text).toBe(`User ${uuid1} and ${uuid2}.`);
   });
 
-  test("no placeholders", async () => {
-    const text = await streamAndCollect(config, [uuid1], ["Hello world, no IDs here."]);
-    expect(text).toBe("Hello world, no IDs here.");
-  });
-
   // ─── Split at every point of a placeholder ──────────────────────
   test("split at opener", async () => {
     // e.g., "User " + "[000]" or "User " + "~000~"
@@ -274,14 +267,15 @@ describe.each(formats)("Streaming decoder: $label", (fmt) => {
   });
 
   // ─── Flush: remaining buffer at stream end ─────────────────────
-  test("flush partial at end of stream", async () => {
-    // Simulate a stream that ends mid-placeholder (shouldn't happen in practice, but must not hang)
+  test("a stream ending mid-placeholder keeps the tail out of the output", async () => {
     const text = await streamAndCollect(config, [uuid1], [`User ${open}000`]);
-    // The flush should decode what it can — incomplete placeholder may not decode
-    expect(text).toBeDefined();
+    // The tail can still grow into a placeholder, so it is held; onDecode gets it back
+    expect(text).toBe("User ");
   });
 
-  test("flush completes final placeholder", async () => {
+  test("a placeholder arriving whole as the last chunk needs no flush", async () => {
+    // Every format here has a closer, so the match completes inside the chunk that carries it and
+    // nothing is left held. The case is the boundary: a placeholder with no text after it
     const text = await streamAndCollect(config, [uuid1], ["User ", `${p0}`]);
     expect(text).toBe(`User ${uuid1}`);
   });
@@ -488,11 +482,6 @@ describe("Streaming decoder: overlapping delimiter edge cases", () => {
     expect(text).toBe(`${uuid1}${uuid2}`);
   });
 
-  test("ID~: chunk boundary splits ~ that is both end of CLOSE and potential OPEN", async () => {
-    const text = await streamAndCollect(openSuffixConfig, [uuid1, uuid2], ["~000ID~", "~001ID~"]);
-    expect(text).toBe(`${uuid1}${uuid2}`);
-  });
-
   test("ID~: chunk ends mid-CLOSE (ID without ~)", async () => {
     const text = await streamAndCollect(openSuffixConfig, [uuid1], ["Result: ~000ID", "~ done"]);
     expect(text).toBe(`Result: ${uuid1} done`);
@@ -518,12 +507,12 @@ describe("Streaming decoder: wrapLanguageModel integration", () => {
     const model = createMockModel({
       onStream: () => [
         { type: "text-delta", id: "1", delta: "User [0" },
-        { type: "text-delta", id: "2", delta: "00] found." },
+        { type: "text-delta", id: "1", delta: "00] found." },
       ],
     });
 
     const { wrapLanguageModel } = await import("ai");
-    const middleware = promptIdentifiersMiddleware({ config });
+    const middleware = promptIdentifiersMiddleware({ config, instruction: false });
     const wrappedModel = wrapLanguageModel({ model, middleware });
 
     const { stream } = await wrappedModel.doStream({
@@ -555,12 +544,12 @@ describe("Streaming decoder: wrapLanguageModel integration", () => {
     const model = createMockModel({
       onStream: () => [
         { type: "text-delta", id: "1", delta: "User ~0" },
-        { type: "text-delta", id: "2", delta: "00~ found." },
+        { type: "text-delta", id: "1", delta: "00~ found." },
       ],
     });
 
     const { wrapLanguageModel } = await import("ai");
-    const middleware = promptIdentifiersMiddleware({ config });
+    const middleware = promptIdentifiersMiddleware({ config, instruction: false });
     const wrappedModel = wrapLanguageModel({ model, middleware });
 
     const { stream } = await wrappedModel.doStream({
@@ -581,5 +570,266 @@ describe("Streaming decoder: wrapLanguageModel integration", () => {
       .join("");
 
     expect(text).toBe(`User ${uuid1} found.`);
+  });
+});
+
+describe("Streaming decoder: bodies that are not digits", () => {
+  // Eleven IDs, so the last one is index 10 and its base62 body is the letter "A"
+  const uuids = Array.from(
+    { length: 11 },
+    (_, i) => `123e4567-e89b-42d3-a456-4266554400${String(i).padStart(2, "0")}`
+  );
+  const eleventh = uuids[10];
+
+  test.each<[string, EncodeConfig, string, string[]]>([
+    [
+      "a base62 template",
+      { inputFormat: "UUID", outputFormat: { template: "[{i:base62}]" } },
+      "[A]",
+      ["see [", "A", "] end"],
+    ],
+    [
+      "a symmetric base62 template",
+      { inputFormat: "UUID", outputFormat: { template: "|{i:base62}|" } },
+      "|A|",
+      ["see |", "A", "| end"],
+    ],
+    [
+      "a formatter function writing letters",
+      { inputFormat: "UUID", outputFormat: (i) => `<${"abcdefghijk"[i]}>` },
+      "<k>",
+      ["see <", "k", "> end"],
+    ],
+  ])("decodes %s split across chunks", async (_, config, placeholder, chunks) => {
+    expect(await streamAndCollect(config, uuids, [`see ${placeholder} end`])).toBe(
+      `see ${eleventh} end`
+    );
+
+    expect(await streamAndCollect(config, uuids, chunks)).toBe(`see ${eleventh} end`);
+  });
+});
+
+describe("Streaming decoder: placeholders with no closing delimiter", () => {
+  test.each<[string, EncodeConfig, number, string, string[]]>([
+    // "000" is the placeholder and the "0" after it is the model's own digit
+    [
+      "Numeric",
+      { inputFormat: "UUID", outputFormat: "Numeric" },
+      1,
+      "Order 0000 units",
+      ["Order 000", "0 units"],
+    ],
+    // Twelve IDs, so "ID1" is a placeholder and also the start of "ID11"
+    [
+      "a prefix-only template",
+      { inputFormat: "UUID", outputFormat: { template: "ID{i}" } },
+      12,
+      "See ID11 now.",
+      ["See ID1", "1 now."],
+    ],
+  ])("%s split mid-run decodes as the whole text does", async (_, config, count, whole, chunks) => {
+    const uuids = Array.from(
+      { length: count },
+      (_, i) => `123e4567-e89b-42d3-a456-4266554400${String(i).padStart(2, "0")}`
+    );
+    const { mapping } = encode(uuids.map((u, i) => `id${i}=${u}`).join(" "), config);
+
+    expect(await streamAndCollect(config, uuids, chunks)).toBe(decode(whole, mapping));
+  });
+});
+
+describe("Streaming decoder: stream bookkeeping", () => {
+  const config: EncodeConfig = { inputFormat: "UUID", outputFormat: "SafeNumeric" };
+
+  async function streamParts(parts: LanguageModelV4StreamPart[]) {
+    const middleware = createMiddleware({ config });
+    const transformedParams = await middleware.transformParams({
+      params: createParams([userMessage(`a=${uuid1} b=${uuid2}`)]),
+      type: "stream",
+      model: mockModel,
+    });
+
+    const result = await middleware.wrapStream({
+      doStream: vi.fn().mockResolvedValue({ stream: createMockStream(parts) }),
+      doGenerate: vi.fn(),
+      params: transformedParams,
+      model: mockModel,
+    });
+    return collectStreamParts(result.stream);
+  }
+
+  test("a tool input that never announced itself is still buffered across chunks", async () => {
+    const parts = await streamParts([
+      { type: "tool-input-delta", id: "a", delta: '{"id":"~00' },
+      { type: "tool-input-delta", id: "a", delta: '0~"}' },
+      { type: "tool-input-end", id: "a" },
+    ]);
+
+    const deltas = parts
+      .filter((part) => part.type === "tool-input-delta")
+      .map((part) => ("delta" in part ? part.delta : ""))
+      .join("");
+
+    expect(deltas).toBe(`{"id":"${uuid1}"}`);
+  });
+
+  test("a repeated tool-input-start keeps what the first one was holding", async () => {
+    const parts = await streamParts([
+      { type: "tool-input-start", id: "a", toolName: "one" },
+      { type: "tool-input-delta", id: "a", delta: '{"id":"~00' },
+      { type: "tool-input-start", id: "a", toolName: "one" },
+      { type: "tool-input-delta", id: "a", delta: '0~"}' },
+      { type: "tool-input-end", id: "a" },
+    ]);
+
+    const deltas = parts
+      .filter((part) => part.type === "tool-input-delta")
+      .map((part) => ("delta" in part ? part.delta : ""))
+      .join("");
+
+    expect(deltas).toBe(`{"id":"${uuid1}"}`);
+  });
+
+  test("one block's held tail is not completed by another block's text", async () => {
+    const parts = await streamParts([
+      { type: "text-start", id: "first" },
+      { type: "text-delta", id: "first", delta: "one ~00" },
+      { type: "text-start", id: "second" },
+      { type: "text-delta", id: "second", delta: "two" },
+      { type: "text-delta", id: "first", delta: "0~ end" },
+      { type: "text-end", id: "first" },
+      { type: "text-end", id: "second" },
+    ]);
+
+    const textOf = (id: string) =>
+      parts
+        .filter((part) => part.type === "text-delta" && part.id === id)
+        .map((part) => ("delta" in part ? part.delta : ""))
+        .join("");
+
+    expect(textOf("first")).toBe(`one ${uuid1} end`);
+    expect(textOf("second")).toBe("two");
+  });
+
+  test("two tool calls streaming at once keep separate buffers", async () => {
+    const parts = await streamParts([
+      { type: "tool-input-start", id: "a", toolName: "one" },
+      { type: "tool-input-start", id: "b", toolName: "two" },
+      { type: "tool-input-delta", id: "a", delta: '{"id":"~0' },
+      { type: "tool-input-delta", id: "b", delta: '{"id":"~0' },
+      { type: "tool-input-delta", id: "a", delta: '00~"}' },
+      { type: "tool-input-delta", id: "b", delta: '01~"}' },
+      { type: "tool-input-end", id: "a" },
+      { type: "tool-input-end", id: "b" },
+    ] as LanguageModelV4StreamPart[]);
+
+    const inputOf = (id: string) =>
+      parts
+        .filter((p) => p.type === "tool-input-delta" && "id" in p && p.id === id)
+        .map((p) => ("delta" in p ? p.delta : ""))
+        .join("");
+
+    expect(inputOf("a")).toBe(`{"id":"${uuid1}"}`);
+    expect(inputOf("b")).toBe(`{"id":"${uuid2}"}`);
+  });
+
+  test("tool-input-end emits a tail the buffer was still holding", async () => {
+    const parts = await streamParts([
+      { type: "tool-input-start", id: "a", toolName: "one" },
+      { type: "tool-input-delta", id: "a", delta: '{"id":"~00' },
+      { type: "tool-input-end", id: "a" },
+    ] as LanguageModelV4StreamPart[]);
+
+    const text = parts
+      .filter((p) => p.type === "tool-input-delta")
+      .map((p) => ("delta" in p ? p.delta : ""))
+      .join("");
+
+    expect(text).toBe('{"id":"~00');
+  });
+
+  test("finish emits a tool input tail when no tool-input-end arrives", async () => {
+    const parts = await streamParts([
+      { type: "tool-input-start", id: "a", toolName: "one" },
+      { type: "tool-input-delta", id: "a", delta: '{"id":"~00' },
+      { type: "finish", finishReason: "stop", usage: {} },
+    ] as LanguageModelV4StreamPart[]);
+
+    const text = parts
+      .filter((p) => p.type === "tool-input-delta")
+      .map((p) => ("delta" in p ? p.delta : ""))
+      .join("");
+
+    expect(text).toBe('{"id":"~00');
+  });
+
+  test("a closing chunk carries the tail, so it reaches the assembled message", async () => {
+    const parts = await streamParts([
+      { type: "text-delta", id: "1", delta: "Found ~000~ and ~00" },
+      { type: "text-end", id: "1" },
+    ] as LanguageModelV4StreamPart[]);
+
+    const text = parts
+      .filter((p) => p.type === "text-delta")
+      .map((p) => ("delta" in p ? p.delta : ""))
+      .join("");
+
+    expect(text).toBe(`Found ${uuid1} and ~00`);
+  });
+
+  // The reasoning buffer is flushed by its own branch, and report() only ever sees the text one
+  describe("a reasoning block ending while the decoder holds a tail", () => {
+    const deltas = ["look ~00", "1~ done ~00"];
+
+    function reasoningOf(parts: LanguageModelV4StreamPart[]) {
+      return parts
+        .filter((p) => p.type === "reasoning-delta")
+        .map((p) => ("delta" in p ? p.delta : ""))
+        .join("");
+    }
+
+    async function reasoningParts(closer: "reasoning-end" | "finish" | "both") {
+      const parts: LanguageModelV4StreamPart[] = [
+        { type: "reasoning-start", id: "r" },
+        ...deltas.map((delta) => ({ type: "reasoning-delta" as const, id: "r", delta })),
+      ];
+      // Each label is one closing shape and only that one. Pushing `finish` for all three made
+      // "reasoning-end" and "both" the same stream, and left the suite with nothing that closes a
+      // reasoning block without a finish chunk, which is what an aborted stream looks like
+      if (closer !== "finish") parts.push({ type: "reasoning-end", id: "r" });
+      if (closer !== "reasoning-end") {
+        parts.push({ type: "finish", finishReason: mockFinishReason(), usage: mockUsage() });
+      }
+      return streamParts(parts);
+    }
+
+    test("reasoning-end delivers the held tail", async () => {
+      expect(reasoningOf(await reasoningParts("reasoning-end"))).toBe(`look ${uuid2} done ~00`);
+    });
+
+    test("finish delivers it when no reasoning-end arrives", async () => {
+      expect(reasoningOf(await reasoningParts("finish"))).toBe(`look ${uuid2} done ~00`);
+    });
+
+    test("both closers deliver it exactly once", async () => {
+      const parts = await reasoningParts("both");
+
+      expect(reasoningOf(parts)).toBe(`look ${uuid2} done ~00`);
+      // The tail rides on one delta. Both closers flushing would put it out twice, which the
+      // joined text cannot tell from one
+      expect(
+        parts.filter((p) => p.type === "reasoning-delta" && "delta" in p && p.delta.endsWith("~00"))
+      ).toHaveLength(1);
+    });
+
+    test("the flushed delta carries the block's own id", async () => {
+      // `finish` is the only closer that reaches flushAll: reasoning-end flushes and drops the
+      // decoder before finish runs, so under that label the ids come from the other branch
+      const ids = (await reasoningParts("finish"))
+        .filter((p) => p.type === "reasoning-delta")
+        .map((p) => ("id" in p ? p.id : ""));
+
+      expect(ids).toEqual(["r", "r", "r"]);
+    });
   });
 });

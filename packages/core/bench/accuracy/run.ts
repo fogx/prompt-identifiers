@@ -42,7 +42,8 @@ import {
   OPENAI_MODELS,
   OpenAIModel,
 } from "./providers/openai";
-import { VerificationResult, verify } from "./verify";
+import { verify } from "./verify";
+import { averageErrors, BenchmarkResults, ModelResults, RunResult, summaryLines } from "./summary";
 
 // =============================================================================
 // Types
@@ -56,33 +57,6 @@ interface BenchmarkConfig {
   formats: BenchmarkFormat[];
   verbose: boolean;
   outputFile: string;
-}
-
-interface RunResult {
-  model: string;
-  format: BenchmarkFormat;
-  run: number;
-  verification: VerificationResult;
-  latencyMs: number;
-  promptTokens?: number;
-  responseTokens?: number;
-}
-
-interface ModelResults {
-  model: string;
-  modelDisplayName: string;
-  results: RunResult[];
-  averageErrors: Record<BenchmarkFormat, number>;
-}
-
-interface BenchmarkResults {
-  config: {
-    itemCount: number;
-    classCount: number;
-    runs: number;
-    timestamp: string;
-  };
-  models: ModelResults[];
 }
 
 // =============================================================================
@@ -222,7 +196,7 @@ async function runSingleTest(
   runNumber: number,
   verbose: boolean
 ): Promise<RunResult> {
-  const { prompt, mapping, expected } = createPrompt(items, format);
+  const { prompt, expected } = createPrompt(items, format);
 
   if (verbose) {
     console.log(`\n--- Prompt (${format}) ---`);
@@ -238,7 +212,7 @@ async function runSingleTest(
     console.log(response.slice(0, 1000) + (response.length > 1000 ? "..." : ""));
   }
 
-  const verification = verify(response, expected, mapping);
+  const verification = verify(response, expected);
 
   return {
     model,
@@ -315,10 +289,17 @@ async function runBenchmark(config: BenchmarkConfig): Promise<BenchmarkResults> 
       model,
       modelDisplayName: getDisplayName(model),
       results: [],
-      averageErrors: {} as Record<BenchmarkFormat, number>,
+      averageErrors: {} as Record<BenchmarkFormat, number | undefined>,
+      averageMisses: {} as Record<BenchmarkFormat, number | undefined>,
+      failedRuns: {} as Record<BenchmarkFormat, number>,
     };
 
     const errorsByFormat: Record<BenchmarkFormat, number[]> = {
+      raw: [],
+      SafeNumeric: [],
+      Numeric: [],
+    };
+    const missesByFormat: Record<BenchmarkFormat, number[]> = {
       raw: [],
       SafeNumeric: [],
       Numeric: [],
@@ -334,6 +315,7 @@ async function runBenchmark(config: BenchmarkConfig): Promise<BenchmarkResults> 
           const result = await runSingleTest(items, format, model, run, config.verbose);
           modelResults.results.push(result);
           errorsByFormat[format].push(result.verification.totalErrors);
+          missesByFormat[format].push(result.verification.idsNotReproduced);
 
           const v = result.verification;
           console.log(
@@ -355,6 +337,9 @@ async function runBenchmark(config: BenchmarkConfig): Promise<BenchmarkResults> 
           }
         } catch (error) {
           console.log(`✗ Error: ${error instanceof Error ? error.message : String(error)}`);
+          // A run that never reached the model says nothing about the format. Dropping it would
+          // let a format whose every call failed average zero errors and read as a perfect score
+          modelResults.failedRuns[format] = (modelResults.failedRuns[format] ?? 0) + 1;
         }
 
         // Small delay between API calls to avoid rate limiting
@@ -362,12 +347,9 @@ async function runBenchmark(config: BenchmarkConfig): Promise<BenchmarkResults> 
       }
     }
 
-    // Calculate averages
-    for (const format of config.formats) {
-      const errors = errorsByFormat[format];
-      modelResults.averageErrors[format] =
-        errors.length > 0 ? errors.reduce((a, b) => a + b, 0) / errors.length : 0;
-    }
+    for (const format of config.formats) modelResults.failedRuns[format] ??= 0;
+    modelResults.averageErrors = averageErrors(errorsByFormat, config.formats);
+    modelResults.averageMisses = averageErrors(missesByFormat, config.formats);
 
     results.models.push(modelResults);
   }
@@ -380,47 +362,7 @@ async function runBenchmark(config: BenchmarkConfig): Promise<BenchmarkResults> 
 // =============================================================================
 
 function printSummary(results: BenchmarkResults): void {
-  console.log("\n" + "=".repeat(60));
-  console.log("# Summary\n");
-
-  const { config } = results;
-  console.log(`Items: ${config.itemCount}, Classes: ${config.classCount}, Runs: ${config.runs}\n`);
-
-  for (const modelResult of results.models) {
-    console.log(`## ${modelResult.modelDisplayName}\n`);
-
-    // Print table header
-    const formats = Object.keys(modelResult.averageErrors) as BenchmarkFormat[];
-    const runNumbers = [...new Set(modelResult.results.map((r) => r.run))];
-
-    console.log("| Format | " + runNumbers.map((r) => `Run ${r}`).join(" | ") + " | Average |");
-    console.log("|--------|" + runNumbers.map(() => "-------").join("|") + "|---------|");
-
-    for (const format of formats) {
-      const runs = modelResult.results.filter((r) => r.format === format);
-      const runErrors = runNumbers.map((n) => {
-        const run = runs.find((r) => r.run === n);
-        return run ? run.verification.totalErrors.toString() : "-";
-      });
-      const avg = modelResult.averageErrors[format].toFixed(1);
-      console.log(
-        `| ${format.padEnd(12)} | ${runErrors
-          .map((e) => e.padStart(5))
-          .join(" | ")} | ${avg.padStart(7)} |`
-      );
-    }
-
-    // Calculate improvement
-    const rawAvg = modelResult.averageErrors["raw"] || 0;
-    const safeAvg = modelResult.averageErrors["SafeNumeric"] || 0;
-
-    if (rawAvg > 0 && safeAvg >= 0) {
-      const improvement = ((rawAvg - safeAvg) / rawAvg) * 100;
-      console.log(`\nSafeNumeric reduces errors by ${improvement.toFixed(0)}% vs raw UUIDs.`);
-    }
-
-    console.log("");
-  }
+  console.log("\n" + summaryLines(results).join("\n"));
 }
 
 function saveResults(results: BenchmarkResults, outputFile: string): void {

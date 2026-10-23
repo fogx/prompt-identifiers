@@ -44,12 +44,13 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/fogx/prompt-identifiers"
+    "url": "https://github.com/fogx/prompt-identifiers",
+    "directory": "packages/prompt-identifiers-ai-sdk"
   },
   "peerDependencies": {
     "@ai-sdk/provider": ">=4.0.0",
     "ai": ">=7.0.0",
-    "prompt-identifiers": ">=0.1.5"
+    "prompt-identifiers": ">=0.2.0"
   },
   "devDependencies": {
     "@ai-sdk/provider": "^4.0.14",

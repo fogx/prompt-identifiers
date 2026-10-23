@@ -189,7 +189,7 @@ Restore original IDs from placeholders using the mapping from `encode()`.
 function findPlaceholders(text: string, format: OutputFormat): string[];
 ```
 
-Return the distinct tokens in `text` that carry the output format's delimiters and hold nothing but the characters it writes between them, such as `~053~` for `SafeNumeric`. A token missing from a mapping is a candidate the model invented, and that includes a body the format would have written differently: `~5~` counts, because dropping the padding is one of the ways a model invents an identifier. A format whose delimiters occur in ordinary text, such as a bracket template against a markdown link, also matches text that was never a placeholder, and so does a run of digits the format would have padded: a `-{i}-` template reports `-01-` out of the date `2024-01-15`. Two placeholders that touch are both returned. A doubled delimiter, as in markdown strikethrough (`~~120~~`), does not count. Formats without delimiters (`Numeric`, `IdToken`, `Passthrough`) always return `[]`, since their placeholders look like ordinary numbers and words, and so does a formatter function that throws on the indices this probes.
+Return the distinct tokens in `text` that carry the output format's delimiters and hold nothing but the characters it writes between them, such as `~053~` for `SafeNumeric`. A token missing from a mapping is a candidate the model invented, and that includes a body the format would have written differently: `~5~` counts, because dropping the padding is one of the ways a model invents an identifier. A format whose delimiters occur in ordinary text, such as a bracket template against a markdown link, also matches text that was never a placeholder, and so does a run of digits the format would have padded: a `-{i}-` template reports `-01-` out of the date `2024-01-15`. Two placeholders that touch are both returned. A doubled delimiter, as in markdown strikethrough (`~~120~~`), does not count. Formats without delimiters (`Numeric`, `IdToken`, `Passthrough`) always return `[]`, since their placeholders look like ordinary numbers and words, and so does a formatter function that throws on the indices this probes. A template is read for the literals around its index, so its affixes are exact at any pad width. A formatter function cannot be read, so it is probed at four spread indices, the widest 16 digits. One padded wider than that has its own leading zeros counted into the prefix, so it still finds a token that starts with them and misses one whose index is long enough not to, which is the invention the scan is for.
 
 ## Features
 
@@ -201,16 +201,21 @@ Return the distinct tokens in `text` that carry the output format's delimiters a
 
 ## Performance
 
-Native JavaScript implementation - **1.5-2.7x faster** than Rust FFI for this workload.
+Native JavaScript, and faster than the Rust FFI build it replaced, because crossing the JS to Rust
+boundary costs more than the Rust core saves.
 
 | UUIDs | Roundtrip (μs) |
 | ----- | -------------- |
-| 1     | 0.85           |
-| 10    | 5.09           |
-| 50    | 26.66          |
-| 100   | 52.33          |
-| 500   | 258.19         |
-| 1000  | 560.70         |
+| 1     | 0.99           |
+| 10    | 4.9            |
+| 50    | 23.72          |
+| 100   | 50.95          |
+| 500   | 221.75         |
+| 1000  | 418.03         |
+
+UUID input, `Numeric` output, the median of five runs on Node v24 and Apple Silicon. Decode is
+measured against a mapping it has not seen, which is what a request pays, so these run about a
+quarter higher than a loop that reuses one mapping would report. `BENCHMARKS.md` has the rest.
 
 Both `encode` and `decode` are O(n) linear time.
 

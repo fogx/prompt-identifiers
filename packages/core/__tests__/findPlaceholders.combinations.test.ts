@@ -10,6 +10,10 @@ const formats: [string, OutputFormat, string, string, "digits" | "base62"][] = [
   ["a multi-character template", { template: "((ID_{i:04}))" }, "((ID_", "))", "digits"],
   ["a base62 template", { template: "|{i:base62}|" }, "|", "|", "base62"],
   ["a prefix-only template", { template: "#{i}" }, "#", "", "digits"],
+  // findPlaceholders compiles a template's literals into a pattern, so a backslash in one has to
+  // be escaped or it changes what the pattern matches
+  ["a backslash template", { template: "a\\{i:03}b" }, "a\\", "b", "digits"],
+  ["a template ending in a backslash", { template: "<{i:03}\\" }, "<", "\\", "digits"],
 ];
 
 /** Empty puts two placeholders against each other, or one at either end of the text. */

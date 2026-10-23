@@ -28,8 +28,6 @@ export interface ExpectedResult {
 export interface PromptResult {
   /** The prompt to send to the LLM */
   prompt: string;
-  /** Mapping from placeholder to original UUID (undefined for 'raw' format) */
-  mapping?: Record<string, string>;
   /** Expected result for verification */
   expected: ExpectedResult;
   /** The format used */
@@ -41,7 +39,7 @@ export interface PromptResult {
  *
  * @param items - Dataset items
  * @param format - Output format: 'raw' (UUIDs), 'SafeNumeric', or 'Numeric'
- * @returns Prompt, optional mapping, and expected result
+ * @returns Prompt and expected result
  */
 export function createPrompt(items: Item[], format: BenchmarkFormat): PromptResult {
   const expectedRaw = getExpectedAggregation(items);
@@ -93,10 +91,11 @@ CRITICAL REQUIREMENTS:
     outputFormat,
   });
 
-  // Build reverse mapping for quick lookup
+  // Build reverse mapping for quick lookup. The mapping holds each identifier as the prompt wrote
+  // it, so the key is lowercased on the way in and every lookup matches whatever case it is given.
   const uuidToPlaceholder = new Map<string, string>();
   for (const [placeholder, uuid] of Object.entries(mapping)) {
-    uuidToPlaceholder.set(uuid, placeholder);
+    uuidToPlaceholder.set(uuid.toLowerCase(), placeholder);
   }
 
   // Build the item list with encoded class_ids
@@ -138,7 +137,6 @@ CRITICAL REQUIREMENTS:
 
   return {
     prompt,
-    mapping,
     expected: {
       aggregations: encodedAggregations,
       originalClassIds,

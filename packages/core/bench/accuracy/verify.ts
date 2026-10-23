@@ -30,6 +30,13 @@ export interface VerificationResult {
   incorrectNames: number;
   /** Total error count */
   totalErrors: number;
+  /**
+   * Expected class ids the answer did not reproduce exactly. Unlike `totalErrors` this does not
+   * depend on the misspelling discount, which only a format with long enough placeholders can
+   * earn: a three-character `Numeric` id has no room for a typo, so every near miss reads as an
+   * invention there and as a misspelling under `raw`. Compare formats on this.
+   */
+  idsNotReproduced: number;
   /** Detailed error information */
   details: ErrorDetail[];
   /** Whether JSON parsing succeeded */
@@ -100,20 +107,16 @@ function parseResponse(response: string): ParsedAggregation[] | null {
  *
  * @param response - Raw LLM response text
  * @param expected - Expected aggregation result
- * @param mapping - Optional mapping from placeholder to original UUID (for decoding)
  * @returns Verification result with error counts and details
  */
-export function verify(
-  response: string,
-  expected: ExpectedResult,
-  mapping?: Record<string, string>
-): VerificationResult {
+export function verify(response: string, expected: ExpectedResult): VerificationResult {
   const result: VerificationResult = {
     misspelledIds: 0,
     droppedIds: 0,
     incorrectCounts: 0,
     incorrectNames: 0,
     totalErrors: 0,
+    idsNotReproduced: 0,
     details: [],
     parseSuccess: false,
   };
@@ -127,6 +130,7 @@ export function verify(
     });
     result.totalErrors = expected.aggregations.size; // Count all as dropped
     result.droppedIds = expected.aggregations.size;
+    result.idsNotReproduced = expected.aggregations.size;
     return result;
   }
 
@@ -137,6 +141,8 @@ export function verify(
 
   // Track which expected IDs we've seen
   const seenIds = new Set<string>();
+  // And which the answer spelled exactly, which is what the format comparison rests on
+  const verbatimIds = new Set<string>();
 
   // Check each aggregation in the response
   for (const agg of parsed) {
@@ -145,25 +151,26 @@ export function verify(
     // Check if this ID exists in expected
     if (!expectedIds.has(classId)) {
       // Check if it's a close match (for misspelling detection)
-      let isMisspelling = false;
-
-      // For raw UUIDs, check if it's similar to any expected ID
+      // The closest expected id, not the first one that happens to be close enough: taking the
+      // first marks an arbitrary id as seen, and the one the model actually meant reads as dropped
+      let nearest: { id: string; distance: number } | undefined;
       for (const expectedId of expectedIds) {
-        if (isSimilar(classId, expectedId)) {
-          isMisspelling = true;
-          result.misspelledIds++;
-          result.details.push({
-            type: "misspelled",
-            message: `ID "${classId}" appears to be misspelled`,
-            expected: expectedId,
-            actual: classId,
-          });
-          seenIds.add(expectedId); // Count as "seen" but misspelled
-          break;
+        const distance = similarity(classId, expectedId);
+        if (distance !== undefined && (nearest === undefined || distance < nearest.distance)) {
+          nearest = { id: expectedId, distance };
         }
       }
 
-      if (!isMisspelling) {
+      if (nearest) {
+        result.misspelledIds++;
+        result.details.push({
+          type: "misspelled",
+          message: `ID "${classId}" appears to be misspelled`,
+          expected: nearest.id,
+          actual: classId,
+        });
+        seenIds.add(nearest.id); // Count as "seen" but misspelled
+      } else {
         // Completely unknown ID - count as misspelled
         result.misspelledIds++;
         result.details.push({
@@ -176,6 +183,7 @@ export function verify(
     }
 
     seenIds.add(classId);
+    verbatimIds.add(classId);
 
     const expectedAgg = expected.aggregations.get(classId)!;
 
@@ -219,29 +227,42 @@ export function verify(
 
   result.totalErrors =
     result.misspelledIds + result.droppedIds + result.incorrectCounts + result.incorrectNames;
+  result.idsNotReproduced = expected.aggregations.size - verbatimIds.size;
 
   return result;
 }
 
 /**
- * Check if two strings are similar (for detecting misspellings).
- * Uses simple heuristics: same length and most characters match.
+ * How far apart two strings are, counting position by position and then the length difference,
+ * or undefined once they are too far apart to be one misspelling of the other. Case is ignored,
+ * so a pair that differs only in case is zero apart.
+ *
+ * The budget is relative as well as absolute, because a flat three characters means something
+ * different at either end of the scale. Two random UUIDs differ in about 34 of 36 positions and
+ * are never confused; two distinct three-digit placeholders differ in at most three BY
+ * CONSTRUCTION, so a flat budget calls every one of them a misspelling of the last, and the
+ * format under test is handed a lower error count than the raw baseline for the same failure.
  */
-function isSimilar(a: string, b: string): boolean {
-  if (Math.abs(a.length - b.length) > 2) return false;
+function similarity(a: string, b: string): number | undefined {
+  if (Math.abs(a.length - b.length) > 2) return undefined;
+
+  const minLen = Math.min(a.length, b.length);
+  const budget = Math.min(3, Math.floor(minLen / 4));
 
   let differences = 0;
-  const minLen = Math.min(a.length, b.length);
-
   for (let i = 0; i < minLen; i++) {
     if (a[i].toLowerCase() !== b[i].toLowerCase()) {
       differences++;
-      if (differences > 3) return false;
+      if (differences > budget) return undefined;
     }
   }
 
+  // The same id in another case is zero apart, since the loop folds the case on both sides and
+  // the length term adds nothing at equal length. A truncation is not: the length term charges
+  // it, so a three-character id answered one character short is refused by a budget of zero
+  // where a 36-character one is charged as a near miss.
   differences += Math.abs(a.length - b.length);
-  return differences <= 3 && differences > 0;
+  return differences <= budget ? differences : undefined;
 }
 
 /**

@@ -22,6 +22,7 @@ const model = wrapLanguageModel({
   model: openai("gpt-4o"),
   middleware: promptIdentifiersMiddleware({
     config: { inputFormat: "UUID", outputFormat: "SafeNumeric" },
+    instruction: "IDs use {format} notation. Preserve them exactly.",
   }),
 });
 
@@ -56,12 +57,12 @@ promptIdentifiersMiddleware({
     outputFormat: "SafeNumeric", // or 'Numeric', 'IdToken', { template: '...' }
   },
 
-  // Inject a format-preservation instruction into the system message (default: true)
-  // Prevents LLMs from stripping delimiter characters in tool call arguments
-  injectInstruction: true,
-
-  // Custom instruction text ({format} is replaced with example token like ~000~)
-  customInstruction: "IDs use {format} notation. Preserve them exactly.",
+  // Optional. Appended to the system message on every call ({format} becomes an example token
+  // like ~000~). Prevents LLMs from stripping delimiter characters in tool call arguments. Pass
+  // false and the middleware leaves the system message alone. Omit it and the package sends its
+  // own text. Ignored under the Passthrough output format, which encodes nothing.
+  // `injectInstruction` and `customInstruction` still work and are deprecated; this wins over both.
+  instruction: "IDs use {format} notation. Preserve them exactly.",
 
   // Optional: enable debug mode for detailed diagnostics
   debug: true,
@@ -109,9 +110,7 @@ promptIdentifiersMiddleware({
 
 ## Streaming Support
 
-> **Important:** For streaming responses, use a **delimited format** like `SafeNumeric` or a custom template with delimiters. Non-delimited formats (`Numeric`, `IdToken`) cannot reliably handle placeholders split across chunks.
-
-The middleware buffers incomplete placeholders when using delimited formats like `SafeNumeric`:
+The middleware holds back the end of a chunk while it could still grow into one of this call's placeholders, so a placeholder split across chunks is decoded whole. That works for every output format, delimited or not. What a non-delimited format (`Numeric`, `IdToken`) costs you is `unknown_placeholder` detection, which needs delimiters to tell a placeholder from ordinary text.
 
 ```typescript
 import { streamText } from "ai";
@@ -129,15 +128,19 @@ for await (const chunk of result.textStream) {
 
 ## Decode Warnings
 
-`onDecode` receives a `warnings` array when the output looks wrong. Each warning has a `type`, the offending `value`, and a `source` of `text` or `tool_call`. Warnings from a tool call also carry the `toolName`.
+`onDecode` receives a `warnings` array when the output looks wrong. Each warning has a `type`, the offending `value`, and a `source` of `text`, `tool_call` or `tool_result`. A warning from either tool source also carries the `toolName`. A `tool_result` warning comes from a tool the provider ran itself, such as web search or a code interpreter, whose result the middleware decodes on the way back.
 
 | Type                    | Meaning                                                                                    |
 | ----------------------- | ------------------------------------------------------------------------------------------ |
 | `surviving_placeholder` | A placeholder from the mapping is still in the decoded output                              |
-| `stripped_delimiter`    | A tool call argument holds a bare index such as `"000"` instead of `~000~`                 |
+| `stripped_delimiter`    | A bare index such as `"000"` appears in quotes where the placeholder should be             |
 | `unknown_placeholder`   | A placeholder such as `~053~` is not in the mapping, so the model invented it and it leaks |
 
 `unknown_placeholder` needs a delimited output format such as `SafeNumeric` or a template. With `Numeric` or `IdToken`, a placeholder cannot be told apart from an ordinary number or word, so nothing is reported.
+
+A tool result the provider ran is read the same way: two of its keys that decode to one identifier are refused rather than collapsed, since one of them would otherwise be dropped from what the caller receives.
+
+The same spelling collides in a tool payload's keys. A payload that holds an identifier in a key position alongside an ordinary key spelled like a placeholder this call mints has two keys landing on one, and the call is refused rather than losing one of them. A non-delimited format reaches that pair on any bare index, `"000"` under `Numeric` or `"0"` under `IdToken`, where a delimited one needs a key written as `~000~`.
 
 ```typescript
 onDecode: ({ warnings }) => {
@@ -159,13 +162,13 @@ import { mistral } from "@ai-sdk/mistral";
 // Anthropic
 const claudeModel = wrapLanguageModel({
   model: anthropic("claude-3-5-sonnet-20241022"),
-  middleware: promptIdentifiersMiddleware({ config }),
+  middleware: promptIdentifiersMiddleware({ config, instruction }),
 });
 
 // Google
 const geminiModel = wrapLanguageModel({
   model: google("gemini-1.5-pro"),
-  middleware: promptIdentifiersMiddleware({ config }),
+  middleware: promptIdentifiersMiddleware({ config, instruction }),
 });
 ```
 

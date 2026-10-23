@@ -234,9 +234,11 @@ export function createFormatter(format: OutputFormat): FormatterFn {
   }
 }
 
-// These three differ in their first and last character, in decimal and in base62, so whatever all
-// three formatted placeholders share is delimiter
-const PLACEHOLDER_PROBE_INDICES = [0, 123456789, 987654321];
+// Every probe is compared against the first, whose single digit differs from the leading and the
+// trailing digit of all the others, in decimal and in base62, so what they share is delimiter. The
+// widest of them is 16 digits, so a format padded wider than that still holds some of its padding
+// across all four and reads it as part of the prefix.
+const PLACEHOLDER_PROBE_INDICES = [0, 123456789, 987654321, Number.MAX_SAFE_INTEGER];
 
 const builtInShapeCache = new Map<string, PlaceholderShape | undefined>();
 const customShapeCache = new WeakMap<object, PlaceholderShape | undefined>();
@@ -262,6 +264,10 @@ function getPlaceholderShape(format: OutputFormat): PlaceholderShape | undefined
     }
     return builtInShapeCache.get(format);
   }
+  // Only an object or a function can key the cache, and anything else is a format with no shape
+  if (format === null || (typeof format !== "object" && typeof format !== "function")) {
+    return undefined;
+  }
   if (!customShapeCache.has(format)) {
     customShapeCache.set(format, buildPlaceholderShape(format));
   }
@@ -270,6 +276,34 @@ function getPlaceholderShape(format: OutputFormat): PlaceholderShape | undefined
 
 function buildPlaceholderShape(format: OutputFormat): PlaceholderShape | undefined {
   if (format === "Passthrough") return undefined;
+
+  // A template says where its index sits, so its literals are the affixes exactly, at any pad
+  // width. Only a bare FormatterFn has to be probed.
+  let template: unknown;
+  try {
+    template = typeof format === "object" ? format.template : undefined;
+  } catch {
+    // A format whose own accessor throws says nothing about its shape, and the caller asked
+    // which tokens look like placeholders, not for the accessor's error
+    return undefined;
+  }
+
+  if (typeof template === "string") {
+    const slot = template.match(/\{i(?::([^}]+))?\}/);
+    if (slot) {
+      const prefix = template.slice(0, slot.index);
+      const suffix = template.slice(slot.index! + slot[0].length);
+      if (prefix || suffix) {
+        const body = slot[1] === "base62" ? "[0-9A-Za-z]+" : "\\d+";
+        return {
+          pattern: new RegExp(escapeRegExp(prefix) + body + escapeRegExp(suffix), "g"),
+          prefix,
+          suffix,
+        };
+      }
+      return undefined;
+    }
+  }
 
   let probes: string[];
   try {
@@ -337,9 +371,11 @@ function escapeRegExp(s: string): string {
 function getPattern(inputFormat: InputFormat): RegExp {
   // Custom RegExp
   if (inputFormat instanceof RegExp) {
-    // Ensure global flag is set, preserve other flags
-    const flags = inputFormat.flags.includes("g") ? inputFormat.flags : inputFormat.flags + "g";
-    return new RegExp(inputFormat.source, flags);
+    // The global flag goes on and the sticky flag comes off, for the same reason: this RegExp
+    // describes an identifier to look for anywhere in the text, and sticky anchors every match at
+    // lastIndex, which finds at most the run starting where the last one ended.
+    const kept = inputFormat.flags.replace(/y/g, "");
+    return new RegExp(inputFormat.source, kept.includes("g") ? kept : kept + "g");
   }
 
   // Built-in formats - return new instance to reset lastIndex
@@ -416,7 +452,18 @@ export function encode(text: string, config: EncodeConfig, state?: EncodeState):
   const mapping = state?.mapping ?? {};
 
   const encoded = text.replace(pattern, (match) => {
-    // Normalize to lowercase for consistent deduplication
+    // An input format able to match the empty string matches between every pair of characters,
+    // which mints a placeholder standing for nothing and writes it into every gap in the prompt
+    if (match.length === 0) {
+      throw new Error(
+        `The input format ${String(config.inputFormat)} matched the empty string. An input ` +
+          `format has to match at least one character.`
+      );
+    }
+
+    // One identifier written in two cases is one identifier, so deduplication ignores case. What
+    // goes in the mapping is the text as it was written, because decode puts it back into the
+    // caller's hands and a ULID that comes back lowercased misses a case-sensitive lookup.
     const id = match.toLowerCase();
 
     // Reuse existing placeholder for duplicate IDs
@@ -425,8 +472,24 @@ export function encode(text: string, config: EncodeConfig, state?: EncodeState):
     }
 
     const placeholder = formatter(idToPlaceholder.size);
+    // An empty or missing placeholder drops the ID out of the prompt and leaves a mapping key
+    // that matches everywhere, so the output format has to be told rather than worked around
+    if (typeof placeholder !== "string" || placeholder.length === 0) {
+      throw new Error(
+        `The output format returned ${JSON.stringify(placeholder)} for index ` +
+          `${idToPlaceholder.size}. A placeholder must be a non-empty string.`
+      );
+    }
     idToPlaceholder.set(id, placeholder);
-    mapping[placeholder] = id;
+    // A format can write a placeholder that spells an inherited member, `__proto__` among them,
+    // and assigning one would reach the setter rather than add a key: the identifier would leave
+    // for the model with nothing to bring it back
+    Object.defineProperty(mapping, placeholder, {
+      value: match,
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
     return placeholder;
   });
 
@@ -442,6 +505,11 @@ export function encode(text: string, config: EncodeConfig, state?: EncodeState):
  * occur in ordinary text, such as a bracket template against a markdown link, match text that was
  * never a placeholder. Numeric, IdToken and Passthrough always return an empty list, and so does
  * a formatter that throws on the indices this probes.
+ *
+ * A template is read for the literals around its index, so its affixes are exact at any pad width.
+ * A formatter function cannot be read, so it is probed at four spread indices, the widest 16
+ * digits. One padded wider counts its own leading zeros into the prefix, so it still finds a token
+ * that starts with them and misses one whose index is long enough not to.
  *
  * @example
  * findPlaceholders("See creator://~053~ and ~~120~~ and ~5~", "SafeNumeric") // ["~053~", "~5~"]
@@ -481,14 +549,23 @@ export function findPlaceholders(text: string, format: OutputFormat): string[] {
   return [...found];
 }
 
-// Cache for decode regex patterns - WeakMap allows GC when mapping is no longer referenced
-const decodeRegexCache = new WeakMap<Record<string, string>, RegExp>();
+// Cache for decode regex patterns - WeakMap allows GC when mapping is no longer referenced.
+// encode() adds to a shared state's mapping in place and a caller may prune it, so the entry
+// carries the keys it was built from and is rebuilt whenever they change.
+const decodeRegexCache = new WeakMap<Record<string, string>, { keys: string[]; pattern: RegExp }>();
+
+/** Whether two key lists hold the same names in the same order. */
+function sameKeys(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
 
 /**
  * Decode placeholders back to original IDs.
  *
- * Optimization: The regex pattern is cached per mapping object using WeakMap.
- * Repeated calls with the same mapping skip regex compilation entirely.
+ * Optimization: The regex pattern is cached per mapping object using WeakMap, and rebuilt when
+ * that mapping's keys change, so repeated calls over an unchanged mapping skip compilation.
  *
  * @param text - Text containing placeholders
  * @param mapping - Mapping from placeholders to original IDs (from encode)
@@ -498,19 +575,27 @@ export function decode(text: string, mapping: Record<string, string>): string {
   const placeholders = Object.keys(mapping);
   if (placeholders.length === 0) return text;
 
-  // Check cache for pre-compiled pattern
-  let pattern = decodeRegexCache.get(mapping);
+  // An empty key matches at every position, so it would insert its ID throughout the text.
+  // encode refuses to mint one, and a mapping that carries one is built by hand.
+  if (placeholders.includes("")) {
+    throw new Error("The mapping has an empty placeholder key, which matches at every position.");
+  }
+
+  // A cached pattern matches the keys the mapping held when it was built. encode() adds to the
+  // mapping it returns, and a caller may prune it, so a stale pattern misses keys and reports a
+  // key it no longer holds.
+  const cached = decodeRegexCache.get(mapping);
+  let pattern = cached && sameKeys(cached.keys, placeholders) ? cached.pattern : undefined;
   if (!pattern) {
+    const keys = placeholders.slice();
+
     // Sort by length descending to prevent partial matches (e.g., "0010" before "001")
     placeholders.sort((a, b) => b.length - a.length);
 
     // Build a single regex matching all placeholders - O(n) single pass
-    pattern = new RegExp(
-      placeholders.map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"),
-      "g"
-    );
+    pattern = new RegExp(placeholders.map(escapeRegExp).join("|"), "g");
 
-    decodeRegexCache.set(mapping, pattern);
+    decodeRegexCache.set(mapping, { keys, pattern });
   }
 
   // Reset lastIndex for global regex reuse
