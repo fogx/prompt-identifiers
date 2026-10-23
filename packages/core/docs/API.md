@@ -116,7 +116,11 @@ One padded wider than 16 digits counts its own leading zeros into the prefix. It
 
 ```typescript
 // mapping came from encode()
-const invented = findPlaceholders(llmResponse, "SafeNumeric").filter((p) => !(p in mapping));
+// `in` walks the prototype chain, so a token spelling `__proto__`, `constructor` or `toString`
+// would read as one this call minted and the invention would be dropped
+const invented = findPlaceholders(llmResponse, "SafeNumeric").filter(
+  (p) => !Object.prototype.hasOwnProperty.call(mapping, p)
+);
 // ["~053~"]
 ```
 

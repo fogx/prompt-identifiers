@@ -145,25 +145,26 @@ export function verify(
     // Check if this ID exists in expected
     if (!expectedIds.has(classId)) {
       // Check if it's a close match (for misspelling detection)
-      let isMisspelling = false;
-
-      // For raw UUIDs, check if it's similar to any expected ID
+      // The closest expected id, not the first one that happens to be close enough: taking the
+      // first marks an arbitrary id as seen, and the one the model actually meant reads as dropped
+      let nearest: { id: string; distance: number } | undefined;
       for (const expectedId of expectedIds) {
-        if (isSimilar(classId, expectedId)) {
-          isMisspelling = true;
-          result.misspelledIds++;
-          result.details.push({
-            type: "misspelled",
-            message: `ID "${classId}" appears to be misspelled`,
-            expected: expectedId,
-            actual: classId,
-          });
-          seenIds.add(expectedId); // Count as "seen" but misspelled
-          break;
+        const distance = similarity(classId, expectedId);
+        if (distance !== undefined && (nearest === undefined || distance < nearest.distance)) {
+          nearest = { id: expectedId, distance };
         }
       }
 
-      if (!isMisspelling) {
+      if (nearest) {
+        result.misspelledIds++;
+        result.details.push({
+          type: "misspelled",
+          message: `ID "${classId}" appears to be misspelled`,
+          expected: nearest.id,
+          actual: classId,
+        });
+        seenIds.add(nearest.id); // Count as "seen" but misspelled
+      } else {
         // Completely unknown ID - count as misspelled
         result.misspelledIds++;
         result.details.push({
@@ -224,24 +225,32 @@ export function verify(
 }
 
 /**
- * Check if two strings are similar (for detecting misspellings).
- * Uses simple heuristics: same length and most characters match.
+ * How far apart two strings are, counting position by position and then the length difference,
+ * or undefined once they are too far apart to be one misspelling of the other.
+ *
+ * The budget is relative as well as absolute, because a flat three characters means something
+ * different at either end of the scale. Two random UUIDs differ in about 34 of 36 positions and
+ * are never confused; two distinct three-digit placeholders differ in at most three BY
+ * CONSTRUCTION, so a flat budget calls every one of them a misspelling of the last, and the
+ * format under test is handed a lower error count than the raw baseline for the same failure.
  */
-function isSimilar(a: string, b: string): boolean {
-  if (Math.abs(a.length - b.length) > 2) return false;
+function similarity(a: string, b: string): number | undefined {
+  if (Math.abs(a.length - b.length) > 2) return undefined;
+
+  const minLen = Math.min(a.length, b.length);
+  const budget = Math.min(3, Math.floor(minLen / 4));
+  if (budget === 0) return undefined;
 
   let differences = 0;
-  const minLen = Math.min(a.length, b.length);
-
   for (let i = 0; i < minLen; i++) {
     if (a[i].toLowerCase() !== b[i].toLowerCase()) {
       differences++;
-      if (differences > 3) return false;
+      if (differences > budget) return undefined;
     }
   }
 
   differences += Math.abs(a.length - b.length);
-  return differences <= 3 && differences > 0;
+  return differences <= budget && differences > 0 ? differences : undefined;
 }
 
 /**

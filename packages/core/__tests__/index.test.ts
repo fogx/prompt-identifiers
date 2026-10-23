@@ -1,6 +1,7 @@
 import { describe, test, expect } from "vitest";
 import {
   createEncodeState,
+  createFormatter,
   decode,
   encode,
   EncodeConfig,
@@ -223,8 +224,44 @@ describe("prompt-identifiers", () => {
       expect(result.mapping["Z"]).toBeDefined();
       expect(result.mapping["a"]).toBeDefined();
       expect(result.mapping["z"]).toBeDefined();
-      // 62nd ID should be "10"
+      // 63rd ID should be "10"
       expect(result.mapping["10"]).toBeDefined();
+    });
+  });
+
+  describe("What the built-in input formats refuse", () => {
+    test.each([
+      ["a UUID v7", "0192b4a1-7b3e-7c4d-8e9f-1a2b3c4d5e6f"],
+      ["a UUID v1", "c232ab00-9414-11ec-b3c8-9f6bdeced846"],
+    ])("UUID leaves %s alone", (_label, text) => {
+      // The format table says v4, and the version and variant nibbles are what says so
+      expect(encode(text, { inputFormat: "UUID", outputFormat: "SafeNumeric" }).encoded).toBe(text);
+    });
+
+    test("ULID leaves a 26-character run carrying a non-Crockford letter alone", () => {
+      // Crockford base32 drops I, L and O because they read as 1 and 0, and U so that no
+      // identifier spells out an obscenity
+      const text = "01ARZ3NDEKTSV4RRFFQ69G5ILO";
+      expect(encode(text, { inputFormat: "ULID", outputFormat: "SafeNumeric" }).encoded).toBe(text);
+    });
+  });
+
+  describe("A placeholder that spells a member of Object.prototype", () => {
+    test("is an own entry in the mapping and survives the round trip", () => {
+      // `__prot{i:base62}__` writes `__proto__` at index 50, and an assignment into a plain
+      // record would reach the inherited setter instead of adding a key
+      const format = { template: "__prot{i:base62}__" } as const;
+      const ids = Array.from(
+        { length: 51 },
+        (_, i) => `123e4567-e89b-42d3-a456-4266554400${String(i).padStart(2, "0")}`
+      );
+
+      const result = encode(ids.join(" "), { inputFormat: "UUID", outputFormat: format });
+
+      expect(Object.keys(result.mapping)).toHaveLength(ids.length);
+      expect(Object.prototype.hasOwnProperty.call(result.mapping, "__proto__")).toBe(true);
+      expect(result.encoded).not.toContain(ids[50]);
+      expect(decode(result.encoded, result.mapping)).toBe(ids.join(" "));
     });
   });
 
@@ -540,6 +577,23 @@ describe("prompt-identifiers", () => {
       ]);
     });
 
+    test("a probed formatter writing a base62 body finds a token spelled in letters", () => {
+      // A bare function's body class comes from the probes. Reading it as digits alone would make
+      // the scan blind to every letter-bearing token the same format writes, invented or not
+      const spell = createFormatter({ template: "|{i:base62}|" });
+      const format = (index: number) => spell(index);
+
+      expect(findPlaceholders("see |7| and |zz|", format)).toEqual(["|7|", "|zz|"]);
+    });
+
+    test("a probed formatter whose body is neither digits nor letters has no shape", () => {
+      // The body is what the probes do not share. Here it carries a hyphen, which neither class
+      // covers, and a format with no readable shape finds nothing rather than guessing
+      const format = (index: number) => `<${index}-${index}>`;
+
+      expect(findPlaceholders("see <7> and <0-0>", format)).toEqual([]);
+    });
+
     test("a formatter padded wider than nine digits is probed wide enough", () => {
       // A bare function cannot be read, so its affixes come from probes, and a narrow set of them
       // would share the padding and pass it off as a delimiter
@@ -583,9 +637,9 @@ describe("prompt-identifiers", () => {
       ).toEqual(["ID00000000000000000007", "ID99999999999999999999"]);
     });
 
-    test("a format padded wider than a probe still has its padding read as body", () => {
-      // Probing only nine-digit indices leaves every probe sharing the leading zeros of a wider
-      // pad, which would read the padding as part of the fixed prefix
+    test("a template padded wider than a probe still has its padding read as body", () => {
+      // The bare-function form of this pad has to be probed. A template says where its index sits,
+      // so its affixes come from the literal and no width of padding can pass for one
       const format = { template: "ID{i:012}" };
 
       expect(findPlaceholders("see ID000000000007 and ID999999999999", format)).toEqual([
