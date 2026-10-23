@@ -43,7 +43,8 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/fogx/prompt-identifiers"
+    "url": "https://github.com/fogx/prompt-identifiers",
+    "directory": "packages/prompt-identifiers-baml"
   },
   "peerDependencies": {
     "@boundaryml/baml": ">=0.70.0",

@@ -251,7 +251,7 @@ describe("AI SDK Integration", () => {
       const mockModel = createMockModel({
         onStream: () => [
           { type: "text-delta", id: "1", delta: "User ~0" },
-          { type: "text-delta", id: "2", delta: "00~ found." },
+          { type: "text-delta", id: "1", delta: "00~ found." },
         ],
       });
 
@@ -852,7 +852,7 @@ describe("AI SDK Integration: V4 content coverage", () => {
         onStream: () => [
           { type: "reasoning-delta", id: "r1", delta: "Ref ~00" },
           { type: "text-delta", id: "t1", delta: `Answer for ~001~.` },
-          { type: "reasoning-delta", id: "r2", delta: "0~ noted." },
+          { type: "reasoning-delta", id: "r1", delta: "0~ noted." },
         ],
       });
 

@@ -119,6 +119,56 @@ interface DecodedToolCall {
 const ID_MASK = "\u0001";
 
 /**
+ * The bodies of a call's placeholders: each one with the format's fixed prefix and suffix removed.
+ *
+ * The affixes are read off the format rather than guessed, by writing two placeholders far apart
+ * and keeping what they share at each end, so a literal carrying its own digits (`v1_{i:03}`)
+ * contributes nothing and a body split by a literal is still found. A format with nothing fixed at
+ * either end has no delimiters for a model to strip, which is the case the warning cannot report.
+ */
+function placeholderBodies(
+  placeholders: string[],
+  outputFormat: EncodeConfig["outputFormat"]
+): Set<string> {
+  const bodies = new Set<string>();
+  if (outputFormat === "Passthrough") return bodies;
+
+  let low: string;
+  let high: string;
+  try {
+    const formatter = createFormatter(outputFormat);
+    low = formatter(0);
+    high = formatter(123456789);
+  } catch {
+    // A formatter that refuses an index cannot be probed, so report nothing rather than guess
+    return bodies;
+  }
+
+  let prefix = 0;
+  while (prefix < low.length && prefix < high.length && low[prefix] === high[prefix]) prefix++;
+
+  let suffix = 0;
+  while (
+    suffix < low.length - prefix &&
+    suffix < high.length - prefix &&
+    low[low.length - 1 - suffix] === high[high.length - 1 - suffix]
+  ) {
+    suffix++;
+  }
+
+  if (prefix === 0 && suffix === 0) return bodies;
+
+  for (const placeholder of placeholders) {
+    const body = placeholder.slice(prefix, placeholder.length - suffix);
+    if (body) bodies.add(body);
+  }
+  return bodies;
+}
+
+/** Finish reasons that stop the model partway through what it was writing. */
+const CUT_SHORT = new Set(["length", "content-filter", "error"]);
+
+/**
  * Detect decode anomalies in the decoded output.
  *
  * 1. Surviving placeholders: encoded placeholders (e.g., ~000~) that remain
@@ -126,26 +176,28 @@ const ID_MASK = "\u0001";
  * 2. Stripped delimiters: bare placeholder indices (e.g., 000) that appear
  *    as standalone values, suggesting the LLM stripped the delimiter characters.
  * 3. Unknown placeholders: placeholder-shaped tokens that are not in the mapping,
- *    such as one the model invented. Only delimited formats can report these.
+ *    such as one the model invented. Only delimited formats can report these, and a truncated
+ *    answer's trailing token is spared when a placeholder this call minted starts with it.
  */
 function detectDecodeWarnings(
   decodedText: string,
   decodedToolCalls: DecodedToolCall[],
   mapping: Record<string, string>,
-  config: EncodeConfig
+  config: EncodeConfig,
+  isTruncated: boolean
 ): DecodeWarning[] {
   const placeholders = Object.keys(mapping);
   if (placeholders.length === 0) return [];
 
   const ids = Object.values(mapping);
   const warnings: DecodeWarning[] = [];
+  // What a cut leaves behind is the start of a placeholder this call minted. A token that starts
+  // none of them is the model's own, however the answer ended.
+  const startsAPlaceholder = (token: string) =>
+    placeholders.some((p) => p.length > token.length && p.startsWith(token));
 
-  // Extract bare indices from placeholders (e.g., "~000~" -> "000")
-  const bareIndices = new Set<string>();
-  for (const placeholder of placeholders) {
-    const match = placeholder.match(/^[^\d]*(\d+)[^\d]*$/);
-    if (match) bareIndices.add(match[1]);
-  }
+  // What a placeholder looks like with the format's own prefix and suffix stripped off
+  const bareIndices = placeholderBodies(placeholders, config.outputFormat);
 
   function check(text: string, source: Pick<DecodeWarning, "source" | "toolName">) {
     // Mask out the restored IDs first. Non-delimited placeholders are bare digits
@@ -155,7 +207,8 @@ function detectDecodeWarnings(
     // own delimiters, such as a "-{i}-" template against a UUID's hyphens.
     const masked = ids.reduce((acc, id) => acc.split(id).join(ID_MASK), text);
 
-    // Check for surviving placeholders
+    // Masking leaves nothing for this to find while decode replaces every key it is given, so it
+    // reports a regression in one of the two rather than anything a model can write
     for (const placeholder of placeholders) {
       if (masked.includes(placeholder)) {
         warnings.push({ type: "surviving_placeholder", value: placeholder, ...source });
@@ -163,9 +216,13 @@ function detectDecodeWarnings(
     }
 
     for (const token of findPlaceholders(masked, config.outputFormat)) {
-      if (mapping[token] === undefined) {
-        warnings.push({ type: "unknown_placeholder", value: token, ...source });
-      }
+      if (mapping[token] !== undefined) continue;
+
+      // A cut leaves half a placeholder behind, and an answer carrying several blocks has one per
+      // block, so position says nothing about which of them the cut made
+      if (isTruncated && startsAPlaceholder(token)) continue;
+
+      warnings.push({ type: "unknown_placeholder", value: token, ...source });
     }
 
     // Check for stripped delimiters: bare indices appearing as standalone JSON string values
@@ -253,14 +310,11 @@ function encodeToolResultOutput(
     return { ...typedOutput, value: result.encoded };
   }
 
-  // For json output, stringify → encode → parse
   if (
     (typedOutput.type === "json" || typedOutput.type === "error-json") &&
     typedOutput.value !== undefined
   ) {
-    const stringified = JSON.stringify(typedOutput.value);
-    const result = encode(stringified, config, state);
-    return { ...typedOutput, value: JSON.parse(result.encoded) };
+    return { ...typedOutput, value: encodeJsonValue(typedOutput.value, config, state) };
   }
 
   // For content output, the value is an array of the same text and file parts
@@ -279,15 +333,83 @@ function encodeToolResultOutput(
 }
 
 /**
- * Encode IDs in tool call input (args).
- * Input is an arbitrary object in prompt messages — stringify → encode → parse.
+ * Encode IDs in every string a JSON payload carries, keys included.
+ *
+ * Encoding the serialised document instead would run the ID patterns over JSON's own escapes.
+ * A newline is written as a backslash and an `n`, and both ID patterns open on a word boundary,
+ * so an ID written straight after one is never matched and silently travels uncompressed.
+ */
+function encodeJsonValue(
+  value: unknown,
+  config: EncodeConfig,
+  state: EncodeState,
+  key = "",
+  open: Set<object> = new Set()
+): unknown {
+  const resolved = jsonFormOf(value, key);
+
+  if (typeof resolved === "string") return encode(resolved, config, state).encoded;
+
+  if (typeof resolved !== "object" || resolved === null) return resolved;
+
+  // Serialising the payload is the provider's job and it would report this; the walk reaches it
+  // first and would otherwise run out of stack with nothing to point at
+  if (open.has(resolved)) {
+    throw new TypeError("Converting circular structure to JSON in a tool payload.");
+  }
+  open.add(resolved);
+  try {
+    if (Array.isArray(resolved)) {
+      return resolved.map((item, index) =>
+        encodeJsonValue(item, config, state, String(index), open)
+      );
+    }
+
+    return Object.fromEntries(
+      Object.entries(resolved)
+        // A function is not JSON, and carrying one through would hand the provider a `toJSON` that
+        // runs on the encoded payload and writes an identifier the encoder never saw
+        .filter(([, item]) => typeof item !== "function")
+        .map(([name, item]) => [
+          encode(name, config, state).encoded,
+          encodeJsonValue(item, config, state, name, open),
+        ])
+    );
+  } finally {
+    open.delete(resolved);
+  }
+}
+
+/**
+ * What `JSON.stringify` would serialise in this value's place, asked for exactly once.
+ *
+ * The provider stringifies the payload after the middleware has encoded it. Walking a value as it
+ * stands would encode fields the provider then discards and leave what `toJSON` returns untouched,
+ * so a `Date` reaches the model as `{}` and an identifier behind a `toJSON` reaches it raw.
+ */
+function jsonFormOf(value: unknown, key: string): unknown {
+  if (value === null || typeof value !== "object") return value;
+
+  const withToJson = value as { toJSON?: (key: string) => unknown };
+  // `toJSON` speaks for the slot once. What it hands back is serialised as it stands, so a `toJSON`
+  // on the result is an ordinary property from here on and never a second conversion
+  const resolved = typeof withToJson.toJSON === "function" ? withToJson.toJSON(key) : value;
+  if (resolved === null || typeof resolved !== "object") return resolved;
+
+  if (resolved instanceof String) return String(resolved);
+  if (resolved instanceof Number) return Number(resolved);
+  if (resolved instanceof Boolean) return Boolean(resolved);
+
+  return resolved;
+}
+
+/**
+ * Encode IDs in tool call input (args), which is an arbitrary JSON value.
  */
 function encodeToolCallInput(input: unknown, config: EncodeConfig, state: EncodeState): unknown {
   if (input == null) return input;
 
-  const stringified = JSON.stringify(input);
-  const result = encode(stringified, config, state);
-  return JSON.parse(result.encoded);
+  return encodeJsonValue(input, config, state);
 }
 
 /**
@@ -372,19 +494,14 @@ function encodePromptMessages(
 }
 
 /**
- * Decode IDs in text content using the mapping.
+ * Count the placeholders a decode replaced. One pass per placeholder, so it costs more than the
+ * decode itself on a large mapping and only debugData reports it.
  */
-function decodeText(
-  text: string,
-  mapping: Record<string, string>
-): { decoded: string; count: number } {
-  const decoded = decode(text, mapping);
-  // Count how many placeholders were replaced
-  const count = Object.keys(mapping).reduce((acc, placeholder) => {
+function countPlaceholders(text: string, mapping: Record<string, string>): number {
+  return Object.keys(mapping).reduce((acc, placeholder) => {
     const regex = new RegExp(placeholder.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g");
     return acc + (text.match(regex)?.length ?? 0);
   }, 0);
-  return { decoded, count };
 }
 
 /**
@@ -400,19 +517,15 @@ function decodeToolInputString(input: string, mapping: Record<string, string>): 
 // =============================================================================
 
 /**
- * Creates a streaming buffer that handles placeholders split across chunks.
+ * Creates a streaming buffer that holds back a chunk tail that could still grow into a
+ * placeholder, so one split across chunks ("~00" | "0~") is decoded as a whole.
  *
- * For delimited formats like SafeNumeric (<000>, <001>, etc.), placeholders
- * may arrive split across chunks: "<00" | "0>" or "<" | "000" | ">"
- *
- * Strategy: Buffer content when we see an opening delimiter,
- * flush when we see the closing delimiter.
- *
- * For non-delimited formats (Numeric, IdToken), buffering isn't possible
- * so we decode immediately.
+ * Only a placeholder in the mapping can be decoded, so the tails worth holding are exactly the
+ * proper prefixes of those, whatever an output format writes. A tail may begin where a match
+ * begins, since that match can still grow into a longer placeholder, but never partway through
+ * one, because the text on either side of it was already decoded around it.
  */
 function createStreamingDecoder(mapping: Record<string, string>) {
-  // Detect delimiter pattern from mapping keys
   const placeholders = Object.keys(mapping);
   if (placeholders.length === 0) {
     return {
@@ -421,154 +534,58 @@ function createStreamingDecoder(mapping: Record<string, string>) {
     };
   }
 
-  // Detect delimiter pattern from the first placeholder
-  // e.g., "<000>" -> open="<", close=">"
-  // e.g., "[[000]]" -> open="[[", close="]]"
-  // e.g., "000" -> no delimiters (can't buffer)
-  const firstPlaceholder = placeholders[0];
-  const match = firstPlaceholder.match(/^([^\d]*)\d+([^\d]*)$/);
-
-  if (!match || (!match[1] && !match[2])) {
-    // No delimiters found (e.g., pure "000", "A", "z")
-    // Can't reliably buffer, just decode immediately
-    return {
-      process: (text: string) => decode(text, mapping),
-      flush: () => "",
-    };
-  }
-
-  const OPEN = match[1];
-  const CLOSE = match[2];
-
-  if (!OPEN) {
-    // No opening delimiter means we can't detect incomplete placeholders
-    return {
-      process: (text: string) => decode(text, mapping),
-      flush: () => "",
-    };
-  }
-
-  const isSymmetric = OPEN === CLOSE;
-  const MAX_PLACEHOLDER_LEN = 15; // safety: flush if buffer tail exceeds this
-
-  /**
-   * Check if the buffer ends with a partial prefix of a multi-char delimiter.
-   * e.g., buffer "text[" could be the start of "[[" opener.
-   * Returns the length of the partial prefix (0 if none).
-   */
-  function partialDelimiterSuffix(buf: string, delim: string): number {
-    if (delim.length <= 1) return 0;
-    // Check if buffer ends with a prefix of the delimiter (length 1..delim.length-1)
-    for (let len = Math.min(delim.length - 1, buf.length); len >= 1; len--) {
-      if (buf.endsWith(delim.substring(0, len))) {
-        return len;
-      }
+  const growable = new Set<string>();
+  for (const placeholder of placeholders) {
+    for (let length = 1; length < placeholder.length; length++) {
+      growable.add(placeholder.slice(0, length));
     }
-    return 0;
   }
+  // Spreading the lengths into Math.max overflows the call stack past roughly 120,000 placeholders
+  let longest = 0;
+  for (const placeholder of placeholders) {
+    if (placeholder.length > longest) longest = placeholder.length;
+  }
+  const longestTail = longest - 1;
 
-  // Buffer incomplete placeholders
+  // Matches what decode matches, longest placeholder first, so both agree on where one ends
+  const pattern = new RegExp(
+    [...placeholders]
+      .sort((a, b) => b.length - a.length)
+      .map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+      .join("|"),
+    "g"
+  );
+
   let buffer = "";
 
   return {
     process: (text: string): string => {
-      buffer += text;
+      const pending = buffer + text;
 
-      if (!isSymmetric) {
-        // Asymmetric path — use regex to find complete placeholders.
-        // The old lastIndexOf approach breaks when delimiters share characters
-        // (e.g., ~ID000~ where CLOSE ~ is a prefix of OPEN ~ID).
-        const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-        const completeRe = new RegExp(esc(OPEN) + "\\d+" + esc(CLOSE), "g");
-
-        // Find where the last complete placeholder ends
-        let lastCompleteEnd = 0;
-        let m;
-        while ((m = completeRe.exec(buffer)) !== null) {
-          lastCompleteEnd = m.index + m[0].length;
-        }
-
-        const tail = buffer.substring(lastCompleteEnd);
-
-        // Check for incomplete placeholder: OPEN + digit(s), no complete CLOSE yet
-        const incompleteRe = new RegExp(esc(OPEN) + "\\d");
-        const incMatch = incompleteRe.exec(tail);
-        if (incMatch) {
-          const afterOpen = tail.substring(incMatch.index + OPEN.length);
-          if (afterOpen.indexOf(CLOSE) === -1) {
-            const dm = afterOpen.match(/^(\d+)([\s\S]*)$/);
-            if (dm && (dm[2] === "" || CLOSE.startsWith(dm[2]))) {
-              // OPEN + digits + optional partial CLOSE — buffer it
-              const splitPoint = lastCompleteEnd + incMatch.index;
-              const complete = buffer.substring(0, splitPoint);
-              buffer = buffer.substring(splitPoint);
-              return decode(complete, mapping);
-            }
-          }
-        }
-
-        // Check for bare OPEN at end of buffer (no digits yet)
-        if (tail.endsWith(OPEN)) {
-          const complete = buffer.substring(0, buffer.length - OPEN.length);
-          buffer = buffer.substring(buffer.length - OPEN.length);
-          return decode(complete, mapping);
-        }
-
-        // Check for partial multi-char opener at end (e.g., "[" when OPEN="[[")
-        const partialLen = partialDelimiterSuffix(tail, OPEN);
-        if (partialLen > 0) {
-          const complete = buffer.substring(0, buffer.length - partialLen);
-          buffer = buffer.substring(buffer.length - partialLen);
-          return decode(complete, mapping);
-        }
-
-        // All placeholders are complete, decode everything
-        const result = decode(buffer, mapping);
-        buffer = "";
-        return result;
+      // Only a match reaching into the last longestTail characters can contain a candidate tail
+      pattern.lastIndex = 0;
+      const tailStart = Math.max(0, pending.length - longestTail);
+      const reachingTail: [start: number, end: number][] = [];
+      for (let match = pattern.exec(pending); match; match = pattern.exec(pending)) {
+        if (pattern.lastIndex > tailStart) reachingTail.push([match.index, pattern.lastIndex]);
       }
 
-      // Symmetric path (e.g., ~000~) — look-back approach
-      const lastDelim = buffer.lastIndexOf(OPEN);
-      if (lastDelim >= 0) {
-        const afterDelim = buffer.substring(lastDelim + OPEN.length);
-
-        // Case 1: digits after last delimiter (e.g., "~00") → partial placeholder
-        if (/^\d+$/.test(afterDelim) && afterDelim.length <= MAX_PLACEHOLDER_LEN) {
-          const complete = buffer.substring(0, lastDelim);
-          buffer = buffer.substring(lastDelim);
-          return decode(complete, mapping);
-        }
-
-        // Case 2: delimiter at very end of buffer (e.g., "text~")
-        if (afterDelim === "") {
-          // Look back: is there OPEN + digits immediately before this delimiter?
-          // If yes → this delimiter is a CLOSER, decode everything
-          const precedingDelim = buffer.lastIndexOf(OPEN, lastDelim - 1);
-          if (precedingDelim >= 0) {
-            const between = buffer.substring(precedingDelim + OPEN.length, lastDelim);
-            if (/^\d+$/.test(between)) {
-              // Confirmed closer (e.g., "~000~") — decode all
-              const result = decode(buffer, mapping);
-              buffer = "";
-              return result;
-            }
-          }
-          // No valid opener found before → this might be an opener, buffer it
-          const complete = buffer.substring(0, lastDelim);
-          buffer = buffer.substring(lastDelim);
-          return decode(complete, mapping);
-        }
+      let hold = 0;
+      for (let length = Math.min(longestTail, pending.length); length > 0; length--) {
+        const cut = pending.length - length;
+        if (!growable.has(pending.slice(cut))) continue;
+        // Holding a whole match back is fine, it may still grow. Cutting one in half is not,
+        // since the text before the cut was already decoded around it.
+        if (reachingTail.some(([start, end]) => start < cut && cut < end)) continue;
+        hold = length;
+        break;
       }
 
-      // No partial placeholder detected, decode everything
-      const result = decode(buffer, mapping);
-      buffer = "";
-      return result;
+      buffer = pending.slice(pending.length - hold);
+      return decode(pending.slice(0, pending.length - hold), mapping);
     },
 
     flush: (): string => {
-      // Stream ended, decode whatever remains (might be incomplete placeholder)
       const result = decode(buffer, mapping);
       buffer = "";
       return result;
@@ -594,7 +611,7 @@ interface ParamsWithMapping {
  * @example
  * ```typescript
  * import { openai } from '@ai-sdk/openai';
- * import { wrapLanguageModel } from 'ai';
+ * import { wrapLanguageModel, generateText } from 'ai';
  * import { promptIdentifiersMiddleware } from 'prompt-identifiers-ai-sdk';
  *
  * const model = wrapLanguageModel({
@@ -623,11 +640,24 @@ export function promptIdentifiersMiddleware(
         "system message, or false to send none."
     );
   }
+  // A tool payload reaches the model as JSON and comes back as JSON text the decoder scans without
+  // parsing, so a placeholder JSON has to escape is written one way and read another
+  const example =
+    config.outputFormat === "Passthrough" ? "" : createFormatter(config.outputFormat)(0);
+  const unsafe = example.match(/["\\\u0000-\u001f]/);
+  if (unsafe) {
+    throw new Error(
+      `promptIdentifiersMiddleware: the output format writes ${JSON.stringify(example)}, which ` +
+        `carries ${JSON.stringify(unsafe[0])}. JSON escapes that character, so the placeholder ` +
+        `would not survive a tool call. Choose a format without it.`
+    );
+  }
+
   // Passthrough encodes nothing, so there is no format to name and nothing to instruct about
   const builtInstruction =
     instruction === false || config.outputFormat === "Passthrough"
       ? undefined
-      : instruction.replace(/\{format\}/g, createFormatter(config.outputFormat)(0));
+      : instruction.replace(/\{format\}/g, () => createFormatter(config.outputFormat)(0));
 
   return {
     specificationVersion: "v4",
@@ -682,17 +712,16 @@ export function promptIdentifiersMiddleware(
       const decodedToolCalls: DecodedToolCall[] = [];
       const decodedContent = result.content.map((item) => {
         if (item.type === "text") {
-          const { decoded, count } = decodeText(item.text, mapping);
-          totalCount += count;
+          const decoded = decode(item.text, mapping);
           decodedText += decoded;
           if (debug) {
+            totalCount += countPlaceholders(item.text, mapping);
             encodedText += item.text;
           }
           return { ...item, text: decoded };
         }
         if (item.type === "reasoning") {
-          const { decoded } = decodeText(item.text, mapping);
-          return { ...item, text: decoded };
+          return { ...item, text: decode(item.text, mapping) };
         }
         // Decode tool call inputs (input is stringified JSON)
         if (item.type === "tool-call" && "input" in item && typeof item.input === "string") {
@@ -704,7 +733,18 @@ export function promptIdentifiersMiddleware(
       });
 
       const durationMs = debug ? performance.now() - startTime : 0;
-      const warnings = detectDecodeWarnings(decodedText, decodedToolCalls, mapping, config);
+      const warnings = onDecode
+        ? detectDecodeWarnings(
+            decodedText,
+            decodedToolCalls,
+            mapping,
+            config,
+            // The opposite default to the streamed path, deliberately: doGenerate returning at
+            // all means the answer is complete, so a result with no finishReason is a
+            // malformed complete answer rather than a cut one
+            CUT_SHORT.has(result.finishReason?.unified ?? "")
+          )
+        : [];
 
       onDecode?.({
         output: decodedText,
@@ -730,21 +770,22 @@ export function promptIdentifiersMiddleware(
         return { stream, ...rest };
       }
 
-      const textDecoder = createStreamingDecoder(mapping);
-      // Reasoning arrives as its own delta stream, so it needs a buffer of its own
-      const reasoningDecoder = createStreamingDecoder(mapping);
-      // Each streaming tool input is a separate JSON document with its own buffer
+      // A provider can run several text, reasoning and tool input blocks at once, and a placeholder
+      // split across one block's chunks must not be completed by another block's text
+      const textDecoders = new Map<string, ReturnType<typeof createStreamingDecoder>>();
+      const reasoningDecoders = new Map<string, ReturnType<typeof createStreamingDecoder>>();
       const toolInputDecoders = new Map<string, ReturnType<typeof createStreamingDecoder>>();
 
       let accDecodedText = "";
       const accDecodedToolCalls: DecodedToolCall[] = [];
-      let lastTextId = "";
-      let lastReasoningId = "";
 
       // Debug-only accumulation state
       let streamStartTime = 0;
       let accEncodedText = "";
       let streamStarted = false;
+
+      // A stream that never reports one was cut off, the same as one that ran out of room
+      let streamFinishReason: string | undefined;
 
       let reported = false;
       function report() {
@@ -753,10 +794,21 @@ export function promptIdentifiersMiddleware(
 
         // A stream that ended without a closing chunk leaves the buffer unflushed;
         // it is too late to emit it, but the callback should still see it.
-        accDecodedText += textDecoder.flush();
+        for (const decoder of textDecoders.values()) accDecodedText += decoder.flush();
+        textDecoders.clear();
 
         const durationMs = debug && streamStarted ? performance.now() - streamStartTime : 0;
-        const warnings = detectDecodeWarnings(accDecodedText, accDecodedToolCalls, mapping, config);
+        const warnings = onDecode
+          ? detectDecodeWarnings(
+              accDecodedText,
+              accDecodedToolCalls,
+              mapping,
+              config,
+              // A stream that never reported one did not finish, which is a cut the generate
+              // path cannot have
+              streamFinishReason === undefined || CUT_SHORT.has(streamFinishReason)
+            )
+          : [];
 
         onDecode?.({
           output: accDecodedText,
@@ -764,7 +816,7 @@ export function promptIdentifiersMiddleware(
           ...(warnings.length > 0 && { warnings }),
           ...(debug && {
             debugData: {
-              decodedCount: Object.keys(mapping).length,
+              decodedCount: countPlaceholders(accEncodedText, mapping),
               input: accEncodedText,
               output: accDecodedText,
               durationMs,
@@ -774,6 +826,34 @@ export function promptIdentifiersMiddleware(
       }
 
       // Transform the stream to decode placeholders in text and tool calls
+      // A provider may skip the opening chunk or repeat it, and either way the id needs the one
+      // decoder that holds this block's tail
+      type Decoders = Map<string, ReturnType<typeof createStreamingDecoder>>;
+      function decoderFor(decoders: Decoders, id: string) {
+        let decoder = decoders.get(id);
+        if (!decoder) {
+          decoder = createStreamingDecoder(mapping);
+          decoders.set(id, decoder);
+        }
+        return decoder;
+      }
+
+      // Drains every block still holding a tail, each onto its own block
+      function flushAll(
+        decoders: Decoders,
+        type: "text-delta" | "reasoning-delta",
+        emit: (part: LanguageModelV4StreamPart) => void
+      ) {
+        for (const [id, decoder] of decoders) {
+          const remaining = decoder.flush();
+          if (remaining) {
+            if (type === "text-delta") accDecodedText += remaining;
+            emit({ type, id, delta: remaining } as LanguageModelV4StreamPart);
+          }
+        }
+        decoders.clear();
+      }
+
       const transformedStream = new TransformStream<
         LanguageModelV4StreamPart,
         LanguageModelV4StreamPart
@@ -782,32 +862,54 @@ export function promptIdentifiersMiddleware(
           // A closing chunk is the last chance to emit what a decoder still holds:
           // anything enqueued from flush() arrives after the stream has finished,
           // with no open block to attach to, and is dropped from the assembled message.
-          if (chunk.type === "text-end" || chunk.type === "finish") {
-            const remaining = textDecoder.flush();
+          if (chunk.type === "text-end") {
+            const remaining = textDecoders.get(chunk.id)?.flush();
             if (remaining) {
               accDecodedText += remaining;
               controller.enqueue({
                 type: "text-delta",
-                id: lastTextId,
+                id: chunk.id,
                 delta: remaining,
               } as LanguageModelV4StreamPart);
             }
+            textDecoders.delete(chunk.id);
           }
 
-          if (chunk.type === "reasoning-end" || chunk.type === "finish") {
-            const remaining = reasoningDecoder.flush();
+          if (chunk.type === "reasoning-end") {
+            const remaining = reasoningDecoders.get(chunk.id)?.flush();
             if (remaining) {
               controller.enqueue({
                 type: "reasoning-delta",
-                id: lastReasoningId,
+                id: chunk.id,
                 delta: remaining,
               } as LanguageModelV4StreamPart);
             }
+            reasoningDecoders.delete(chunk.id);
+          }
+
+          if (chunk.type === "finish") {
+            flushAll(textDecoders, "text-delta", (part) => controller.enqueue(part));
+            flushAll(reasoningDecoders, "reasoning-delta", (part) => controller.enqueue(part));
+          }
+
+          if (chunk.type === "finish") {
+            streamFinishReason = chunk.finishReason?.unified;
+
+            for (const [id, decoder] of toolInputDecoders) {
+              const remaining = decoder.flush();
+              if (remaining) {
+                controller.enqueue({
+                  type: "tool-input-delta",
+                  id,
+                  delta: remaining,
+                } as LanguageModelV4StreamPart);
+              }
+            }
+            toolInputDecoders.clear();
           }
 
           // Decode text deltas
           if (chunk.type === "text-delta" && chunk.delta) {
-            lastTextId = chunk.id;
             if (debug) {
               if (!streamStarted) {
                 streamStartTime = performance.now();
@@ -815,7 +917,7 @@ export function promptIdentifiersMiddleware(
               }
               accEncodedText += chunk.delta;
             }
-            const decoded = textDecoder.process(chunk.delta);
+            const decoded = decoderFor(textDecoders, chunk.id).process(chunk.delta);
             if (decoded) {
               accDecodedText += decoded;
               controller.enqueue({ ...chunk, delta: decoded });
@@ -825,8 +927,7 @@ export function promptIdentifiersMiddleware(
 
           // Decode reasoning deltas
           if (chunk.type === "reasoning-delta" && chunk.delta) {
-            lastReasoningId = chunk.id;
-            const decoded = reasoningDecoder.process(chunk.delta);
+            const decoded = decoderFor(reasoningDecoders, chunk.id).process(chunk.delta);
             if (decoded) {
               controller.enqueue({ ...chunk, delta: decoded });
             }
@@ -845,16 +946,16 @@ export function promptIdentifiersMiddleware(
           }
 
           if (chunk.type === "tool-input-start") {
-            toolInputDecoders.set(chunk.id, createStreamingDecoder(mapping));
+            decoderFor(toolInputDecoders, chunk.id);
             controller.enqueue(chunk);
             return;
           }
 
           // Decode tool input deltas (partial JSON strings)
           if (chunk.type === "tool-input-delta" && "delta" in chunk) {
-            const decoder = toolInputDecoders.get(chunk.id);
+            const decoder = decoderFor(toolInputDecoders, chunk.id);
             const rawDelta = (chunk as { delta: string }).delta;
-            const decodedDelta = decoder ? decoder.process(rawDelta) : decode(rawDelta, mapping);
+            const decodedDelta = decoder.process(rawDelta);
             if (decodedDelta) {
               controller.enqueue({ ...chunk, delta: decodedDelta });
             }
