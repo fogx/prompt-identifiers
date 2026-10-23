@@ -346,7 +346,9 @@ promptIdentifiersMiddleware({
 
 **Symptom:** A decoded ID doesn't match what was originally in that position.
 
-**Cause:** Partial-match collisions. A short placeholder is a substring of a longer one (e.g. `00` inside `001`). The library handles this automatically (decode sorts by length), but custom formatter functions that produce variable-width placeholders without delimiters can still collide.
+**Cause:** Partial-match collisions. A short placeholder is a substring of a longer one (e.g. `00` inside `001`). The library handles this automatically (decode sorts by length).
+
+What it cannot handle is a placeholder that ordinary text can spell. `Numeric` writes a bare digit run and `IdToken` a bare word, so a model answering with `1000 EUR` against the placeholder `1` gets `1<uuid> EUR`, and `{"limit":1000}` comes back as invalid JSON. No warning fires, because telling a placeholder from ordinary text needs delimiters. A custom formatter producing variable-width placeholders without delimiters has the same problem.
 
 **Fix:** Use `SafeNumeric` (tilde-wrapped) or a delimited template like `[[{i:zeroFilled}]]` to prevent substring matches.
 

@@ -1,5 +1,12 @@
 import { describe, test, expect } from "vitest";
-import { decode, encode, EncodeConfig, findPlaceholders, OutputFormat } from "../src/index";
+import {
+  createEncodeState,
+  decode,
+  encode,
+  EncodeConfig,
+  findPlaceholders,
+  OutputFormat,
+} from "../src/index";
 
 describe("prompt-identifiers", () => {
   // Shared test configuration
@@ -396,6 +403,126 @@ describe("prompt-identifiers", () => {
       expect(decoded).toBe(
         "User 123e4567-e89b-42d3-a456-426655440000 and 987fcdeb-51a2-43f7-8d9c-0123456789ab"
       );
+    });
+
+    test("an empty placeholder is rejected, naming the index that produced it", () => {
+      const names = ["ALPHA"];
+      expect(() =>
+        encode(uuidPrompt, { inputFormat: "UUID", outputFormat: (i) => names[i] ?? "" })
+      ).toThrow(/index 1/);
+    });
+
+    test("a formatter that hands back a non-string is rejected", () => {
+      expect(() =>
+        encode(uuidPrompt, {
+          inputFormat: "UUID",
+          // @ts-expect-error a caller with no types can return anything
+          outputFormat: (i) => (i === 0 ? "A" : undefined),
+        })
+      ).toThrow(/index 1/);
+    });
+  });
+
+  describe("Shared encode state across turns", () => {
+    const config: EncodeConfig = { inputFormat: "UUID", outputFormat: "SafeNumeric" };
+    const first = "123e4567-e89b-42d3-a456-426655440000";
+    const second = "987fcdeb-51a2-43f7-8d9c-0123456789ab";
+
+    test("an id minted after an earlier decode still decodes", () => {
+      const state = createEncodeState();
+
+      encode(`Look at ${first}`, config, state);
+      expect(decode("~000~", state.mapping)).toBe(first);
+
+      encode(`And ${second}`, config, state);
+
+      expect(decode("~001~", state.mapping)).toBe(second);
+      expect(decode("~000~ and ~001~", state.mapping)).toBe(`${first} and ${second}`);
+    });
+
+    // A template is any string carrying {i}, so a placeholder can hold a regex metacharacter.
+    // An unescaped one either over-matches the decoy or, for ^ and $, anchors the pattern so it
+    // matches nothing at all, and the first assertion catches that.
+    test.each([
+      { template: "a.{i}.b", decoy: "aX0Yb" },
+      { template: "a*{i}", decoy: "0" },
+      { template: "a+{i}", decoy: "aaa0" },
+      { template: "a?{i}", decoy: "0" },
+      { template: "^{i}^", decoy: "nothing to decode here" },
+      { template: "${i}$", decoy: "nothing to decode here" },
+      { template: "\\d{i}", decoy: "70" },
+    ])("a $template placeholder decodes itself and nothing else", ({ template, decoy }) => {
+      const { encoded, mapping } = encode(`Look at ${first}`, {
+        inputFormat: "UUID",
+        outputFormat: { template },
+      });
+
+      expect(decode(encoded, mapping)).toBe(`Look at ${first}`);
+      expect(decode(decoy, mapping)).toBe(decoy);
+    });
+
+    test("a key replaced at the first position is noticed too", () => {
+      const mapping: Record<string, string> = { "~000~": first };
+
+      expect(decode("~000~", mapping)).toBe(first);
+
+      delete mapping["~000~"];
+      mapping["~001~"] = second;
+
+      expect(decode("~000~ ~001~", mapping)).toBe(`~000~ ${second}`);
+    });
+
+    test("an unchanged mapping is decoded without rebuilding the pattern", () => {
+      // Mixed widths, so the longest-first sort reorders them and the cache cannot be comparing
+      // the array the sort rewrote
+      const mapping: Record<string, string> = {};
+      for (let i = 0; i < 200; i++) mapping[`~${i}~`] = `id-${i}`;
+
+      decode("~0~", mapping);
+
+      const RealRegExp = globalThis.RegExp;
+      let built = 0;
+      globalThis.RegExp = new Proxy(RealRegExp, {
+        construct(target, args: ConstructorParameters<typeof RegExp>) {
+          built++;
+          return new target(...args);
+        },
+      });
+      try {
+        for (let i = 0; i < 50; i++) decode("~0~ ~100~", mapping);
+      } finally {
+        globalThis.RegExp = RealRegExp;
+      }
+
+      expect(built).toBe(0);
+    });
+
+    // A sticky regex anchors every match at lastIndex, which reads the text as a cursor rather
+    // than scanning it, so it finds at most the run that starts at index 0
+    test.each(["y", "gy", "iy"])("a /%s regex still encodes every match", (flags) => {
+      const { encoded, mapping } = encode("see user-100001 and user-100002 here", {
+        inputFormat: new RegExp("user-\\d{6}", flags),
+        outputFormat: "SafeNumeric",
+      });
+
+      expect(encoded).toBe("see ~000~ and ~001~ here");
+      expect(Object.keys(mapping)).toHaveLength(2);
+    });
+
+    test("an empty key would match everywhere, so it is refused", () => {
+      expect(() => decode("hello", { "": "X" })).toThrow(/empty placeholder key/);
+    });
+
+    test("a key replaced at the same count decodes against the keys the mapping holds now", () => {
+      const third = "3f1c1a2a-60a6-444f-915f-7960a929fb78";
+      const mapping: Record<string, string> = { "~000~": first, "~001~": second };
+
+      expect(decode("~000~ ~001~", mapping)).toBe(`${first} ${second}`);
+
+      delete mapping["~001~"];
+      mapping["~777~"] = third;
+
+      expect(decode("~000~ ~001~ ~777~", mapping)).toBe(`${first} ~001~ ${third}`);
     });
   });
 

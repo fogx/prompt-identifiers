@@ -59,7 +59,8 @@ promptIdentifiersMiddleware({
 
   // Required. Appended to the system message on every call ({format} becomes an example token
   // like ~000~). Prevents LLMs from stripping delimiter characters in tool call arguments. Pass
-  // false, or use the Passthrough output format, and the middleware leaves the system message alone.
+  // false and the middleware leaves the system message alone. Under the Passthrough output
+  // format it is ignored, but the option is still required.
   instruction: "IDs use {format} notation. Preserve them exactly.",
 
   // Optional: enable debug mode for detailed diagnostics
@@ -108,9 +109,7 @@ promptIdentifiersMiddleware({
 
 ## Streaming Support
 
-> **Important:** For streaming responses, use a **delimited format** like `SafeNumeric` or a custom template with delimiters. Non-delimited formats (`Numeric`, `IdToken`) cannot reliably handle placeholders split across chunks.
-
-The middleware buffers incomplete placeholders when using delimited formats like `SafeNumeric`:
+The middleware holds back the end of a chunk while it could still grow into one of this call's placeholders, so a placeholder split across chunks is decoded whole. That works for every output format, delimited or not. What a non-delimited format (`Numeric`, `IdToken`) costs you is `unknown_placeholder` detection, which needs delimiters to tell a placeholder from ordinary text.
 
 ```typescript
 import { streamText } from "ai";

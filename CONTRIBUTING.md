@@ -100,10 +100,11 @@ pnpm --filter prompt-identifiers build
    slot, and an additive export ships as a patch to stay reachable from a `^0.1.x` a consumer
    already has.
 
-5. **Run tests** - Ensure all tests pass
+5. **Run tests** - Ensure all tests pass. The other packages import `prompt-identifiers` through
+   its build output, so build first or they test a stale core.
 
    ```bash
-   pnpm test
+   pnpm build && pnpm test
    ```
 
 6. **Commit your changes**
