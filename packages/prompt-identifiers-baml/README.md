@@ -132,7 +132,7 @@ const final = await stream.getFinalResponse();
 
 The wrapper mirrors what it was given: pass `b.stream.<Fn>`, which returns a `BamlStream`, and you get a stream back with the same `getFinalResponse()` and the same `toStreamable()`, whose newline-delimited JSON carries the decoded partials and the decoded final. Pass a plain async generator and you get an async generator, whose return value is the decoded final.
 
-`getFinalResponse()` decodes once however often it is called, and `onDecode` fires once per stream, where the consumption that finishes first ends: at the end of the loop, at `getFinalResponse()` for a consumer that calls it without iterating, or at the error that ends either one. Its counts cover what had been decoded by then. Iterating and then asking for the final counts both; asking for the final first counts the final alone; a generation that dies part way through counts the partials the consumer already read. A consumer that breaks out of the loop early is not reported to, because it stopped reading rather than finished.
+`getFinalResponse()` decodes once however often it is called, and `onDecode` fires once per stream, where the consumption that finishes first ends: at the end of the loop, at `getFinalResponse()` for a consumer that calls it without iterating, or at the error that ends either one. Its counts cover what had been decoded by then. Iterating and then asking for the final counts both; asking for the final first counts the final alone; a generation that dies part way through counts the partials the consumer already read. A consumer that breaks out of the loop early is not reported to, because it stopped reading rather than finished, unless it is also holding the promise `getFinalResponse()` gave it, which is a consumption that finishes on its own.
 
 ## Utility Functions
 
@@ -150,6 +150,10 @@ const wrapped = wrapBamlFunction(b.AnalyzeUsers, {
 ```
 
 It is off by default because nothing at runtime tells a map key from a class's own field name, so a custom input format matching a field name would rewrite the class's shape. It is ignored when `encodeFields` is given, because a field path names a value. Two keys that encode to one placeholder are refused rather than collapsed.
+
+An ordinary key becomes one of that pair under a non-delimited format. `Numeric` mints `"000"` and `IdToken` mints `"0"`, which are keys a caller writes for their own reasons, so an object holding both an identifier and a key spelled that way is refused. A delimited format needs the key written as `~000~` before it collides. The same spelling collides on the way back: a key or a value carrying a bare digit run is rewritten on decode, because nothing tells it from a placeholder.
+
+`IdToken` also moves the key it encodes. Its placeholder for a low index is a canonical integer string, and JavaScript orders an object's integer-like keys first and in ascending order whatever the insertion order was, so `{ alpha, <id>, beta }` reaches the model as `{ "0", alpha, beta }` and comes back in that order. Use a delimited format where the key order carries meaning.
 
 Decoding reads keys either way, since a key only changes when it matches a placeholder the call minted. Two keys that decode to one identifier are refused rather than collapsed, the same as on the way out.
 

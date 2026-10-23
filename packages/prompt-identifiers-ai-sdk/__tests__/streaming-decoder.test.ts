@@ -278,7 +278,9 @@ describe.each(formats)("Streaming decoder: $label", (fmt) => {
     expect(text).toBe("User ");
   });
 
-  test("flush completes final placeholder", async () => {
+  test("a placeholder arriving whole as the last chunk needs no flush", async () => {
+    // Every format here has a closer, so the match completes inside the chunk that carries it and
+    // nothing is left held. The case is the boundary: a placeholder with no text after it
     const text = await streamAndCollect(config, [uuid1], ["User ", `${p0}`]);
     expect(text).toBe(`User ${uuid1}`);
   });
@@ -796,8 +798,13 @@ describe("Streaming decoder: stream bookkeeping", () => {
         { type: "reasoning-start", id: "r" },
         ...deltas.map((delta) => ({ type: "reasoning-delta" as const, id: "r", delta })),
       ];
+      // Each label is one closing shape and only that one. Pushing `finish` for all three made
+      // "reasoning-end" and "both" the same stream, and left the suite with nothing that closes a
+      // reasoning block without a finish chunk, which is what an aborted stream looks like
       if (closer !== "finish") parts.push({ type: "reasoning-end", id: "r" });
-      parts.push({ type: "finish", finishReason: mockFinishReason(), usage: mockUsage() });
+      if (closer !== "reasoning-end") {
+        parts.push({ type: "finish", finishReason: mockFinishReason(), usage: mockUsage() });
+      }
       return streamParts(parts);
     }
 
@@ -810,11 +817,20 @@ describe("Streaming decoder: stream bookkeeping", () => {
     });
 
     test("both closers deliver it exactly once", async () => {
-      expect(reasoningOf(await reasoningParts("both"))).toBe(`look ${uuid2} done ~00`);
+      const parts = await reasoningParts("both");
+
+      expect(reasoningOf(parts)).toBe(`look ${uuid2} done ~00`);
+      // The tail rides on one delta. Both closers flushing would put it out twice, which the
+      // joined text cannot tell from one
+      expect(
+        parts.filter((p) => p.type === "reasoning-delta" && "delta" in p && p.delta.endsWith("~00"))
+      ).toHaveLength(1);
     });
 
     test("the flushed delta carries the block's own id", async () => {
-      const ids = (await reasoningParts("reasoning-end"))
+      // `finish` is the only closer that reaches flushAll: reasoning-end flushes and drops the
+      // decoder before finish runs, so under that label the ids come from the other branch
+      const ids = (await reasoningParts("finish"))
         .filter((p) => p.type === "reasoning-delta")
         .map((p) => ("id" in p ? p.id : ""));
 

@@ -216,7 +216,12 @@ interface EncodeContext {
  * Deep traverse and encode IDs in an object. Returns a rebuilt object where it walks, and the
  * value it was given where it does not.
  */
-function deepEncode<T>(value: T, ctx: EncodeContext, path: string[] = []): T {
+function deepEncode<T>(
+  value: T,
+  ctx: EncodeContext,
+  path: string[] = [],
+  open: Set<object> = new Set()
+): T {
   // Handle null/undefined
   if (value === null || value === undefined) {
     return value;
@@ -238,7 +243,15 @@ function deepEncode<T>(value: T, ctx: EncodeContext, path: string[] = []): T {
 
   // Handle arrays
   if (Array.isArray(value)) {
-    return value.map((item, index) => deepEncode(item, ctx, [...path, String(index)])) as T;
+    if (open.has(value)) {
+      throw new TypeError("Converting circular structure to JSON in a BAML argument.");
+    }
+    open.add(value);
+    try {
+      return value.map((item, index) => deepEncode(item, ctx, [...path, String(index)], open)) as T;
+    } finally {
+      open.delete(value);
+    }
   }
 
   // Handle objects
@@ -256,45 +269,107 @@ function deepEncode<T>(value: T, ctx: EncodeContext, path: string[] = []): T {
       return value;
     }
 
-    const result: Record<string, unknown> = Object.create(Object.getPrototypeOf(value));
-
-    for (const [key, val] of Object.entries(value)) {
-      // A key is only a candidate when the caller says the object is keyed by identifier. Nothing
-      // at runtime tells a map key from a class's own field name, and rewriting a field name calls
-      // the BAML function with an object its class does not describe.
-      const encodeThisKey = ctx.encodeKeys && ctx.fieldPaths === null;
-      const encodedKey = encodeThisKey ? encode(key, ctx.config, ctx.state).encoded : key;
-      // Two keys holding one identifier in different cases, or a key already shaped like the
-      // placeholder, would otherwise leave one entry standing for both
-      if (encodeThisKey && Object.prototype.hasOwnProperty.call(result, encodedKey)) {
-        throw new Error(
-          `Two keys encode to the same placeholder ${JSON.stringify(encodedKey)}, so one of them ` +
-            `would be lost. Give the object one key per identifier, or choose an output format ` +
-            `whose placeholders an ordinary key cannot spell.`
-        );
-      }
-      // Defining the property keeps a key of `__proto__`, which JSON.parse produces as an own
-      // key, off the prototype setter that would drop the field and reshape the object
-      Object.defineProperty(result, encodedKey, {
-        value: deepEncode(val, ctx, [...path, key]),
-        writable: true,
-        enumerable: true,
-        configurable: true,
-      });
+    // The walk reaches a self-reference before the stack does, and it is the only place that can
+    // say the cycle came in rather than out. The same value under two keys is not one, so it is
+    // dropped again on the way back up
+    if (open.has(value)) {
+      throw new TypeError("Converting circular structure to JSON in a BAML argument.");
     }
-
-    return result as T;
+    open.add(value);
+    try {
+      return encodeEntries(value, ctx, path, open) as T;
+    } finally {
+      open.delete(value);
+    }
   }
 
   // Primitives (numbers, booleans) - return as-is
   return value;
 }
 
+function encodeEntries(
+  value: object,
+  ctx: EncodeContext,
+  path: string[],
+  open: Set<object>
+): Record<string, unknown> {
+  const result: Record<string, unknown> = Object.create(Object.getPrototypeOf(value));
+
+  for (const [key, val] of Object.entries(value)) {
+    // A key is only a candidate when the caller says the object is keyed by identifier. Nothing
+    // at runtime tells a map key from a class's own field name, and rewriting a field name calls
+    // the BAML function with an object its class does not describe.
+    const encodeThisKey = ctx.encodeKeys && ctx.fieldPaths === null;
+    const encodedKey = encodeThisKey ? encode(key, ctx.config, ctx.state).encoded : key;
+    // Two keys holding one identifier in different cases, or a key already shaped like the
+    // placeholder, would otherwise leave one entry standing for both
+    if (encodeThisKey && Object.prototype.hasOwnProperty.call(result, encodedKey)) {
+      throw new Error(
+        `Two keys encode to the same placeholder ${JSON.stringify(encodedKey)}, so one of them ` +
+          `would be lost. Give the object one key per identifier, or choose an output format ` +
+          `whose placeholders an ordinary key cannot spell.`
+      );
+    }
+    // Defining the property keeps a key of `__proto__`, which JSON.parse produces as an own
+    // key, off the prototype setter that would drop the field and reshape the object
+    Object.defineProperty(result, encodedKey, {
+      value: deepEncode(val, ctx, [...path, key], open),
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+  }
+
+  return result;
+}
+
+/**
+ * Decode the text a failed generation carries. The client raises an error holding the prompt it
+ * sent and the raw output it could not parse, so both are this call's placeholders, and the
+ * message quotes them. The strings are written back onto the error itself rather than onto a
+ * rebuilt one, so a consumer testing the class, the prototype or `instanceof` still finds them.
+ */
+function decodeThrown(error: unknown, mapping: Record<string, string>): unknown {
+  if (typeof error === "string") {
+    return decode(error, mapping);
+  }
+  if (typeof error !== "object" || error === null) {
+    return error;
+  }
+
+  // `message` and `stack` are own but not enumerable, and `stack` repeats the message, so a
+  // consumer logging the error whole reads the placeholders back out of it
+  const fields = new Set(Object.keys(error));
+  if (error instanceof Error) {
+    fields.add("message");
+    fields.add("stack");
+  }
+
+  for (const field of fields) {
+    const value = (error as Record<string, unknown>)[field];
+    if (typeof value !== "string") continue;
+    const decoded = decode(value, mapping);
+    if (decoded === value) continue;
+    try {
+      (error as Record<string, unknown>)[field] = decoded;
+    } catch {
+      // A frozen error, or one holding this field behind a getter, keeps the text it has. The
+      // write would throw a TypeError in its place and lose the failure the consumer waits for
+    }
+  }
+  return error;
+}
+
 /**
  * Deep traverse and decode placeholders in an object. Returns a rebuilt object where it walks,
  * and the value it was given where it does not.
  */
-function deepDecode<T>(value: T, mapping: Record<string, string>, countRef: { count: number }): T {
+function deepDecode<T>(
+  value: T,
+  mapping: Record<string, string>,
+  countRef: { count: number },
+  open: Set<object> = new Set()
+): T {
   // Handle null/undefined
   if (value === null || value === undefined) {
     return value;
@@ -312,7 +387,15 @@ function deepDecode<T>(value: T, mapping: Record<string, string>, countRef: { co
 
   // Handle arrays
   if (Array.isArray(value)) {
-    return value.map((item) => deepDecode(item, mapping, countRef)) as T;
+    if (open.has(value)) {
+      throw new TypeError("Converting circular structure to JSON in a BAML answer.");
+    }
+    open.add(value);
+    try {
+      return value.map((item) => deepDecode(item, mapping, countRef, open)) as T;
+    } finally {
+      open.delete(value);
+    }
   }
 
   // Handle objects
@@ -327,37 +410,56 @@ function deepDecode<T>(value: T, mapping: Record<string, string>, countRef: { co
       return value;
     }
 
-    const result: Record<string, unknown> = Object.create(Object.getPrototypeOf(value));
-
-    for (const [key, val] of Object.entries(value)) {
-      // A model asked to group its answer puts an identifier in the key position, so a key
-      // carries a placeholder as readily as a string does
-      const decodedKey = decode(key, mapping);
-      if (decodedKey !== key) {
-        countRef.count++;
-      }
-      // Defining the property keeps a decoded key of `__proto__` off the prototype
-      // The encode half refuses two keys that land on one placeholder, and a model asked to group
-      // its answer can hand back the identifier in one key and its placeholder in another
-      if (Object.prototype.hasOwnProperty.call(result, decodedKey)) {
-        throw new Error(
-          `Two keys decode to the same identifier ${JSON.stringify(decodedKey)}, so one of them ` +
-            `would be lost.`
-        );
-      }
-      Object.defineProperty(result, decodedKey, {
-        value: deepDecode(val, mapping, countRef),
-        writable: true,
-        enumerable: true,
-        configurable: true,
-      });
+    // The same door the encode half has. A function that hands back a value pointing at itself
+    // is named here rather than left to run the stack out
+    if (open.has(value)) {
+      throw new TypeError("Converting circular structure to JSON in a BAML answer.");
     }
-
-    return result as T;
+    open.add(value);
+    try {
+      return decodeEntries(value, mapping, countRef, open) as T;
+    } finally {
+      open.delete(value);
+    }
   }
 
   // Primitives - return as-is
   return value;
+}
+
+function decodeEntries(
+  value: object,
+  mapping: Record<string, string>,
+  countRef: { count: number },
+  open: Set<object>
+): Record<string, unknown> {
+  const result: Record<string, unknown> = Object.create(Object.getPrototypeOf(value));
+
+  for (const [key, val] of Object.entries(value)) {
+    // A model asked to group its answer puts an identifier in the key position, so a key
+    // carries a placeholder as readily as a string does
+    const decodedKey = decode(key, mapping);
+    if (decodedKey !== key) {
+      countRef.count++;
+    }
+    // The encode half refuses two keys that land on one placeholder, and a model asked to group
+    // its answer can hand back the identifier in one key and its placeholder in another
+    if (Object.prototype.hasOwnProperty.call(result, decodedKey)) {
+      throw new Error(
+        `Two keys decode to the same identifier ${JSON.stringify(decodedKey)}, so one of them ` +
+          `would be lost.`
+      );
+    }
+    // Defining the property keeps a decoded key of `__proto__` off the prototype
+    Object.defineProperty(result, decodedKey, {
+      value: deepDecode(val, mapping, countRef, open),
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+  }
+
+  return result;
 }
 
 // =============================================================================
@@ -420,7 +522,12 @@ export function wrapBamlFunction<TInput, TOutput>(
     });
 
     // Call the original function
-    const output = await fn(encodedInput);
+    let output: TOutput;
+    try {
+      output = await fn(encodedInput);
+    } catch (error) {
+      throw decodeThrown(error, ctx.state.mapping);
+    }
 
     // Decode output
     const countRef = { count: 0 };
@@ -569,6 +676,7 @@ export function wrapBamlStreamingFunction<TInput, TPartial, TFinal>(
       const bamlSource = source;
       // The real stream memoises the task it drives, so asking it twice is one run. Decoding
       // twice would count the same placeholders twice, so the wrapper memoises its side as well
+      let openLoops = 0;
       let decodedFinal: Promise<TFinal> | undefined;
       function finalOnce() {
         decodedFinal ??= (async () => {
@@ -585,6 +693,7 @@ export function wrapBamlStreamingFunction<TInput, TPartial, TFinal>(
           let lastPartial: TPartial | undefined;
           let lastDecoded: TPartial | undefined;
 
+          openLoops++;
           try {
             for await (const partial of bamlSource) {
               lastPartial = partial;
@@ -596,7 +705,9 @@ export function wrapBamlStreamingFunction<TInput, TPartial, TFinal>(
             // iterator, so a consumer holding decoded partials is told what it got before the
             // error reaches it. A consumer that breaks does not come through here
             reportFinal(lastPartial, lastDecoded);
-            throw error;
+            throw decodeThrown(error, ctx.state.mapping);
+          } finally {
+            openLoops--;
           }
 
           // A consumer that only iterates never asks for the final, so the loop asks once on its
@@ -604,7 +715,14 @@ export function wrapBamlStreamingFunction<TInput, TPartial, TFinal>(
           // the catch reports the last partial it read
           await finalOnce().catch(() => reportFinal(lastPartial, lastDecoded));
         },
-        getFinalResponse: finalOnce,
+        getFinalResponse: () =>
+          // The consumption ended, and it ended in an error. A consumer can hold this promise
+          // while it reads the partials, and then the loop's catch has the partials to report
+          // and this one has nothing, so the reader that is still reading answers for it
+          finalOnce().catch((error) => {
+            if (openLoops === 0) reportFinal(undefined, undefined);
+            throw decodeThrown(error, ctx.state.mapping);
+          }),
         toStreamable(): ReadableStream<Uint8Array> {
           // Forwarding the source's own would serialise the partials and the final as the model
           // wrote them, placeholders and all, because it drives the stream it was defined on
@@ -617,10 +735,8 @@ export function wrapBamlStreamingFunction<TInput, TPartial, TFinal>(
                 for await (const partial of stream) controller.enqueue(line({ partial }));
                 controller.enqueue(line({ final: await stream.getFinalResponse() }));
               } catch (error) {
-                // The last line the reader gets, the way the client writes it, except that the
-                // message travels: a BamlError carries its text where JSON.stringify cannot see it.
-                // A BAML error also names the prompt and the output it could not coerce, and both
-                // are the model's own words, so the frame is decoded like every other line
+                // JSON.stringify cannot see an Error's message, so it is copied across, and the
+                // prompt and raw output carry this call's placeholders, so the frame is decoded
                 controller.enqueue(
                   line({
                     error: decodePart({
@@ -670,7 +786,7 @@ export function wrapBamlStreamingFunction<TInput, TPartial, TFinal>(
         // The same door as the stream branch: a generation that dies part way through still
         // decoded everything the consumer already read
         reportFinal(lastPartial, lastDecoded);
-        throw error;
+        throw decodeThrown(error, ctx.state.mapping);
       } finally {
         await generator.return?.(undefined as TFinal);
       }
@@ -689,7 +805,10 @@ function isBamlStream<TPartial, TFinal>(
  *
  * `encodeKeys` encodes identifiers sitting in object keys, for an object keyed by identifier. It
  * is off by default because nothing at runtime tells such a key from a class's own field name, and
- * it is ignored when `encodeFields` is given, because a field path names a value.
+ * it is ignored when `encodeFields` is given, because a field path names a value. A non-delimited
+ * format spells its placeholders the way a caller spells an ordinary key, so `Numeric` and
+ * `IdToken` refuse an object holding both an identifier and a key written `"000"` or `"0"`, and
+ * `IdToken` moves the key it encodes to the front because an integer-like key is ordered first.
  *
  * @example
  * ```typescript

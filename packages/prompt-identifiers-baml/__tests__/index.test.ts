@@ -206,22 +206,24 @@ describe("prompt-identifiers-baml", () => {
 
   describe("encodeFields option", () => {
     test("only encodes specified top-level fields", async () => {
-      const mockFn = vi.fn(async (input: { user_id: string; code: string }) => ({
+      const mockFn = vi.fn(async (input: { user_id: string; owner_id: string; code: string }) => ({
         result: `${input.user_id} - ${input.code}`,
       }));
 
       const wrapped = wrapBamlFunction(mockFn, {
         config: defaultConfig,
-        encodeFields: ["user_id"], // Only encode user_id, not code
+        // Two paths are a union, not an intersection: no value sits at both
+        encodeFields: ["user_id", "owner_id"],
       });
 
       // code looks like a UUID but shouldn't be encoded
       const codeUuid = "11111111-1111-4111-8111-111111111111";
 
-      await wrapped({ user_id: uuid1, code: codeUuid });
+      await wrapped({ user_id: uuid1, owner_id: uuid2, code: codeUuid });
 
       expect(mockFn).toHaveBeenCalledWith({
         user_id: "~000~",
+        owner_id: "~001~",
         code: codeUuid, // Not encoded
       });
     });
@@ -679,8 +681,9 @@ describe("prompt-identifiers-baml", () => {
     });
 
     test("a value with slots and a field keeps both", async () => {
-      // Own keys and internal slots are not exclusive. Rebuilding one of these carries the field
-      // across and leaves the slots behind, so the copy has the prototype and none of the state
+      // Own keys and internal slots are not exclusive, and an Error carries both. Its tag is not
+      // "[object Object]", so it is handed on as it is rather than rebuilt from its keys, which
+      // would have carried the field across and left the slots behind
       const failure = Object.assign(new Error("boom"), { code: "E1" });
       const mockFn = vi.fn(async (_input: { failure: Error }) => ({ ok: true }));
 
@@ -748,6 +751,45 @@ describe("prompt-identifiers-baml", () => {
   });
 
   describe("An identifier in an object key", () => {
+    test.each([
+      [
+        "wrapBamlFunction",
+        async (input: { byId: Record<string, string> }) => {
+          const wrapped = wrapBamlFunction(async (i: typeof input) => i, {
+            config: defaultConfig,
+          });
+          return wrapped(input);
+        },
+      ],
+      [
+        "wrapBamlStreamingFunction",
+        async (input: { byId: Record<string, string> }) => {
+          const wrapped = wrapBamlStreamingFunction(
+            // eslint-disable-next-line require-yield
+            async function* (i: typeof input) {
+              return i;
+            },
+            { config: defaultConfig }
+          );
+          const iterator = wrapped(input);
+          let step = await iterator.next();
+          while (!step.done) step = await iterator.next();
+          return step.value;
+        },
+      ],
+      [
+        "encodeObject",
+        async (input: { byId: Record<string, string> }) =>
+          encodeObject(input, defaultConfig).encoded,
+      ],
+    ])("%s leaves a key alone unless the caller asks", async (_label, run) => {
+      // A rewritten field name calls the BAML function with an object its class does not
+      // describe, so nothing at runtime can tell a map key from a class's own field
+      const sent = await run({ byId: { [uuid1]: "active" } });
+
+      expect(Object.keys((sent as { byId: Record<string, string> }).byId)).toEqual([uuid1]);
+    });
+
     test("a map keyed by identifier is encoded when the caller asks", async () => {
       const mockFn = vi.fn(async (input: { byId: Record<string, string> }) => ({
         seen: Object.keys(input.byId).join(" "),
@@ -853,9 +895,15 @@ describe("prompt-identifiers-baml", () => {
     test("two keys that decode to one identifier are refused", async () => {
       // The encode half refuses the mirror of this, and a model asked to group its answer can put
       // the identifier in one key and the placeholder it was handed in another
-      expect(() =>
-        decodeObject<Record<string, unknown>>({ "~000~": "a", [uuid1]: "b" }, { "~000~": uuid1 })
-      ).toThrow(/same identifier/i);
+      // Both orders, because a guard on the raw key still refuses one of them
+      for (const byId of [
+        { "~000~": "a", [uuid1]: "b" },
+        { [uuid1]: "b", "~000~": "a" },
+      ]) {
+        expect(() => decodeObject<Record<string, unknown>>(byId, { "~000~": uuid1 })).toThrow(
+          /same identifier/i
+        );
+      }
     });
 
     test("a decoded key counts towards the debug total", async () => {
@@ -1108,12 +1156,74 @@ describe("prompt-identifiers-baml", () => {
       expect(onDecode.mock.calls[0][0].debugData.decodedCount).toBe(1);
     });
 
-    test("a consumer that breaks out early is not reported to", async () => {
-      // Breaking returns the iterator rather than throwing through it, so it does not reach the
-      // catch that reports a failed generation
+    test("a consumer holding the final's promise while it iterates is told what it read", async () => {
+      // Asking for the final before the loop is an ordinary shape, and the rejection lands while
+      // the partials are still being read: the report belongs to the consumer that read them
       const onDecode = vi.fn();
       const wrapped = wrapBamlStreamingFunction(
+        () => ({
+          async *[Symbol.asyncIterator]() {
+            yield { text: "~000~ first" };
+            await new Promise((resolve) => setTimeout(resolve, 10));
+            yield { text: "~000~ second" };
+          },
+          async getFinalResponse(): Promise<{ text: string }> {
+            throw new Error("the model stopped");
+          },
+        }),
+        { config: defaultConfig, debug: true, onDecode }
+      );
+
+      const stream = wrapped({ id: uuid1 });
+      const final = stream.getFinalResponse();
+      // Held across the loop, so the rejection needs a handler before the loop awaits anything
+      final.catch(() => {});
+      for await (const _partial of stream) void _partial;
+      await expect(final).rejects.toThrow("the model stopped");
+
+      expect(onDecode).toHaveBeenCalledTimes(1);
+      expect(onDecode.mock.calls[0][0].debugData.decodedCount).toBe(2);
+    });
+
+    test("a final that rejects for a consumer that never iterated still reports", async () => {
+      // The other door of the same case: the consumption ended, and it ended in an error
+      const onDecode = vi.fn();
+      const wrapped = wrapBamlStreamingFunction(
+        () => ({
+          async *[Symbol.asyncIterator]() {
+            yield { text: "~000~ first" };
+          },
+          async getFinalResponse(): Promise<{ text: string }> {
+            throw new Error("the model stopped");
+          },
+        }),
+        { config: defaultConfig, debug: true, onDecode }
+      );
+
+      await expect(wrapped({ id: uuid1 }).getFinalResponse()).rejects.toThrow("the model stopped");
+
+      expect(onDecode).toHaveBeenCalledTimes(1);
+    });
+
+    test.each([
+      [
+        "a stream",
         () => bamlStream([{ text: "~000~ first" }, { text: "~000~ second" }], { text: "done" }),
+      ],
+      [
+        "a generator",
+        async function* (): AsyncGenerator<{ text: string }, { text: string }, unknown> {
+          yield { text: "~000~ first" };
+          yield { text: "~000~ second" };
+          return { text: "done" };
+        },
+      ],
+    ])("a consumer that breaks out of %s early is not reported to", async (_label, fn) => {
+      // Breaking returns the iterator rather than throwing through it, so it reaches neither the
+      // catch that reports a failed generation nor the end of the loop
+      const onDecode = vi.fn();
+      const wrapped = wrapBamlStreamingFunction(
+        fn as BamlStreamFunction<{ id: string }, { text: string }, { text: string }>,
         { config: defaultConfig, debug: true, onDecode }
       );
 
@@ -1140,6 +1250,7 @@ describe("prompt-identifiers-baml", () => {
       for await (const _partial of wrapped({ id: uuid1 })) void _partial;
 
       expect(onDecode.mock.calls[0][0].debugData.durationMs).toBeLessThan(100);
+      expect(onDecode.mock.calls[0][0].debugData.durationMs).toBeGreaterThan(0);
     });
 
     test("an error frame carries what the error itself carries", async () => {
@@ -1286,6 +1397,480 @@ describe("prompt-identifiers-baml", () => {
       ).rejects.toThrow("the consumer gave up");
 
       expect(closed).toBe(true);
+    });
+
+    test("a consumer holding the final and then breaking is still reported to", async () => {
+      // Breaking stops one consumption. The promise the consumer is holding is another, and it
+      // finishes on its own
+      const onDecode = vi.fn();
+      const source = {
+        async *[Symbol.asyncIterator]() {
+          yield { text: "~000~ first" };
+          yield { text: "~000~ second" };
+        },
+        async getFinalResponse() {
+          return { text: "~000~ done" };
+        },
+      };
+
+      const wrapped = wrapBamlStreamingFunction(() => source, {
+        config: defaultConfig,
+        onDecode,
+      });
+      const stream = wrapped({ id: uuid1 });
+      const final = stream.getFinalResponse();
+
+      for await (const _partial of stream) break;
+      await final;
+
+      expect(onDecode).toHaveBeenCalledTimes(1);
+    });
+
+    test("a consumer that breaks and then meets a rejecting final is still reported to", async () => {
+      // Breaking returns the wrapper's generator and puts the loop count back, so the consumer
+      // that asks afterwards is the only one left to answer for the error
+      const onDecode = vi.fn();
+      const source = {
+        async *[Symbol.asyncIterator]() {
+          yield { text: "~000~ first" };
+          yield { text: "~000~ second" };
+        },
+        async getFinalResponse(): Promise<{ text: string }> {
+          throw new Error("the generation failed");
+        },
+      };
+
+      const wrapped = wrapBamlStreamingFunction(() => source, {
+        config: defaultConfig,
+        onDecode,
+      });
+      const stream = wrapped({ id: uuid1 });
+
+      for await (const _partial of stream) break;
+      await expect(stream.getFinalResponse()).rejects.toThrow("the generation failed");
+
+      expect(onDecode).toHaveBeenCalledTimes(1);
+    });
+
+    // The stream branch closes its source by a different mechanism: the generator branch calls
+    // `return` on it in a finally, and this one leaves the for-await to close it when the
+    // wrapper's own generator is returned
+    test("a stream source is closed too", async () => {
+      let closed = false;
+      let finalAsked = false;
+      const source = {
+        async *[Symbol.asyncIterator]() {
+          try {
+            yield { text: "~000~ first" };
+            yield { text: "~000~ second" };
+          } finally {
+            closed = true;
+          }
+        },
+        async getFinalResponse() {
+          finalAsked = true;
+          return { text: "~000~ done" };
+        },
+      };
+
+      const wrapped = wrapBamlStreamingFunction(() => source, { config: defaultConfig });
+
+      for await (const partial of wrapped({ id: uuid1 })) {
+        expect(partial.text).toBe(`${uuid1} first`);
+        break;
+      }
+
+      expect(closed).toBe(true);
+      expect(finalAsked).toBe(false);
+    });
+
+    test("a consumer throwing inside the loop closes a stream source", async () => {
+      let closed = false;
+      const source = {
+        async *[Symbol.asyncIterator]() {
+          try {
+            yield { text: "~000~ first" };
+          } finally {
+            closed = true;
+          }
+        },
+        async getFinalResponse() {
+          return { text: "~000~ done" };
+        },
+      };
+
+      const wrapped = wrapBamlStreamingFunction(() => source, { config: defaultConfig });
+
+      await expect(
+        (async () => {
+          for await (const _partial of wrapped({ id: uuid1 })) {
+            throw new Error("the consumer gave up");
+          }
+        })()
+      ).rejects.toThrow("the consumer gave up");
+
+      expect(closed).toBe(true);
+    });
+  });
+  describe("A generation that fails with an error carrying the model's text", () => {
+    // The shape the BAML client raises: `prompt` is the text the model was sent and `raw_output`
+    // is the text it wrote back, both own and enumerable, so both hold this call's placeholders
+    class ValidationError extends Error {
+      prompt: string;
+      raw_output: string;
+
+      constructor(prompt: string, rawOutput: string, message: string) {
+        super(message);
+        this.name = "ValidationError";
+        this.prompt = prompt;
+        this.raw_output = rawOutput;
+      }
+    }
+
+    function failing() {
+      return new ValidationError(
+        "Summarise ~000~",
+        '{"owner": "~000~"}',
+        "could not parse ~000~ out of the response"
+      );
+    }
+
+    function expectDecoded(error: unknown) {
+      expect(error).toBeInstanceOf(ValidationError);
+      const validation = error as ValidationError;
+      expect(validation.prompt).toBe(`Summarise ${uuid1}`);
+      expect(validation.raw_output).toBe(`{"owner": "${uuid1}"}`);
+      expect(validation.message).toBe(`could not parse ${uuid1} out of the response`);
+    }
+
+    test("a rejecting call hands back the identifiers it was given", async () => {
+      const wrapped = wrapBamlFunction(
+        async () => {
+          throw failing();
+        },
+        { config: defaultConfig }
+      );
+
+      await expect(wrapped({ id: uuid1 })).rejects.toSatisfy((error: unknown) => {
+        expectDecoded(error);
+        return true;
+      });
+    });
+
+    test("a stream that dies mid-iteration hands back the identifiers it was given", async () => {
+      const source = {
+        async *[Symbol.asyncIterator]() {
+          yield { text: "~000~ so far" };
+          throw failing();
+        },
+        async getFinalResponse() {
+          throw failing();
+        },
+      };
+
+      const wrapped = wrapBamlStreamingFunction(() => source, { config: defaultConfig });
+
+      let caught: unknown;
+      try {
+        for await (const _partial of wrapped({ id: uuid1 })) {
+          // read
+        }
+      } catch (error) {
+        caught = error;
+      }
+
+      expectDecoded(caught);
+    });
+
+    test("a rejecting final hands back the identifiers it was given", async () => {
+      const source = {
+        async *[Symbol.asyncIterator]() {
+          yield { text: "~000~ so far" };
+        },
+        async getFinalResponse() {
+          throw failing();
+        },
+      };
+
+      const wrapped = wrapBamlStreamingFunction(() => source, { config: defaultConfig });
+
+      await expect(wrapped({ id: uuid1 }).getFinalResponse()).rejects.toSatisfy(
+        (error: unknown) => {
+          expectDecoded(error);
+          return true;
+        }
+      );
+    });
+
+    test("a generator that dies mid-iteration hands back the identifiers it was given", async () => {
+      async function* source() {
+        yield { text: "~000~ so far" };
+        throw failing();
+      }
+
+      const wrapped = wrapBamlStreamingFunction(() => source(), { config: defaultConfig });
+
+      let caught: unknown;
+      try {
+        for await (const _partial of wrapped({ id: uuid1 })) {
+          // read
+        }
+      } catch (error) {
+        caught = error;
+      }
+
+      expectDecoded(caught);
+    });
+
+    test("a thrown string is decoded too", async () => {
+      const wrapped = wrapBamlFunction(
+        async () => {
+          throw "the model refused ~000~";
+        },
+        { config: defaultConfig }
+      );
+
+      await expect(wrapped({ id: uuid1 })).rejects.toBe(`the model refused ${uuid1}`);
+    });
+
+    test("the NDJSON frame decodes an error that could not be written to", async () => {
+      // A frozen error keeps its placeholders, so the frame the reader gets is the only place
+      // left that can put the identifiers back for them
+      const source = {
+        async *[Symbol.asyncIterator]() {
+          yield { text: "~000~ so far" };
+          throw Object.freeze(failing());
+        },
+        async getFinalResponse(): Promise<{ text: string }> {
+          throw Object.freeze(failing());
+        },
+      };
+
+      const wrapped = wrapBamlStreamingFunction(() => source, { config: defaultConfig });
+      const body = await new Response(wrapped({ id: uuid1 }).toStreamable()).text();
+      const frame = body
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line))
+        .find((message) => message.error);
+
+      expect(frame.error.raw_output).toBe(`{"owner": "${uuid1}"}`);
+      expect(frame.error.prompt).toBe(`Summarise ${uuid1}`);
+    });
+
+    test("a field that is not a string is left alone", async () => {
+      // decode() takes text. Handing it a number would throw in place of the failure the
+      // consumer is waiting for
+      class WithNumbers extends Error {
+        status = 500;
+        retries = 0;
+        raw_output = '{"owner": "~000~"}';
+      }
+
+      const wrapped = wrapBamlFunction(
+        async () => {
+          throw new WithNumbers("failed on ~000~");
+        },
+        { config: defaultConfig }
+      );
+
+      await expect(wrapped({ id: uuid1 })).rejects.toSatisfy((error: unknown) => {
+        const withNumbers = error as WithNumbers;
+        expect(withNumbers.status).toBe(500);
+        expect(withNumbers.retries).toBe(0);
+        expect(withNumbers.raw_output).toBe(`{"owner": "${uuid1}"}`);
+        return true;
+      });
+    });
+
+    test("a rejection that is not an object is handed on as it is", async () => {
+      // Object.keys on null throws, and a rejected promise carrying nothing is an ordinary way
+      // for a generation to end
+      const wrapped = wrapBamlFunction(
+        async () => {
+          throw null;
+        },
+        { config: defaultConfig }
+      );
+
+      await expect(wrapped({ id: uuid1 })).rejects.toBe(null);
+
+      const numeric = wrapBamlFunction(
+        async () => {
+          throw 404;
+        },
+        { config: defaultConfig }
+      );
+
+      await expect(numeric({ id: uuid1 })).rejects.toBe(404);
+    });
+
+    test("the stack a consumer logs carries the identifiers too", async () => {
+      // V8 builds the stack lazily off the message, so reading it before the decode would hand
+      // back a string that never had a placeholder in it. Materialising it first is the test
+      const wrapped = wrapBamlFunction(
+        async () => {
+          const error = failing();
+          void error.stack;
+          throw error;
+        },
+        { config: defaultConfig }
+      );
+
+      await expect(wrapped({ id: uuid1 })).rejects.toSatisfy((error: unknown) => {
+        expect((error as Error).stack).toContain(uuid1);
+        expect((error as Error).stack).not.toContain("~000~");
+        return true;
+      });
+    });
+
+    test("an error that refuses to be written keeps its own text", async () => {
+      const wrapped = wrapBamlFunction(
+        async () => {
+          throw Object.freeze(failing());
+        },
+        { config: defaultConfig }
+      );
+
+      await expect(wrapped({ id: uuid1 })).rejects.toSatisfy((error: unknown) => {
+        expect(error).toBeInstanceOf(ValidationError);
+        expect((error as ValidationError).raw_output).toBe('{"owner": "~000~"}');
+        return true;
+      });
+    });
+  });
+  describe("A value that refers back to itself", () => {
+    test("encoding names the cycle rather than running out of stack", () => {
+      const input: Record<string, unknown> = { id: uuid1 };
+      input.self = input;
+
+      expect(() => encodeObject(input, defaultConfig)).toThrow(
+        /circular structure.*BAML argument/i
+      );
+    });
+
+    test("encoding names a cycle two hops away", () => {
+      const parent: Record<string, unknown> = { id: uuid1 };
+      const child: Record<string, unknown> = { parent };
+      parent.child = child;
+
+      expect(() => encodeObject(parent, defaultConfig)).toThrow(/circular structure/i);
+    });
+
+    test("decoding names the cycle rather than running out of stack", () => {
+      const output: Record<string, unknown> = { id: "~000~" };
+      output.self = output;
+
+      expect(() => decodeObject(output, { "~000~": uuid1 })).toThrow(
+        /circular structure.*BAML answer/i
+      );
+    });
+
+    test("a wrapped call names the cycle it was handed", async () => {
+      const input: Record<string, unknown> = { id: uuid1 };
+      input.self = input;
+      const wrapped = wrapBamlFunction(async () => ({ ok: true }), { config: defaultConfig });
+
+      await expect(wrapped(input)).rejects.toThrow(/circular structure/i);
+    });
+
+    test("encoding names a cycle that closes through an array", () => {
+      // The array branch runs before the object branch, so an array on the way round the loop is
+      // the half of this that a guard sitting under the object branch never sees
+      const list: unknown[] = [{ id: uuid1 }];
+      list.push(list);
+
+      expect(() => encodeObject({ list }, defaultConfig)).toThrow(/circular structure/i);
+    });
+
+    test("encoding names an array that holds itself", () => {
+      const list: unknown[] = [];
+      list[0] = list;
+
+      expect(() => encodeObject({ list }, defaultConfig)).toThrow(/circular structure/i);
+    });
+
+    test("decoding names a cycle that closes through an array", () => {
+      const list: unknown[] = [{ id: "~000~" }];
+      list.push(list);
+
+      expect(() => decodeObject({ list }, { "~000~": uuid1 })).toThrow(/circular structure/i);
+    });
+
+    test("the same array under two keys is not a cycle", () => {
+      const shared = [{ id: uuid1 }];
+
+      expect(encodeObject({ x: shared, y: shared }, defaultConfig).encoded).toEqual({
+        x: [{ id: "~000~" }],
+        y: [{ id: "~000~" }],
+      });
+    });
+
+    test("the same object under two keys is not a cycle", () => {
+      const shared = { id: uuid1 };
+
+      const { encoded, mapping } = encodeObject({ x: shared, y: shared }, defaultConfig);
+
+      expect(encoded).toEqual({ x: { id: "~000~" }, y: { id: "~000~" } });
+      expect(mapping).toEqual({ "~000~": uuid1 });
+    });
+
+    test("the same object under two keys survives the decode too", () => {
+      const shared = { id: "~000~" };
+
+      expect(decodeObject({ x: shared, y: shared }, { "~000~": uuid1 })).toEqual({
+        x: { id: uuid1 },
+        y: { id: uuid1 },
+      });
+    });
+  });
+  describe("What a non-delimited format costs a key", () => {
+    const withUuids = { alpha: 1, [uuid1]: 2, beta: 3, [uuid2]: 4 };
+
+    test("an ordinary key spelled like a placeholder is refused", () => {
+      expect(() =>
+        encodeObject(
+          { "0": "written by the caller", [uuid1]: "an identifier" },
+          { inputFormat: "UUID", outputFormat: "IdToken" },
+          undefined,
+          true
+        )
+      ).toThrow(/Two keys encode to the same placeholder/);
+
+      expect(() =>
+        encodeObject(
+          { "000": "written by the caller", [uuid1]: "an identifier" },
+          { inputFormat: "UUID", outputFormat: "Numeric" },
+          undefined,
+          true
+        )
+      ).toThrow(/Two keys encode to the same placeholder/);
+    });
+
+    test("a delimited format needs the key written as a placeholder before it collides", () => {
+      expect(() =>
+        encodeObject(
+          { "000": "written by the caller", [uuid1]: "an identifier" },
+          defaultConfig,
+          undefined,
+          true
+        )
+      ).not.toThrow();
+    });
+
+    test("IdToken moves the key it encodes to the front, a delimited format does not", () => {
+      // An IdToken placeholder for a low index is a canonical integer string, and an object orders
+      // its integer-like keys first whatever order they were written in
+      const idToken = encodeObject(
+        withUuids,
+        { inputFormat: "UUID", outputFormat: "IdToken" },
+        undefined,
+        true
+      );
+      expect(Object.keys(idToken.encoded)).toEqual(["0", "1", "alpha", "beta"]);
+
+      const safe = encodeObject(withUuids, defaultConfig, undefined, true);
+      expect(Object.keys(safe.encoded)).toEqual(["alpha", "~000~", "beta", "~001~"]);
     });
   });
 });
