@@ -196,11 +196,15 @@ type RequiredMiddleware = Required<
 
 /**
  * Creates middleware and asserts all hooks are defined.
- * Throws at runtime if any hook is missing.
+ * Throws at runtime if any hook is missing. The instruction defaults to none, so a test that
+ * cares about encoding says nothing about the system message.
  */
-export function createMiddleware(options: PromptIdentifiersMiddlewareOptions): RequiredMiddleware {
+export function createMiddleware(
+  options: Omit<PromptIdentifiersMiddlewareOptions, "instruction"> &
+    Partial<Pick<PromptIdentifiersMiddlewareOptions, "instruction">>
+): RequiredMiddleware {
   const middleware = promptIdentifiersMiddleware({
-    injectInstruction: false,
+    instruction: false,
     ...options,
   });
   if (!middleware.transformParams || !middleware.wrapGenerate || !middleware.wrapStream) {

@@ -523,7 +523,7 @@ describe("Streaming decoder: wrapLanguageModel integration", () => {
     });
 
     const { wrapLanguageModel } = await import("ai");
-    const middleware = promptIdentifiersMiddleware({ config });
+    const middleware = promptIdentifiersMiddleware({ config, instruction: false });
     const wrappedModel = wrapLanguageModel({ model, middleware });
 
     const { stream } = await wrappedModel.doStream({
@@ -560,7 +560,7 @@ describe("Streaming decoder: wrapLanguageModel integration", () => {
     });
 
     const { wrapLanguageModel } = await import("ai");
-    const middleware = promptIdentifiersMiddleware({ config });
+    const middleware = promptIdentifiersMiddleware({ config, instruction: false });
     const wrappedModel = wrapLanguageModel({ model, middleware });
 
     const { stream } = await wrappedModel.doStream({

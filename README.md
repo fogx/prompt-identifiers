@@ -174,6 +174,7 @@ const model = wrapLanguageModel({
   model: openai("gpt-4o"),
   middleware: promptIdentifiersMiddleware({
     config: { inputFormat: "UUID", outputFormat: "SafeNumeric" },
+    instruction: "IDs use {format} notation. Preserve them exactly.",
   }),
 });
 
@@ -186,28 +187,21 @@ const result = await generateText({
 
 ### Prompt Injection
 
-By default, the middleware appends a short instruction to the system message telling the model to preserve encoded identifiers:
+Pass an `instruction` and the middleware appends it to the system message, telling the model to preserve encoded identifiers. This prevents LLMs from stripping delimiter characters (e.g., outputting `000` instead of `~000~` in tool call arguments).
 
-> "All UUIDs have been replaced with short identifiers in the format `~000~`. Always pass these identifiers exactly as-is."
-
-This prevents LLMs from stripping delimiter characters (e.g., outputting `000` instead of `~000~` in tool call arguments). The instruction is only injected when at least one ID was encoded.
+The text is yours: the package ships no instruction of its own. `{format}` becomes an example token in the active output format, such as `~000~`. It goes in on every call, including calls whose prompt carries no ID, so the system message reads the same throughout a conversation and a provider's prompt cache keeps matching it.
 
 ```typescript
-// Default: instruction is injected (recommended)
+// Instruction appended to the system message on every call
 promptIdentifiersMiddleware({
   config: { inputFormat: "UUID", outputFormat: "SafeNumeric" },
+  instruction: "IDs use {format} notation. Preserve them exactly.",
 });
 
-// Custom instruction ({format} is replaced with the example token)
+// false sends none, leaving the system message alone
 promptIdentifiersMiddleware({
   config: { inputFormat: "UUID", outputFormat: "SafeNumeric" },
-  customInstruction: "IDs use {format} notation. Preserve them exactly.",
-});
-
-// Disable injection
-promptIdentifiersMiddleware({
-  config: { inputFormat: "UUID", outputFormat: "SafeNumeric" },
-  injectInstruction: false,
+  instruction: false,
 });
 ```
 
@@ -309,6 +303,7 @@ When something goes wrong, start by enabling `debug: true` and inspecting the `o
 ```typescript
 promptIdentifiersMiddleware({
   config: { inputFormat: "UUID", outputFormat: "SafeNumeric" },
+  instruction: false,
   debug: true,
   onEncode: ({ mapping, debugData }) => {
     console.log("Mapping:", mapping); // { "~000~": "123e4567-..." }
@@ -327,7 +322,7 @@ promptIdentifiersMiddleware({
 
 **Cause:** Some LLMs treat delimiter characters (like `~`) as decorative formatting and strip them when generating structured JSON for tool calls.
 
-**Fix:** Enable `injectInstruction` (on by default) to append a format-preservation instruction to the system message. This tells the model to preserve encoded identifiers exactly as-is.
+**Fix:** Pass an `instruction`, which the middleware appends to the system message on every call. This tells the model to preserve encoded identifiers exactly as-is.
 
 #### LLM outputs fabricated/hallucinated IDs
 
@@ -452,7 +447,7 @@ const restored = decode("User ~000~ was granted access", mapping);
 
 #### `findPlaceholders(text: string, format: OutputFormat): string[]`
 
-Return the distinct tokens in a text that the output format could have produced, in order of first appearance. Any that are not keys of the mapping are candidates the model invented. A doubled delimiter, as in markdown strikethrough (`~~120~~`), does not count. Formats without delimiters (`Numeric`, `IdToken`, `Passthrough`) always return `[]`.
+Return the distinct tokens in a text that carry the output format's delimiters and hold nothing but the characters it writes between them, in order of first appearance. Any that are not keys of the mapping are candidates the model invented, including a body the format would have padded differently, such as `~5~` against `~005~`. A doubled delimiter, as in markdown strikethrough (`~~120~~`), does not count. Formats without delimiters (`Numeric`, `IdToken`, `Passthrough`) always return `[]`.
 
 **Example:**
 
