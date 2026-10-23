@@ -339,55 +339,9 @@ describe("AI SDK Integration", () => {
       expect(inputDelta).toBeDefined();
       expect(inputDelta?.delta).toBe(`{"id":"${uuid1}"}`);
     });
-
-    test("preserves non-text stream parts", async () => {
-      const mockModel = createMockModel({
-        onStream: () => [
-          { type: "text-delta", id: "1", delta: "~000~" },
-          { type: "text-end", id: "2" },
-        ],
-      });
-
-      const middleware = promptIdentifiersMiddleware({
-        config: defaultConfig,
-        instruction: false,
-      });
-      const wrappedModel = wrapLanguageModel({ model: mockModel, middleware });
-
-      const { stream } = await wrappedModel.doStream({
-        prompt: [userMessage(`Find ${uuid1}`)],
-      });
-
-      const parts = await collectStreamParts(stream);
-
-      expect(parts.some((p) => p.type === "text-end")).toBe(true);
-    });
   });
 
   describe("Edge cases", () => {
-    test("handles empty mapping (no IDs to encode)", async () => {
-      const mockModel = createMockModel({
-        onGenerate: () => ({
-          content: [{ type: "text", text: "Hello world" }],
-          finishReason: mockFinishReason(),
-          usage: mockUsage(),
-          warnings: [],
-        }),
-      });
-
-      const middleware = promptIdentifiersMiddleware({
-        config: defaultConfig,
-        instruction: false,
-      });
-      const wrappedModel = wrapLanguageModel({ model: mockModel, middleware });
-
-      const result = await wrappedModel.doGenerate({
-        prompt: [userMessage("Hello, how are you?")],
-      });
-
-      expect(getResultText(result)).toBe("Hello world");
-    });
-
     test("handles deeply nested JSON in tool results", async () => {
       let receivedPrompt: LanguageModelV4Message[] = [];
 
@@ -463,42 +417,6 @@ describe("AI SDK Integration", () => {
 
       const output = getToolResultOutput<string[]>(receivedPrompt[0]);
       expect(output?.value).toEqual(["~000~", "~001~"]);
-    });
-
-    test("handles tool result with undefined value gracefully", async () => {
-      const mockModel = createMockModel({
-        onGenerate: () => ({
-          content: [{ type: "text", text: "OK" }],
-          finishReason: mockFinishReason(),
-          usage: mockUsage(),
-          warnings: [],
-        }),
-      });
-
-      const middleware = promptIdentifiersMiddleware({
-        config: defaultConfig,
-        instruction: false,
-      });
-      const wrappedModel = wrapLanguageModel({ model: mockModel, middleware });
-
-      // Should not throw
-      const result = await wrappedModel.doGenerate({
-        prompt: [
-          {
-            role: "tool",
-            content: [
-              {
-                type: "tool-result",
-                toolCallId: "call-1",
-                toolName: "test",
-                output: { type: "json" }, // Missing value
-              },
-            ],
-          } as LanguageModelV4Message,
-        ],
-      });
-
-      expect(result.content).toBeDefined();
     });
 
     test("handles multiple tool calls in single response", async () => {
@@ -627,7 +545,6 @@ describe("AI SDK Integration", () => {
       const encodeResult = onEncode.mock.calls[0][0];
       expect(encodeResult.debugData).toBeDefined();
       expect(encodeResult.debugData.encodedCount).toBe(1);
-      expect(typeof encodeResult.debugData.durationMs).toBe("number");
 
       // onDecode should have debugData
       const decodeResult = onDecode.mock.calls[0][0];

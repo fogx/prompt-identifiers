@@ -30,6 +30,13 @@ export interface VerificationResult {
   incorrectNames: number;
   /** Total error count */
   totalErrors: number;
+  /**
+   * Expected class ids the answer did not reproduce exactly. Unlike `totalErrors` this does not
+   * depend on the misspelling discount, which only a format with long enough placeholders can
+   * earn: a three-character `Numeric` id has no room for a typo, so every near miss reads as an
+   * invention there and as a misspelling under `raw`. Compare formats on this.
+   */
+  idsNotReproduced: number;
   /** Detailed error information */
   details: ErrorDetail[];
   /** Whether JSON parsing succeeded */
@@ -100,20 +107,16 @@ function parseResponse(response: string): ParsedAggregation[] | null {
  *
  * @param response - Raw LLM response text
  * @param expected - Expected aggregation result
- * @param mapping - Optional mapping from placeholder to original UUID (for decoding)
  * @returns Verification result with error counts and details
  */
-export function verify(
-  response: string,
-  expected: ExpectedResult,
-  mapping?: Record<string, string>
-): VerificationResult {
+export function verify(response: string, expected: ExpectedResult): VerificationResult {
   const result: VerificationResult = {
     misspelledIds: 0,
     droppedIds: 0,
     incorrectCounts: 0,
     incorrectNames: 0,
     totalErrors: 0,
+    idsNotReproduced: 0,
     details: [],
     parseSuccess: false,
   };
@@ -127,6 +130,7 @@ export function verify(
     });
     result.totalErrors = expected.aggregations.size; // Count all as dropped
     result.droppedIds = expected.aggregations.size;
+    result.idsNotReproduced = expected.aggregations.size;
     return result;
   }
 
@@ -137,6 +141,8 @@ export function verify(
 
   // Track which expected IDs we've seen
   const seenIds = new Set<string>();
+  // And which the answer spelled exactly, which is what the format comparison rests on
+  const verbatimIds = new Set<string>();
 
   // Check each aggregation in the response
   for (const agg of parsed) {
@@ -177,6 +183,7 @@ export function verify(
     }
 
     seenIds.add(classId);
+    verbatimIds.add(classId);
 
     const expectedAgg = expected.aggregations.get(classId)!;
 
@@ -220,13 +227,15 @@ export function verify(
 
   result.totalErrors =
     result.misspelledIds + result.droppedIds + result.incorrectCounts + result.incorrectNames;
+  result.idsNotReproduced = expected.aggregations.size - verbatimIds.size;
 
   return result;
 }
 
 /**
  * How far apart two strings are, counting position by position and then the length difference,
- * or undefined once they are too far apart to be one misspelling of the other.
+ * or undefined once they are too far apart to be one misspelling of the other. Case is ignored,
+ * so a pair that differs only in case is zero apart.
  *
  * The budget is relative as well as absolute, because a flat three characters means something
  * different at either end of the scale. Two random UUIDs differ in about 34 of 36 positions and
@@ -239,7 +248,6 @@ function similarity(a: string, b: string): number | undefined {
 
   const minLen = Math.min(a.length, b.length);
   const budget = Math.min(3, Math.floor(minLen / 4));
-  if (budget === 0) return undefined;
 
   let differences = 0;
   for (let i = 0; i < minLen; i++) {
@@ -249,8 +257,12 @@ function similarity(a: string, b: string): number | undefined {
     }
   }
 
+  // The same id in another case is zero apart, since the loop folds the case on both sides and
+  // the length term adds nothing at equal length. A truncation is not: the length term charges
+  // it, so a three-character id answered one character short is refused by a budget of zero
+  // where a 36-character one is charged as a near miss.
   differences += Math.abs(a.length - b.length);
-  return differences <= budget && differences > 0 ? differences : undefined;
+  return differences <= budget ? differences : undefined;
 }
 
 /**

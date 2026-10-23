@@ -10,7 +10,7 @@ import {
 } from "./test-helpers";
 import type { LanguageModelV4StreamPart } from "@ai-sdk/provider";
 
-export interface Harness {
+interface Harness {
   mapping: Record<string, string>;
   /** Stream `chunks` as text deltas and hand back the text a consumer sees. */
   run: (chunks: string[]) => Promise<string>;

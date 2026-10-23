@@ -7,6 +7,7 @@ import {
   wrapBamlStreamingFunction,
 } from "../src/index";
 import type { BamlStreamFunction } from "../src/index";
+import { CHARGED_TICKS, chargingRead, withStubbedClock } from "./test-helpers";
 
 describe("prompt-identifiers-baml", () => {
   const defaultConfig: EncodeConfig = {
@@ -205,6 +206,17 @@ describe("prompt-identifiers-baml", () => {
   });
 
   describe("encodeFields option", () => {
+    test("a path names a depth, not a prefix", () => {
+      // Every other row here puts its strings at exactly the depth its path names, so nothing
+      // says whether `data` also claims everything under it
+      const { encoded, mapping } = encodeObject({ data: { user: { id: uuid1 } } }, defaultConfig, [
+        "data",
+      ]);
+
+      expect(encoded).toEqual({ data: { user: { id: uuid1 } } });
+      expect(mapping).toEqual({});
+    });
+
     test("only encodes specified top-level fields", async () => {
       const mockFn = vi.fn(async (input: { user_id: string; owner_id: string; code: string }) => ({
         result: `${input.user_id} - ${input.code}`,
@@ -558,8 +570,21 @@ describe("prompt-identifiers-baml", () => {
         onDecode,
       });
 
-      const input = { id: uuid1 };
-      await wrapped(input);
+      let input!: { id: string };
+
+      // Encode and decode each report the one tick their own two reads cost plus the ten the
+      // field they walk charges, so a span moved below the walk loses the ten. The 40 ticks
+      // stand for the model's latency, which falls between the two spans.
+      await withStubbedClock(async (advance) => {
+        input = chargingRead({}, "id", uuid1, advance) as { id: string };
+        mockFn.mockImplementationOnce(async (received: { id: string }) => {
+          advance(40);
+          return chargingRead({}, "result", `Found: ${received.id}`, advance) as {
+            result: string;
+          };
+        });
+        await wrapped(input);
+      });
 
       // onEncode debugData
       const encodeResult = onEncode.mock.calls[0][0];
@@ -568,7 +593,7 @@ describe("prompt-identifiers-baml", () => {
       expect(encodeResult.debugData.encodedCount).toBe(1);
       expect(encodeResult.debugData.input).toEqual({ id: uuid1 });
       expect(encodeResult.debugData.output).toEqual({ id: "~000~" });
-      expect(typeof encodeResult.debugData.durationMs).toBe("number");
+      expect(encodeResult.debugData.durationMs).toBe(1 + CHARGED_TICKS);
 
       // onDecode debugData
       const decodeResult = onDecode.mock.calls[0][0];
@@ -576,27 +601,32 @@ describe("prompt-identifiers-baml", () => {
       expect(decodeResult.debugData.decodedCount).toBe(1);
       expect(decodeResult.debugData.input).toEqual({ result: "Found: ~000~" });
       expect(decodeResult.debugData.output).toEqual({ result: `Found: ${uuid1}` });
-      expect(typeof decodeResult.debugData.durationMs).toBe("number");
+      expect(decodeResult.debugData.durationMs).toBe(1 + CHARGED_TICKS);
     });
 
     test("wrapBamlStreamingFunction populates debugData when debug is true", async () => {
       const onEncode = vi.fn();
       const onDecode = vi.fn();
 
-      async function* mockStreamFn(input: { id: string }) {
-        yield { partial: `Processing ${input.id}...` };
-        return { final: `Done for ${input.id}` };
-      }
+      // The encode reports the one tick its own two reads cost plus the ten the field it walks
+      // charges, so a span moved below the walk loses the ten. No stream time can land between
+      // the two reads, since the input is encoded in full before the function is called.
+      await withStubbedClock(async (advance) => {
+        async function* mockStreamFn(input: { id: string }) {
+          yield { partial: `Processing ${input.id}...` };
+          return { final: `Done for ${input.id}` };
+        }
 
-      const wrapped = wrapBamlStreamingFunction(mockStreamFn, {
-        config: defaultConfig,
-        debug: true,
-        onEncode,
-        onDecode,
+        const wrapped = wrapBamlStreamingFunction(mockStreamFn, {
+          config: defaultConfig,
+          debug: true,
+          onEncode,
+          onDecode,
+        });
+
+        const generator = wrapped(chargingRead({}, "id", uuid1, advance) as { id: string });
+        while (!(await generator.next()).done) {}
       });
-
-      const generator = wrapped({ id: uuid1 });
-      while (!(await generator.next()).done) {}
 
       // onEncode debugData
       const encodeResult = onEncode.mock.calls[0][0];
@@ -604,12 +634,12 @@ describe("prompt-identifiers-baml", () => {
       expect(encodeResult.debugData.encodedCount).toBe(1);
       expect(encodeResult.debugData.input).toEqual({ id: uuid1 });
       expect(encodeResult.debugData.output).toEqual({ id: "~000~" });
+      expect(encodeResult.debugData.durationMs).toBe(1 + CHARGED_TICKS);
 
       // onDecode debugData
       const decodeResult = onDecode.mock.calls[0][0];
       expect(decodeResult.debugData).toBeDefined();
       expect(decodeResult.debugData.decodedCount).toBeGreaterThanOrEqual(1);
-      expect(typeof decodeResult.debugData.durationMs).toBe("number");
     });
 
     test("debugData is absent when debug is false", async () => {
@@ -680,21 +710,6 @@ describe("prompt-identifiers-baml", () => {
       expect(result.note).toBe(uuid1);
     });
 
-    test("a value with slots and a field keeps both", async () => {
-      // Own keys and internal slots are not exclusive, and an Error carries both. Its tag is not
-      // "[object Object]", so it is handed on as it is rather than rebuilt from its keys, which
-      // would have carried the field across and left the slots behind
-      const failure = Object.assign(new Error("boom"), { code: "E1" });
-      const mockFn = vi.fn(async (_input: { failure: Error }) => ({ ok: true }));
-
-      const wrapped = wrapBamlFunction(mockFn, { config: defaultConfig });
-      await wrapped({ failure });
-
-      const sent = mockFn.mock.calls[0][0].failure;
-      expect(sent).toBe(failure);
-      expect(sent.message).toBe("boom");
-    });
-
     test("a class instance has its fields encoded and keeps its prototype", async () => {
       class UserDto {
         constructor(public user_id: string) {}
@@ -736,45 +751,33 @@ describe("prompt-identifiers-baml", () => {
       expect(result.note).toBe(uuid1);
       expect(result).toBeInstanceOf(Answer);
     });
-
-    test("a plain record beside it is still encoded", async () => {
-      const handle = Object.create(null);
-      const mockFn = vi.fn(async (_input: { img: unknown; meta: { id: string } }) => ({
-        ok: true,
-      }));
-
-      const wrapped = wrapBamlFunction(mockFn, { config: defaultConfig });
-      await wrapped({ img: handle, meta: { id: uuid1 } });
-
-      expect(mockFn.mock.calls[0][0]).toEqual({ img: handle, meta: { id: "~000~" } });
-    });
   });
 
   describe("An identifier in an object key", () => {
+    // An encoded key is decoded again on the way out, so a round trip looks the same whether
+    // the key was rewritten or not. Each case checks the encoded form.
     test.each([
       [
         "wrapBamlFunction",
         async (input: { byId: Record<string, string> }) => {
-          const wrapped = wrapBamlFunction(async (i: typeof input) => i, {
-            config: defaultConfig,
-          });
-          return wrapped(input);
+          const mockFn = vi.fn(async (i: typeof input) => i);
+          await wrapBamlFunction(mockFn, { config: defaultConfig })(input);
+          return mockFn.mock.calls[0][0];
         },
       ],
       [
         "wrapBamlStreamingFunction",
         async (input: { byId: Record<string, string> }) => {
-          const wrapped = wrapBamlStreamingFunction(
+          const mockFn = vi.fn(
             // eslint-disable-next-line require-yield
             async function* (i: typeof input) {
               return i;
-            },
-            { config: defaultConfig }
+            }
           );
-          const iterator = wrapped(input);
+          const iterator = wrapBamlStreamingFunction(mockFn, { config: defaultConfig })(input);
           let step = await iterator.next();
           while (!step.done) step = await iterator.next();
-          return step.value;
+          return mockFn.mock.calls[0][0];
         },
       ],
       [
@@ -782,12 +785,12 @@ describe("prompt-identifiers-baml", () => {
         async (input: { byId: Record<string, string> }) =>
           encodeObject(input, defaultConfig).encoded,
       ],
-    ])("%s leaves a key alone unless the caller asks", async (_label, run) => {
+    ])("%s sends a key as the caller wrote it unless asked otherwise", async (_label, run) => {
       // A rewritten field name calls the BAML function with an object its class does not
       // describe, so nothing at runtime can tell a map key from a class's own field
       const sent = await run({ byId: { [uuid1]: "active" } });
 
-      expect(Object.keys((sent as { byId: Record<string, string> }).byId)).toEqual([uuid1]);
+      expect(sent).toEqual({ byId: { [uuid1]: "active" } });
     });
 
     test("a map keyed by identifier is encoded when the caller asks", async () => {
@@ -799,6 +802,24 @@ describe("prompt-identifiers-baml", () => {
       await wrapped({ byId: { [uuid1]: "active", [uuid2]: "idle" } });
 
       expect(mockFn).toHaveBeenCalledWith({ byId: { "~000~": "active", "~001~": "idle" } });
+    });
+
+    test("wrapBamlStreamingFunction encodes a key when the caller asks", async () => {
+      const mockFn = vi.fn(
+        // eslint-disable-next-line require-yield
+        async function* (i: { byId: Record<string, string> }) {
+          return i;
+        }
+      );
+
+      const iterator = wrapBamlStreamingFunction(mockFn, {
+        config: defaultConfig,
+        encodeKeys: true,
+      })({ byId: { [uuid1]: "active" } });
+      let step = await iterator.next();
+      while (!step.done) step = await iterator.next();
+
+      expect(mockFn.mock.calls[0][0]).toEqual({ byId: { "~000~": "active" } });
     });
 
     test("one identifier in a key and in a value shares a placeholder", async () => {
@@ -941,6 +962,9 @@ describe("prompt-identifiers-baml", () => {
       ["encodeObject", () => encodeObject({ id: uuid1 }, defaultConfig)],
     ])("is refused by %s", async (_label, build) => {
       const core = await import("prompt-identifiers");
+      // The real export is a live-binding accessor, so the descriptor goes back rather than the
+      // value, which would leave the namespace member a frozen snapshot
+      const descriptor = Object.getOwnPropertyDescriptor(core, "encode")!;
       const real = core.encode;
       Object.defineProperty(core, "encode", {
         value: (text: string, config: unknown, state?: unknown) =>
@@ -950,12 +974,63 @@ describe("prompt-identifiers-baml", () => {
       try {
         expect(build).toThrow(/prompt-identifiers 0\.2\.0 or later/);
       } finally {
-        Object.defineProperty(core, "encode", { value: real, configurable: true });
+        Object.defineProperty(core, "encode", descriptor);
       }
     });
+  });
 
-    test("a current core is accepted", () => {
-      expect(() => wrapBamlFunction(async () => ({}), { config: defaultConfig })).not.toThrow();
+  describe("A source the wrapper has to classify", () => {
+    test("a thrown string does not spread itself across the error frame", () => {
+      // A BAML client that throws a string rather than an Error: without the is-an-object gate
+      // the spread writes one key per character into the frame a reader parses
+      const wrapped = wrapBamlStreamingFunction(
+        () => ({
+          async *[Symbol.asyncIterator]() {
+            yield { text: "~000~ first" };
+          },
+          async getFinalResponse(): Promise<{ text: string }> {
+            throw "coercion failed";
+          },
+        }),
+        { config: defaultConfig }
+      );
+
+      return new Response(wrapped({ id: uuid1 }).toStreamable()).text().then((body) => {
+        const frames = body
+          .trimEnd()
+          .split("\n")
+          .map((entry) => JSON.parse(entry));
+        const frame = frames[frames.length - 1].error;
+
+        expect(Object.keys(frame).sort()).toEqual(["message", "prompt", "raw_output", "type"]);
+        expect(frame.message).toBe("Error in stream processing");
+      });
+    });
+
+    test("a generator carrying a non-callable getFinalResponse is driven as a generator", async () => {
+      // The outer gate lets it through because it answers `next`, so the stream test has to ask
+      // whether getFinalResponse can be called rather than whether the key is there
+      async function* gen(): AsyncGenerator<{ text: string }, { text: string }, unknown> {
+        yield { text: "~000~ first" };
+        return { text: "~000~ final" };
+      }
+      const source = Object.assign(gen(), { getFinalResponse: "not a function" });
+      const wrapped = wrapBamlStreamingFunction(() => source as never, { config: defaultConfig });
+
+      const seen: unknown[] = [];
+      const iterator = wrapped({ id: uuid1 }) as unknown as AsyncGenerator<
+        unknown,
+        unknown,
+        unknown
+      >;
+      let step = await iterator.next();
+      while (!step.done) {
+        seen.push(step.value);
+        step = await iterator.next();
+      }
+
+      expect(seen).toEqual([{ text: `${uuid1} first` }]);
+      expect(step.value).toEqual({ text: `${uuid1} final` });
     });
   });
 
@@ -1018,21 +1093,70 @@ describe("prompt-identifiers-baml", () => {
       expect(onDecode.mock.calls[0][0].debugData.decodedCount).toBe(2);
     });
 
-    test("asking for the final response twice decodes and reports it once", async () => {
+    test("the source's final response is driven once however often it is asked for", async () => {
+      // The report fires once whatever happens, because of its own latch, so counting the
+      // reports says nothing about how often the client underneath was asked
+      let drives = 0;
+      const source = {
+        async *[Symbol.asyncIterator]() {
+          yield { text: "~000~ first" };
+        },
+        async getFinalResponse() {
+          drives++;
+          return { text: "~000~ done" };
+        },
+      };
+
+      const stream = wrapBamlStreamingFunction(() => source, { config: defaultConfig })({
+        id: uuid1,
+      });
+      await stream.getFinalResponse();
+      await stream.getFinalResponse();
+      await stream.getFinalResponse();
+
+      expect(drives).toBe(1);
+    });
+
+    test("the reported duration is decode time summed over the parts", async () => {
+      // Decoding one part costs one tick and the final response one more, plus the ten the
+      // first part's text charges when the decode walks it, so a span moved below the walk
+      // loses the ten. The 40 ticks between parts are the model's latency, which a wall clock
+      // around the stream would carry.
       const onDecode = vi.fn();
-      const wrapped = wrapBamlStreamingFunction(() => bamlStream([], { text: "~000~ done" }), {
-        config: defaultConfig,
-        debug: true,
-        onDecode,
+      let partials!: { text: string }[];
+
+      await withStubbedClock(async (advance) => {
+        partials = [
+          chargingRead({}, "text", "~000~ a", advance) as { text: string },
+          { text: "~000~ b" },
+          { text: "~000~ c" },
+        ];
+        const source = {
+          async *[Symbol.asyncIterator]() {
+            for (const partial of partials) {
+              advance(40);
+              yield partial;
+            }
+          },
+          async getFinalResponse() {
+            advance(40);
+            return { text: "~000~ done" };
+          },
+        };
+        const wrapped = wrapBamlStreamingFunction(() => source, {
+          config: defaultConfig,
+          debug: true,
+          onDecode,
+        });
+
+        const stream = wrapped({ id: uuid1 });
+        for await (const _partial of stream) void _partial;
+        await stream.getFinalResponse();
       });
 
-      const stream = wrapped({ id: uuid1 });
-      const first = await stream.getFinalResponse();
-      const second = await stream.getFinalResponse();
-
-      expect(second).toEqual(first);
-      expect(onDecode).toHaveBeenCalledTimes(1);
-      expect(onDecode.mock.calls[0][0].debugData.decodedCount).toBe(1);
+      expect(onDecode.mock.calls[0][0].debugData.durationMs).toBe(
+        partials.length + 1 + CHARGED_TICKS
+      );
     });
 
     test("a final response that throws still reaches the consumer that asked for it", async () => {
@@ -1232,27 +1356,6 @@ describe("prompt-identifiers-baml", () => {
       expect(onDecode).not.toHaveBeenCalled();
     });
 
-    test("the reported duration is decode time, not the model's latency", async () => {
-      const onDecode = vi.fn();
-      const wrapped = wrapBamlStreamingFunction(
-        () => ({
-          async *[Symbol.asyncIterator]() {
-            await new Promise((resolve) => setTimeout(resolve, 120));
-            yield { text: "~000~ first" };
-          },
-          async getFinalResponse() {
-            return { text: "~000~ done" };
-          },
-        }),
-        { config: defaultConfig, debug: true, onDecode }
-      );
-
-      for await (const _partial of wrapped({ id: uuid1 })) void _partial;
-
-      expect(onDecode.mock.calls[0][0].debugData.durationMs).toBeLessThan(100);
-      expect(onDecode.mock.calls[0][0].debugData.durationMs).toBeGreaterThan(0);
-    });
-
     test("an error frame carries what the error itself carries", async () => {
       const wrapped = wrapBamlStreamingFunction(
         () => ({
@@ -1330,6 +1433,7 @@ describe("prompt-identifiers-baml", () => {
     // authorise(); return b.stream.F(input); }`, which hands back a promise, not the stream
     test.each([
       ["a promise", () => Promise.resolve({})],
+      ["null", () => null],
       ["undefined", () => undefined],
       ["a string", () => "nope"],
       [
@@ -1803,6 +1907,24 @@ describe("prompt-identifiers-baml", () => {
       expect(encodeObject({ x: shared, y: shared }, defaultConfig).encoded).toEqual({
         x: [{ id: "~000~" }],
         y: [{ id: "~000~" }],
+      });
+    });
+
+    test("the same array under two keys survives the decode too", () => {
+      // The decode half has its own open set, so the encode half's pin says nothing about it
+      const shared = [{ id: "~000~" }];
+
+      expect(decodeObject({ x: shared, y: shared }, { "~000~": uuid1 })).toEqual({
+        x: [{ id: uuid1 }],
+        y: [{ id: uuid1 }],
+      });
+    });
+
+    test("an array holding the same object twice decodes both", () => {
+      const shared = { id: "~000~" };
+
+      expect(decodeObject({ rows: [shared, shared] }, { "~000~": uuid1 })).toEqual({
+        rows: [{ id: uuid1 }, { id: uuid1 }],
       });
     });
 

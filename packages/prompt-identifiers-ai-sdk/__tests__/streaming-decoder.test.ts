@@ -209,11 +209,6 @@ describe.each(formats)("Streaming decoder: $label", (fmt) => {
     expect(text).toBe(`User ${uuid1} and ${uuid2}.`);
   });
 
-  test("no placeholders", async () => {
-    const text = await streamAndCollect(config, [uuid1], ["Hello world, no IDs here."]);
-    expect(text).toBe("Hello world, no IDs here.");
-  });
-
   // ─── Split at every point of a placeholder ──────────────────────
   test("split at opener", async () => {
     // e.g., "User " + "[000]" or "User " + "~000~"

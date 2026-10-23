@@ -201,16 +201,21 @@ Return the distinct tokens in `text` that carry the output format's delimiters a
 
 ## Performance
 
-Native JavaScript implementation - **1.5-2.7x faster** than Rust FFI for this workload.
+Native JavaScript, and faster than the Rust FFI build it replaced, because crossing the JS to Rust
+boundary costs more than the Rust core saves.
 
 | UUIDs | Roundtrip (μs) |
 | ----- | -------------- |
-| 1     | 0.85           |
-| 10    | 5.09           |
-| 50    | 26.66          |
-| 100   | 52.33          |
-| 500   | 258.19         |
-| 1000  | 560.70         |
+| 1     | 0.99           |
+| 10    | 4.9            |
+| 50    | 23.72          |
+| 100   | 50.95          |
+| 500   | 221.75         |
+| 1000  | 418.03         |
+
+UUID input, `Numeric` output, the median of five runs on Node v24 and Apple Silicon. Decode is
+measured against a mapping it has not seen, which is what a request pays, so these run about a
+quarter higher than a loop that reuses one mapping would report. `BENCHMARKS.md` has the rest.
 
 Both `encode` and `decode` are O(n) linear time.
 

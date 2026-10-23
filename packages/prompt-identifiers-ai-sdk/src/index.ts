@@ -68,10 +68,21 @@ export interface PromptIdentifiersMiddlewareOptions {
    * It goes in on every call, including calls whose prompt carries no ID: a system message that
    * changes mid-conversation costs a full prompt-cache rewrite of the system block.
    *
-   * Without an instruction most models strip the delimiters out of tool call arguments, so the
-   * choice is required rather than defaulted.
+   * Omitted, it is the default text, because without an instruction most models strip the
+   * delimiters out of tool call arguments.
    */
-  instruction: string | false;
+  instruction?: string | false;
+
+  /**
+   * @deprecated Pass `instruction: false` instead. `false` here still sends no instruction.
+   */
+  injectInstruction?: boolean;
+
+  /**
+   * @deprecated Pass the text as `instruction` instead. It is still read when `instruction` is
+   * not given.
+   */
+  customInstruction?: string;
 
   /**
    * Optional callback fired after encoding IDs in the prompt.
@@ -135,6 +146,10 @@ const PROBE_INDICES = [0, 123456789, 987654321, Number.MAX_SAFE_INTEGER];
  */
 const JSON_UNSAFE =
   /["\\\u0000-\u001f]|[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/;
+
+/** The instruction a caller gets when they name none. `{format}` becomes a placeholder of theirs. */
+const DEFAULT_INSTRUCTION =
+  "UUIDs have been replaced with short identifiers like {format}. Always pass these identifiers verbatim";
 
 /**
  * The bodies of a call's placeholders: each one with the format's fixed prefix and suffix removed.
@@ -589,6 +604,17 @@ function encodeMessageContent(content: unknown, config: EncodeConfig, state: Enc
         };
       }
 
+      // A caller approving or denying a provider-run tool says why in their own words, and what
+      // they name is whatever the tool was about to act on. `approvalId` stays as the provider
+      // spelled it, because it is what matches the response to the request
+      if (
+        typedPart.type === "tool-approval-response" &&
+        typeof (typedPart as { reason?: unknown }).reason === "string"
+      ) {
+        const reason = (typedPart as unknown as { reason: string }).reason;
+        return { ...typedPart, reason: encode(reason, config, state).encoded };
+      }
+
       return part;
     });
   }
@@ -725,7 +751,10 @@ function createStreamingDecoder(mapping: Record<string, string>) {
       growable.add(placeholder.slice(0, length));
     }
   }
-  // Spreading the lengths into Math.max overflows the call stack past roughly 120,000 placeholders
+  // Not `Math.max(...lengths)`: spreading an array into a call overflows the stack somewhere
+  // around 124,000 arguments, and a prompt carrying that many identifiers reaches it. The exact
+  // number moves with the engine and the stack depth, so the only test for this would have to
+  // build a mapping that size, which costs seconds. Keep the loop.
   let longest = 0;
   for (const placeholder of placeholders) {
     if (placeholder.length > longest) longest = placeholder.length;
@@ -818,13 +847,14 @@ interface ParamsWithMapping {
 export function promptIdentifiersMiddleware(
   options: PromptIdentifiersMiddlewareOptions
 ): LanguageModelV4Middleware {
-  const { config, instruction, onEncode, onDecode, debug } = options;
-  if (instruction === undefined) {
-    throw new Error(
-      "promptIdentifiersMiddleware: instruction is required. Pass the text to append to the " +
-        "system message, or false to send none."
-    );
-  }
+  const { config, onEncode, onDecode, debug } = options;
+  // `instruction` replaced the pair below. The pair is still read when it is absent, so a caller
+  // written against the older shape keeps working and sees the same text it saw then
+  const instruction =
+    options.instruction ??
+    (options.injectInstruction === false
+      ? false
+      : (options.customInstruction ?? DEFAULT_INSTRUCTION));
   // A peer range is a warning rather than a wall, and a CJS require of a core too old to export
   // this reads it as undefined, so a stale pair would otherwise run a whole billed turn before
   // the decode path touched it

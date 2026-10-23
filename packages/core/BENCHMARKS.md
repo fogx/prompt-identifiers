@@ -1,146 +1,194 @@
 # Performance Benchmarks
 
-Benchmarks for `prompt-identifiers` native JavaScript implementation.
+Benchmarks for `prompt-identifiers`, the native JavaScript implementation.
 
-**Environment:** Node.js v22, Apple Silicon
-**Last Updated:** 2026-01-26
+**Environment:** Node.js v24.13.0, Apple Silicon
+**Method:** `pnpm run bench` five times, the median of each cell. Every number is microseconds per
+operation over 1000 iterations. The machine was not idle, so read the small sizes as an order of
+magnitude rather than a figure: across the five runs the median cell moved under 7% from 50 IDs
+up, with one cell as far as 49%, and around 90% at 1 and 5 IDs, where the work is smaller than the
+measurement.
+
+**Decode is measured against a mapping it has not seen before**, because `decode` caches its
+compiled pattern on the mapping object and a request mints a fresh mapping every time. A loop that
+reuses one mapping measures one pattern build and 999 cache hits, and reports decode about 2 to
+2.5 times too fast.
 
 ## How to Run
 
 ```bash
-npm run bench
+pnpm run bench
 ```
 
 ## Part 1: Output Format Comparison
 
-All tests use identical UUID input data for fair comparison.
+All tables use identical UUID input data.
 
-### UUID → Numeric (Recommended)
+### UUID → Numeric
 
 | IDs  | Encode (μs) | Decode (μs) | Roundtrip (μs) |
 | ---- | ----------- | ----------- | -------------- |
-| 1    | 0.74        | 0.59        | 1.33           |
-| 5    | 2.44        | 1.30        | 3.74           |
-| 10   | 3.81        | 2.31        | 6.13           |
-| 30   | 10.96       | 6.11        | 17.07          |
-| 50   | 18.72       | 10.87       | 29.59          |
-| 100  | 36.78       | 19.95       | 56.73          |
-| 300  | 107.95      | 63.01       | 170.97         |
-| 500  | 266.52      | 122.43      | 388.95         |
-| 1000 | 323.94      | 219.27      | 543.21         |
+| 1    | 0.63        | 0.4         | 0.99           |
+| 5    | 1.63        | 1.11        | 2.7            |
+| 10   | 3.18        | 1.66        | 4.9            |
+| 30   | 9.6         | 4.57        | 14.17          |
+| 50   | 16.18       | 7.51        | 23.72          |
+| 100  | 34.62       | 15.6        | 50.95          |
+| 300  | 89.58       | 48.2        | 137.8          |
+| 500  | 141.35      | 82.31       | 221.75         |
+| 1000 | 262.53      | 155.06      | 418.03         |
 
 ### UUID → IdToken (base62)
 
 | IDs  | Encode (μs) | Decode (μs) | Roundtrip (μs) |
 | ---- | ----------- | ----------- | -------------- |
-| 1    | 0.49        | 0.35        | 0.84           |
-| 10   | 3.25        | 2.71        | 5.96           |
-| 50   | 18.00       | 15.02       | 33.03          |
-| 100  | 37.21       | 29.18       | 66.39          |
-| 500  | 193.50      | 154.91      | 348.41         |
-| 1000 | 434.34      | 326.56      | 760.90         |
+| 1    | 0.39        | 0.37        | 0.75           |
+| 5    | 1.3         | 0.95        | 2.26           |
+| 10   | 2.36        | 1.59        | 3.94           |
+| 30   | 7.37        | 7.11        | 14.6           |
+| 50   | 13.47       | 12.77       | 26.33          |
+| 100  | 28.53       | 30.96       | 59.49          |
+| 300  | 101.74      | 97.06       | 199.51         |
+| 500  | 177.83      | 170.64      | 351.43         |
+| 1000 | 415.82      | 396.03      | 811.85         |
 
 ### UUID → Template {i:03}
 
 | IDs  | Encode (μs) | Decode (μs) | Roundtrip (μs) |
 | ---- | ----------- | ----------- | -------------- |
-| 1    | 0.90        | 0.30        | 1.20           |
-| 10   | 5.17        | 2.31        | 7.48           |
-| 50   | 27.49       | 10.88       | 38.37          |
-| 100  | 58.32       | 26.59       | 84.90          |
-| 500  | 234.01      | 109.17      | 343.19         |
-| 1000 | 442.33      | 218.49      | 660.82         |
+| 1    | 0.59        | 0.34        | 0.94           |
+| 5    | 1.87        | 0.92        | 2.82           |
+| 10   | 3.76        | 1.75        | 5.51           |
+| 30   | 13.08       | 4.35        | 17.42          |
+| 50   | 19.88       | 7.49        | 27.44          |
+| 100  | 40.94       | 14.6        | 55.3           |
+| 300  | 133.38      | 44.32       | 178.06         |
+| 500  | 229.48      | 78.16       | 307.64         |
+| 1000 | 502.14      | 170.53      | 671.62         |
 
-### UUID → Custom Function
+### UUID → Template {i:base62}
 
 | IDs  | Encode (μs) | Decode (μs) | Roundtrip (μs) |
 | ---- | ----------- | ----------- | -------------- |
-| 1    | 0.49        | 0.35        | 0.84           |
-| 10   | 3.25        | 2.71        | 5.96           |
-| 50   | 18.00       | 15.02       | 33.03          |
-| 100  | 37.21       | 29.18       | 66.39          |
-| 500  | 193.50      | 154.91      | 348.41         |
-| 1000 | 532.36      | 326.56      | 858.91         |
+| 1    | 0.48        | 0.35        | 0.84           |
+| 5    | 1.61        | 0.88        | 2.49           |
+| 10   | 3.12        | 1.6         | 4.68           |
+| 30   | 9.6         | 4.31        | 13.82          |
+| 50   | 16.22       | 8.22        | 24.19          |
+| 100  | 35.22       | 13.51       | 48.82          |
+| 300  | 119.63      | 44.33       | 163.54         |
+| 500  | 207.43      | 77.18       | 287.61         |
+| 1000 | 469.06      | 172.53      | 642.87         |
+
+### UUID → Function
+
+| IDs  | Encode (μs) | Decode (μs) | Roundtrip (μs) |
+| ---- | ----------- | ----------- | -------------- |
+| 1    | 0.4         | 0.38        | 0.78           |
+| 5    | 1.47        | 1.08        | 2.55           |
+| 10   | 2.89        | 1.97        | 4.88           |
+| 30   | 8.8         | 6.16        | 15.0           |
+| 50   | 15.14       | 10.11       | 25.56          |
+| 100  | 33.21       | 19.64       | 52.98          |
+| 300  | 111.07      | 58.37       | 169.93         |
+| 500  | 190.8       | 101.48      | 293.43         |
+| 1000 | 429.85      | 213.63      | 642.77         |
 
 ## Part 2: Input Format Comparison
 
-### UUID (primary use case)
+All tables write `Numeric` placeholders.
+
+### UUID (36 chars, complex pattern)
 
 | IDs  | Encode (μs) | Decode (μs) | Roundtrip (μs) |
 | ---- | ----------- | ----------- | -------------- |
-| 1    | 0.48        | 0.30        | 0.78           |
-| 10   | 3.48        | 2.72        | 6.21           |
-| 50   | 20.25       | 9.88        | 30.14          |
-| 100  | 40.55       | 20.38       | 60.93          |
-| 500  | 177.06      | 112.67      | 289.73         |
-| 1000 | 323.94      | 219.27      | 543.21         |
+| 1    | 0.37        | 0.35        | 0.71           |
+| 5    | 1.42        | 0.83        | 2.25           |
+| 10   | 2.86        | 1.51        | 4.36           |
+| 30   | 9.26        | 4.08        | 13.6           |
+| 50   | 15.67       | 6.94        | 22.55          |
+| 100  | 33.11       | 13.12       | 46.23          |
+| 300  | 82.75       | 46.49       | 129.6          |
+| 500  | 131.94      | 78.95       | 210.49         |
+| 1000 | 267.44      | 160.97      | 423.05         |
 
-### ULID
-
-| IDs  | Encode (μs) | Decode (μs) | Roundtrip (μs) |
-| ---- | ----------- | ----------- | -------------- |
-| 1    | 0.52        | 0.31        | 0.83           |
-| 10   | 2.94        | 2.16        | 5.10           |
-| 50   | 15.22       | 10.26       | 25.48          |
-| 100  | 30.59       | 20.71       | 51.30          |
-| 500  | 140.09      | 107.44      | 247.52         |
-| 1000 | 244.56      | 219.85      | 464.40         |
-
-### Custom Regex (same UUID data, simpler pattern)
-
-Testing whether regex complexity affects performance. Using `/[0-9a-f-]{36}/gi` (no version/variant validation) on the same UUID data:
+### ULID (26 chars, medium pattern)
 
 | IDs  | Encode (μs) | Decode (μs) | Roundtrip (μs) |
 | ---- | ----------- | ----------- | -------------- |
-| 1    | 0.55        | 0.41        | 0.96           |
-| 10   | 3.58        | 2.15        | 5.73           |
-| 50   | 19.73       | 10.02       | 29.75          |
-| 100  | 44.15       | 22.41       | 66.56          |
-| 500  | 197.01      | 107.93      | 304.95         |
-| 1000 | 390.81      | 227.26      | 618.07         |
+| 1    | 0.44        | 0.33        | 0.77           |
+| 5    | 1.52        | 0.85        | 2.37           |
+| 10   | 3.14        | 1.62        | 4.73           |
+| 30   | 8.26        | 4.1         | 12.31          |
+| 50   | 14.61       | 6.97        | 21.68          |
+| 100  | 30.31       | 13.01       | 43.32          |
+| 300  | 73.25       | 46.05       | 119.21         |
+| 500  | 117.24      | 77.85       | 194.6          |
+| 1000 | 221.19      | 150.46      | 377.81         |
 
-**Result:** Nearly identical to the full UUID pattern (~61μs vs ~67μs at 100 IDs). Regex complexity doesn't matter.
+### Custom Regex matching UUIDs (simpler pattern, same data)
 
-## Summary at 100 IDs
+| IDs  | Encode (μs) | Decode (μs) | Roundtrip (μs) |
+| ---- | ----------- | ----------- | -------------- |
+| 1    | 0.46        | 0.35        | 0.8            |
+| 5    | 1.51        | 0.87        | 2.38           |
+| 10   | 2.98        | 1.59        | 4.57           |
+| 30   | 9.22        | 4.12        | 13.37          |
+| 50   | 16.11       | 8.38        | 24.18          |
+| 100  | 34.09       | 13.88       | 47.59          |
+| 300  | 88.38       | 47.28       | 135.66         |
+| 500  | 142.96      | 77.88       | 220.88         |
+| 1000 | 284.53      | 154.53      | 437.35         |
 
-| Configuration   | Roundtrip (μs) |
-| --------------- | -------------- |
-| UUID → Numeric  | 57             |
-| UUID → IdToken  | 66             |
-| UUID → Template | 85             |
-| UUID → Function | 66             |
+## Summary: Roundtrip at 100 IDs
+
+| Configuration          | Roundtrip (μs) |
+| ---------------------- | -------------- |
+| UUID → Numeric         | 50.95          |
+| UUID → IdToken         | 59.49          |
+| UUID → Template {i:03} | 55.3           |
+| UUID → Function        | 52.98          |
 
 ## Analysis
 
 ### Key Findings
 
-1. **Regex complexity doesn't matter**
-   The built-in UUID pattern (with version/variant validation) performs the same as a simple `/[0-9a-f-]{36}/gi` pattern. V8's regex engine is highly optimized.
+1. **Regex complexity does not matter.** The built-in UUID pattern, with its version and variant
+   checks, runs the same as a plain `/[0-9a-f-]{36}/gi` over the same data:
+   46.23μs against
+   47.59μs at 100 IDs.
 
-2. **All output formats are fast**
-   Numeric, IdToken, templates, and functions all perform within 50% of each other.
+2. **The output formats separate as the count grows.** At 100 IDs they sit within a quarter of
+   each other, 48.82μs for `Template {i:base62}` up to 59.49μs for `IdToken`. At 1000 IDs
+   `Numeric` is 418.03μs and `IdToken` is 811.85μs, which is roughly twice as long, so the choice
+   starts to cost something on large payloads.
 
-3. **Linear O(n) scaling**
-   All configurations scale linearly with ID count.
+3. **Scaling is linear in the number of identifiers** for every configuration.
 
 ### Recommendations
 
-**Use `'Numeric'` (triplet format)** - it's the best choice for three reasons:
+**Use `'Numeric'`**, for three reasons:
 
-1. **Optimized for LLM tokenizers** - Most tokenizers (GPT, Claude, etc.) chunk digits in groups of 3. The smart triplet expansion (`000`→`001000`→`001000000`) aligns with this, keeping placeholders to 1-2 tokens.
+1. **It suits LLM tokenizers.** Most of them chunk digits in threes, and the triplet expansion
+   (`000` → `001000` → `001000000`) follows that, keeping a placeholder to one or two tokens.
 
-2. **Least ambiguous** - Pure numeric placeholders are unambiguous in any context. Base62 (`A`, `z`, `10`) can be confused with text.
+2. **It is the least ambiguous.** A purely numeric placeholder reads the same in any context, where
+   base62 (`A`, `z`, `10`) can be mistaken for ordinary text.
 
-3. **Fastest** - Slightly faster than other formats due to simpler string operations.
+3. **It is the fastest where the cost shows.** Below 100 identifiers the formats sit inside each
+   other's measurement noise and the tables swap their order from run to run. From 300 up
+   `Numeric` wins outright, by about 2x against `IdToken` at 1000.
 
 ### Comparison with Rust FFI
 
-From the main branch benchmarks, native JS is **1.5-2.7x faster** than Rust FFI at all scales due to zero FFI overhead. The Rust core is faster in isolation, but crossing the JS↔Rust boundary costs more than it saves.
+The Rust column below is from the earlier Rust-FFI branch and was not re-measured. The JavaScript
+column is this run, with decode measured against a fresh mapping, so the advantage is smaller than
+the figure the old harness produced.
 
 | IDs  | Rust FFI (μs) | Native JS (μs) | JS Advantage |
 | ---- | ------------- | -------------- | ------------ |
-| 1    | 2.27          | 0.78           | 2.9x         |
-| 50   | 72.89         | 30.14          | 2.4x         |
-| 100  | 113.91        | 60.93          | 1.9x         |
-| 500  | 416.10        | 289.73         | 1.4x         |
-| 1000 | 833.51        | 543.21         | 1.5x         |
+| 1    | 2.27          | 0.99           | 2.3x         |
+| 50   | 72.89         | 23.72          | 3.1x         |
+| 100  | 113.91        | 50.95          | 2.2x         |
+| 500  | 416.10        | 221.75         | 1.9x         |
+| 1000 | 833.51        | 418.03         | 2.0x         |

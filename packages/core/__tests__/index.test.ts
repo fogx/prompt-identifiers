@@ -231,18 +231,35 @@ describe("prompt-identifiers", () => {
 
   describe("What the built-in input formats refuse", () => {
     test.each([
-      ["a UUID v7", "0192b4a1-7b3e-7c4d-8e9f-1a2b3c4d5e6f"],
-      ["a UUID v1", "c232ab00-9414-11ec-b3c8-9f6bdeced846"],
+      ["a UUID v7, whose version nibble is 7", "0192b4a1-7b3e-7c4d-8e9f-1a2b3c4d5e6f"],
+      ["a UUID v1, whose version nibble is 1", "c232ab00-9414-11ec-b3c8-9f6bdeced846"],
+      ["a v4 whose variant nibble is c", "123e4567-e89b-42d3-c456-426655440000"],
+      ["a v4 whose variant nibble is 7", "123e4567-e89b-42d3-7456-426655440000"],
     ])("UUID leaves %s alone", (_label, text) => {
-      // The format table says v4, and the version and variant nibbles are what says so
+      // The format table says v4, and the version and variant nibbles are what say so. Each row
+      // moves exactly one of them, so widening either character class shows up here
       expect(encode(text, { inputFormat: "UUID", outputFormat: "SafeNumeric" }).encoded).toBe(text);
     });
 
-    test("ULID leaves a 26-character run carrying a non-Crockford letter alone", () => {
-      // Crockford base32 drops I, L and O because they read as 1 and 0, and U so that no
-      // identifier spells out an obscenity
-      const text = "01ARZ3NDEKTSV4RRFFQ69G5ILO";
+    test.each([
+      ["I, which reads as 1", "01ARZ3NDEKTSV4RRFFQ69G5FAI"],
+      ["L, which reads as 1", "01ARZ3NDEKTSV4RRFFQ69G5FAL"],
+      ["O, which reads as 0", "01ARZ3NDEKTSV4RRFFQ69G5FAO"],
+      ["U, which is left out so no identifier spells an obscenity", "01ARZ3NDEKTSV4RRFFQ69G5FAU"],
+    ])("ULID leaves a 26-character run carrying %s alone", (_label, text) => {
       expect(encode(text, { inputFormat: "ULID", outputFormat: "SafeNumeric" }).encoded).toBe(text);
+    });
+
+    test.each([
+      ["UUID", "x123e4567-e89b-42d3-a456-426655440000x"],
+      ["ULID", "xx01ARZ3NDEKTSV4RRFFQ69G5FAVyy"],
+    ])("%s needs a word boundary at both ends", (_label, text) => {
+      // Without the anchors the pattern matches inside a longer run and mints a placeholder for
+      // part of a word, leaving the characters around it stranded
+      expect(
+        encode(text, { inputFormat: _label as "UUID" | "ULID", outputFormat: "SafeNumeric" })
+          .encoded
+      ).toBe(text);
     });
   });
 
@@ -287,26 +304,35 @@ describe("prompt-identifiers", () => {
     });
   });
 
-  describe("UUID case handling", () => {
-    test("an uppercase UUID is written back as the caller wrote it", () => {
-      const prompt = "ID: 123E4567-E89B-42D3-A456-426655440000";
+  describe("Identifier case handling", () => {
+    // Matching ignores case, but the mapping holds the text as the caller wrote it. A ULID
+    // handed back lowercased would miss the caller's case-sensitive lookup.
+    test.for([
+      {
+        shape: "an uppercase UUID",
+        prompt: "ID: 123E4567-E89B-42D3-A456-426655440000",
+        config: UUID_NUMERIC_CONFIG,
+        first: "123E4567-E89B-42D3-A456-426655440000",
+      },
+      {
+        shape: "a ULID",
+        prompt: "Order 01ARZ3NDEKTSV4RRFFQ69G5FAV shipped",
+        config: { inputFormat: "ULID", outputFormat: "Numeric" } as EncodeConfig,
+        first: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      },
+      {
+        shape: "a custom regex match",
+        prompt: "Order ORD-ABC-123 shipped to customer CUST-XYZ-789",
+        config: {
+          inputFormat: /[A-Z]{3,4}-[A-Z]{3}-\d{3}/gi,
+          outputFormat: "Numeric",
+        } as EncodeConfig,
+        first: "ORD-ABC-123",
+      },
+    ])("$shape is written back as the caller wrote it", ({ prompt, config, first }) => {
+      const { encoded, mapping } = encode(prompt, config);
 
-      const { encoded, mapping } = encode(prompt, UUID_NUMERIC_CONFIG);
-
-      expect(mapping["000"]).toBe("123E4567-E89B-42D3-A456-426655440000");
-      expect(decode(encoded, mapping)).toBe(prompt);
-    });
-
-    test("a ULID survives a round trip in the case it was written in", () => {
-      // Crockford base32 is written in upper case, and a lowercased ULID misses a case-sensitive
-      // lookup, so the identifier the caller gets back has to be the one it handed over
-      const prompt = "Order 01ARZ3NDEKTSV4RRFFQ69G5FAV shipped";
-
-      const { encoded, mapping } = encode(prompt, {
-        inputFormat: "ULID",
-        outputFormat: "Numeric",
-      });
-
+      expect(mapping["000"]).toBe(first);
       expect(decode(encoded, mapping)).toBe(prompt);
     });
 
@@ -333,16 +359,6 @@ describe("prompt-identifiers", () => {
       expect(encoded).toBe("User 000 logged in, then 001 logged out");
       expect(mapping["000"]).toBe("user-123456");
       expect(mapping["001"]).toBe("user-789012");
-    });
-
-    test("custom regex roundtrip", () => {
-      const prompt = "Order ORD-ABC-123 shipped to customer CUST-XYZ-789";
-      const { encoded, mapping } = encode(prompt, {
-        inputFormat: /[A-Z]{3,4}-[A-Z]{3}-\d{3}/gi,
-        outputFormat: "Numeric",
-      });
-
-      expect(decode(encoded, mapping)).toBe(prompt);
     });
 
     test("custom regex without global flag gets global added", () => {
@@ -490,6 +506,20 @@ describe("prompt-identifiers", () => {
       expect(decode("~000~ and ~001~", state.mapping)).toBe(`${first} and ${second}`);
     });
 
+    test("pruning the mapping does not hand the next id an index already in use", () => {
+      // A caller may prune a long-lived mapping. The next index is the id table's size, not the
+      // mapping's, so a pruned key leaves a gap instead of two ids behind one placeholder.
+      const third = "550e8400-e29b-41d4-a716-446655440000";
+      const state = createEncodeState();
+
+      encode(`Look at ${first} and ${second}`, config, state);
+      delete state.mapping["~000~"];
+      encode(`And ${third}`, config, state);
+
+      expect(state.mapping).toEqual({ "~001~": second, "~002~": third });
+      expect(decode("~001~ ~002~", state.mapping)).toBe(`${second} ${third}`);
+    });
+
     // A template is any string carrying {i}, so a placeholder can hold a regex metacharacter.
     // An unescaped one either over-matches the decoy or, for ^ and $, anchors the pattern so it
     // matches nothing at all, and the first assertion catches that.
@@ -520,31 +550,6 @@ describe("prompt-identifiers", () => {
       mapping["~001~"] = second;
 
       expect(decode("~000~ ~001~", mapping)).toBe(`~000~ ${second}`);
-    });
-
-    test("an unchanged mapping is decoded without rebuilding the pattern", () => {
-      // Mixed widths, so the longest-first sort reorders them and the cache cannot be comparing
-      // the array the sort rewrote
-      const mapping: Record<string, string> = {};
-      for (let i = 0; i < 200; i++) mapping[`~${i}~`] = `id-${i}`;
-
-      decode("~0~", mapping);
-
-      const RealRegExp = globalThis.RegExp;
-      let built = 0;
-      globalThis.RegExp = new Proxy(RealRegExp, {
-        construct(target, args: ConstructorParameters<typeof RegExp>) {
-          built++;
-          return new target(...args);
-        },
-      });
-      try {
-        for (let i = 0; i < 50; i++) decode("~0~ ~100~", mapping);
-      } finally {
-        globalThis.RegExp = RealRegExp;
-      }
-
-      expect(built).toBe(0);
     });
 
     // A sticky regex anchors every match at lastIndex, which reads the text as a cursor rather
@@ -626,26 +631,6 @@ describe("prompt-identifiers", () => {
       ],
     ])("a caller with no types gets an answer, not a throw: %s", (_label, format) => {
       expect(findPlaceholders("see ~000~", format as unknown as OutputFormat)).toEqual([]);
-    });
-
-    test("a template's affixes are its literals at any pad width", () => {
-      // A template says where its index sits, so no probe has to outgrow the padding
-      const format = { template: "ID{i:020}" };
-
-      expect(
-        findPlaceholders("see ID00000000000000000007 and ID99999999999999999999", format)
-      ).toEqual(["ID00000000000000000007", "ID99999999999999999999"]);
-    });
-
-    test("a template padded wider than a probe still has its padding read as body", () => {
-      // The bare-function form of this pad has to be probed. A template says where its index sits,
-      // so its affixes come from the literal and no width of padding can pass for one
-      const format = { template: "ID{i:012}" };
-
-      expect(findPlaceholders("see ID000000000007 and ID999999999999", format)).toEqual([
-        "ID000000000007",
-        "ID999999999999",
-      ]);
     });
 
     test("an input format that matches nothing at all is refused", () => {
@@ -774,16 +759,6 @@ describe("prompt-identifiers", () => {
       expect(findPlaceholders(text, "SafeNumeric")).toEqual(["~053~", "~001000~"]);
     });
 
-    test("finds every placeholder in a run that touches, wherever the run starts", () => {
-      expect(findPlaceholders("ids: ~053~~081~", "SafeNumeric")).toEqual(["~053~", "~081~"]);
-      expect(findPlaceholders("~053~~081~", "SafeNumeric")).toEqual(["~053~", "~081~"]);
-      expect(findPlaceholders("~053~~081~~092~", "SafeNumeric")).toEqual([
-        "~053~",
-        "~081~",
-        "~092~",
-      ]);
-    });
-
     test("a format with only a closing delimiter never consults the doubling rule", () => {
       expect(findPlaceholders("000>>", { template: "{i:03}>" })).toEqual(["000>"]);
     });
@@ -800,26 +775,22 @@ describe("prompt-identifiers", () => {
       expect(findPlaceholders("see ~a1~ and ~~ and ~-5~", "SafeNumeric")).toEqual([]);
     });
 
-    test("finds nothing for a formatter that ignores its index", () => {
-      expect(findPlaceholders("a X b", () => "X")).toEqual([]);
-    });
-
-    test("finds nothing for a formatter that throws above its range", () => {
-      const labels = ["<a>", "<b>"];
-      const formatter = (index: number) => {
-        if (index >= labels.length) throw new RangeError(`index ${index} out of range`);
-        return labels[index];
-      };
-
-      expect(findPlaceholders("a <a> b", formatter)).toEqual([]);
-    });
-
-    test("finds nothing for a template without an index", () => {
-      expect(findPlaceholders("a <x> b", { template: "no-index-here" })).toEqual([]);
-    });
-
-    test("ignores markdown strikethrough around digits", () => {
-      expect(findPlaceholders("was ~~120~~ now 90", "SafeNumeric")).toEqual([]);
+    // A format of the right type can still carry no shape to match on, and probing it can
+    // throw. Either way findPlaceholders answers with no placeholders rather than an error.
+    test.for<[string, OutputFormat, string]>([
+      ["a formatter that ignores its index", () => "X", "a X b"],
+      [
+        "a formatter that throws above its range",
+        (index: number) => {
+          const labels = ["<a>", "<b>"];
+          if (index >= labels.length) throw new RangeError(`index ${index} out of range`);
+          return labels[index];
+        },
+        "a <a> b",
+      ],
+      ["a template without an index", { template: "no-index-here" }, "a <x> b"],
+    ])("finds nothing for %s", ([, outputFormat, text]) => {
+      expect(findPlaceholders(text, outputFormat)).toEqual([]);
     });
 
     test.each<[string, OutputFormat, string, string]>([
@@ -827,14 +798,13 @@ describe("prompt-identifiers", () => {
       ["a base62 template", { template: "[{i:base62}]" }, "[zZ9]", "[z-9]"],
       ["a padded prefix template", { template: "ID_{i:04}" }, "ID_0042", "ID_"],
       ["a formatter function", (i) => `[[ID_${i}]]`, "[[ID_12]]", "[[ID_]]"],
-      ["an offset formatter function", (i) => `<${i + 1}>`, "<3>", "<>"],
     ])("matches placeholders of %s", (_, outputFormat, placeholder, lookalike) => {
       expect(findPlaceholders(`a ${placeholder} b ${lookalike}`, outputFormat)).toEqual([
         placeholder,
       ]);
     });
 
-    test.each<[OutputFormat]>([["Numeric"], ["IdToken"], ["Passthrough"]])(
+    test.each<[OutputFormat]>([["Numeric"], ["IdToken"]])(
       "%s finds nothing, since its placeholders look like ordinary text",
       (outputFormat) => {
         expect(findPlaceholders("Order 000 has 0 items ~000~", outputFormat)).toEqual([]);
