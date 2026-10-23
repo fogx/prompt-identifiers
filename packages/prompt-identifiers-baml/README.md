@@ -35,7 +35,7 @@ const result = await analyzeUser({
 
 ## How It Works
 
-1. **Before BAML call**: Deep traverses input object and encodes all ID fields
+1. **Before BAML call**: Deep traverses input object and encodes all ID fields, and object keys when `encodeKeys` is on
    - `123e4567-e89b-42d3-a456-426655440000` → `~000~`
 
 2. **After BAML call**: Deep traverses output object and decodes all placeholders
@@ -128,6 +128,25 @@ for await (const partial of streamAnalysis({ user_id: uuid })) {
 
 ## Utility Functions
 
+### Keys
+
+An input keyed by identifier, such as a BAML `map<string, T>`, sends the whole id to the model unless the key is encoded too. Pass `encodeKeys: true` to encode keys:
+
+```typescript
+const wrapped = wrapBamlFunction(b.AnalyzeUsers, {
+  config: { inputFormat: "UUID", outputFormat: "SafeNumeric" },
+  encodeKeys: true,
+});
+// { byId: { "123e4567-e89b-42d3-a456-426655440000": "active" } }
+//   reaches the model as { byId: { "~000~": "active" } }
+```
+
+It is off by default because nothing at runtime tells a map key from a class's own field name, so a custom input format matching a field name would rewrite the class's shape. It is ignored when `encodeFields` is given, because a field path names a value. Two keys that encode to one placeholder are refused rather than collapsed.
+
+Decoding reads keys either way, since a key only changes when it matches a placeholder the call minted.
+
+`encodeObject` takes the same switch as its fourth argument: `encodeObject(obj, config, undefined, true)`.
+
 ### encodeObject
 
 Manually encode an object (useful for custom integrations):
@@ -136,12 +155,15 @@ Manually encode an object (useful for custom integrations):
 import { encodeObject } from "prompt-identifiers-baml";
 
 const { encoded, mapping } = encodeObject(
-  { user_id: "uuid-here", data: { owner: "other-uuid" } },
+  {
+    user_id: "123e4567-e89b-42d3-a456-426655440000",
+    data: { owner: "987fcdeb-51a2-43f7-8d9c-0123456789ab" },
+  },
   { inputFormat: "UUID", outputFormat: "SafeNumeric" }
 );
 
 // encoded: { user_id: '~000~', data: { owner: '~001~' } }
-// mapping: { '~000~': 'uuid-here', '~001~': 'other-uuid' }
+// mapping: { '~000~': '123e4567-e89b-42d3-a456-426655440000', '~001~': '987fcdeb-51a2-43f7-8d9c-0123456789ab' }
 ```
 
 ### decodeObject
@@ -153,10 +175,10 @@ import { decodeObject } from "prompt-identifiers-baml";
 
 const decoded = decodeObject(
   { user_id: "~000~", summary: "User ~000~ is active" },
-  { "~000~": "uuid-here" }
+  { "~000~": "123e4567-e89b-42d3-a456-426655440000" }
 );
 
-// decoded: { user_id: 'uuid-here', summary: 'User uuid-here is active' }
+// decoded: { user_id: '123e4567-e89b-42d3-a456-426655440000', summary: 'User 123e4567-e89b-42d3-a456-426655440000 is active' }
 ```
 
 ## Type Safety
@@ -178,7 +200,7 @@ const result: AnalyzeUserOutput = await analyzeUser({
 
 **Auto-detection mode** (no `encodeFields`):
 
-- Encodes ALL string fields matching the input pattern
+- Encodes ALL string fields matching the input pattern, and object keys too when `encodeKeys` is on
 - Simple to use, works for most cases
 - May encode fields you don't want encoded
 
@@ -187,6 +209,7 @@ const result: AnalyzeUserOutput = await analyzeUser({
 - Only encodes specified fields
 - More precise control
 - Recommended for production use
+- Leaves object keys alone whatever `encodeKeys` says, because a field path names a value. An input keyed by identifier needs auto-detection mode.
 
 ```typescript
 // Auto-detection: all UUIDs encoded

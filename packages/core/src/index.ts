@@ -234,9 +234,11 @@ export function createFormatter(format: OutputFormat): FormatterFn {
   }
 }
 
-// These three differ in their first and last character, in decimal and in base62, so whatever all
-// three formatted placeholders share is delimiter
-const PLACEHOLDER_PROBE_INDICES = [0, 123456789, 987654321];
+// These differ from each other in their first and last character, in decimal and in base62, so
+// whatever every formatted placeholder shares is delimiter. The widest of them is 16 digits, so a
+// format padded wider than that still holds some of its padding across all four and reads it as
+// part of the prefix.
+const PLACEHOLDER_PROBE_INDICES = [0, 123456789, 987654321, Number.MAX_SAFE_INTEGER];
 
 const builtInShapeCache = new Map<string, PlaceholderShape | undefined>();
 const customShapeCache = new WeakMap<object, PlaceholderShape | undefined>();
@@ -262,6 +264,10 @@ function getPlaceholderShape(format: OutputFormat): PlaceholderShape | undefined
     }
     return builtInShapeCache.get(format);
   }
+  // Only an object or a function can key the cache, and anything else is a format with no shape
+  if (format === null || (typeof format !== "object" && typeof format !== "function")) {
+    return undefined;
+  }
   if (!customShapeCache.has(format)) {
     customShapeCache.set(format, buildPlaceholderShape(format));
   }
@@ -270,6 +276,25 @@ function getPlaceholderShape(format: OutputFormat): PlaceholderShape | undefined
 
 function buildPlaceholderShape(format: OutputFormat): PlaceholderShape | undefined {
   if (format === "Passthrough") return undefined;
+
+  // A template says where its index sits, so its literals are the affixes exactly, at any pad
+  // width. Only a bare FormatterFn has to be probed.
+  if (typeof format === "object" && typeof format.template === "string") {
+    const slot = format.template.match(/\{i(?::([^}]+))?\}/);
+    if (slot) {
+      const prefix = format.template.slice(0, slot.index);
+      const suffix = format.template.slice(slot.index! + slot[0].length);
+      if (prefix || suffix) {
+        const body = slot[1] === "base62" ? "[0-9A-Za-z]+" : "\\d+";
+        return {
+          pattern: new RegExp(escapeRegExp(prefix) + body + escapeRegExp(suffix), "g"),
+          prefix,
+          suffix,
+        };
+      }
+      return undefined;
+    }
+  }
 
   let probes: string[];
   try {
@@ -418,7 +443,18 @@ export function encode(text: string, config: EncodeConfig, state?: EncodeState):
   const mapping = state?.mapping ?? {};
 
   const encoded = text.replace(pattern, (match) => {
-    // Normalize to lowercase for consistent deduplication
+    // An input format able to match the empty string matches between every pair of characters,
+    // which mints a placeholder standing for nothing and writes it into every gap in the prompt
+    if (match.length === 0) {
+      throw new Error(
+        `The input format ${String(config.inputFormat)} matched the empty string. An input ` +
+          `format has to match at least one character.`
+      );
+    }
+
+    // One identifier written in two cases is one identifier, so deduplication ignores case. What
+    // goes in the mapping is the text as it was written, because decode puts it back into the
+    // caller's hands and a ULID that comes back lowercased misses a case-sensitive lookup.
     const id = match.toLowerCase();
 
     // Reuse existing placeholder for duplicate IDs
@@ -436,7 +472,7 @@ export function encode(text: string, config: EncodeConfig, state?: EncodeState):
       );
     }
     idToPlaceholder.set(id, placeholder);
-    mapping[placeholder] = id;
+    mapping[placeholder] = match;
     return placeholder;
   });
 
@@ -452,6 +488,11 @@ export function encode(text: string, config: EncodeConfig, state?: EncodeState):
  * occur in ordinary text, such as a bracket template against a markdown link, match text that was
  * never a placeholder. Numeric, IdToken and Passthrough always return an empty list, and so does
  * a formatter that throws on the indices this probes.
+ *
+ * A template is read for the literals around its index, so its affixes are exact at any pad width.
+ * A formatter function cannot be read, so it is probed at four spread indices, the widest 16
+ * digits. One padded wider counts its own leading zeros into the prefix, so it still finds a token
+ * that starts with them and misses one whose index is long enough not to.
  *
  * @example
  * findPlaceholders("See creator://~053~ and ~~120~~ and ~5~", "SafeNumeric") // ["~053~", "~5~"]

@@ -25,7 +25,7 @@ export interface EncodeDebugData {
 
 /** Debug data included in onDecode callback when debug is true */
 export interface DecodeDebugData {
-  /** Number of fields containing decoded placeholders */
+  /** Number of fields and keys whose placeholders were decoded */
   decodedCount: number;
   /** Raw output from LLM (encoded) */
   input: unknown;
@@ -54,6 +54,14 @@ export interface WrapBamlFunctionOptions {
    * encodeFields: ['user_id', 'items[].id', 'metadata.owner_id']
    */
   encodeFields?: string[];
+
+  /**
+   * Encode identifiers sitting in object keys, for an input keyed by identifier such as a BAML
+   * `map<string, T>`. Off by default: nothing at runtime tells such a key from a class's own field
+   * name, so a custom input format that matches a field name would rewrite the class's shape.
+   * Ignored when `encodeFields` is given, because a field path names a value.
+   */
+  encodeKeys?: boolean;
 
   /**
    * Enable debug mode to populate debugData in callbacks with
@@ -158,6 +166,7 @@ function matchesFieldPath(currentPath: string[], targetSegments: string[]): bool
 interface EncodeContext {
   config: EncodeConfig;
   fieldPaths: string[][] | null; // null means auto-detect mode
+  encodeKeys: boolean;
   state: EncodeState;
 }
 
@@ -195,7 +204,27 @@ function deepEncode<T>(value: T, ctx: EncodeContext, path: string[] = []): T {
     const result: Record<string, unknown> = {};
 
     for (const [key, val] of Object.entries(value)) {
-      result[key] = deepEncode(val, ctx, [...path, key]);
+      // A key is only a candidate when the caller says the object is keyed by identifier. Nothing
+      // at runtime tells a map key from a class's own field name, and rewriting a field name calls
+      // the BAML function with an object its class does not describe.
+      const encodeThisKey = ctx.encodeKeys && ctx.fieldPaths === null;
+      const encodedKey = encodeThisKey ? encode(key, ctx.config, ctx.state).encoded : key;
+      // Two keys holding one identifier in different cases, or a key already shaped like the
+      // placeholder, would otherwise leave one entry standing for both
+      if (encodeThisKey && Object.prototype.hasOwnProperty.call(result, encodedKey)) {
+        throw new Error(
+          `Two keys encode to the same placeholder ${JSON.stringify(encodedKey)}, so one of them ` +
+            `would be lost. Give the object one key per identifier.`
+        );
+      }
+      // Defining the property keeps a key of `__proto__`, which JSON.parse produces as an own
+      // key, off the prototype setter that would drop the field and reshape the object
+      Object.defineProperty(result, encodedKey, {
+        value: deepEncode(val, ctx, [...path, key]),
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
     }
 
     return result as T;
@@ -235,7 +264,19 @@ function deepDecode<T>(value: T, mapping: Record<string, string>, countRef: { co
     const result: Record<string, unknown> = {};
 
     for (const [key, val] of Object.entries(value)) {
-      result[key] = deepDecode(val, mapping, countRef);
+      // A model asked to group its answer puts an identifier in the key position, so a key
+      // carries a placeholder as readily as a string does
+      const decodedKey = decode(key, mapping);
+      if (decodedKey !== key) {
+        countRef.count++;
+      }
+      // Defining the property keeps a decoded key of `__proto__` off the prototype
+      Object.defineProperty(result, decodedKey, {
+        value: deepDecode(val, mapping, countRef),
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
     }
 
     return result as T;
@@ -273,7 +314,7 @@ export function wrapBamlFunction<TInput, TOutput>(
   fn: BamlFunction<TInput, TOutput>,
   options: WrapBamlFunctionOptions
 ): BamlFunction<TInput, TOutput> {
-  const { config, encodeFields, onEncode, onDecode, debug } = options;
+  const { config, encodeFields, encodeKeys = false, onEncode, onDecode, debug } = options;
 
   // Pre-parse field paths if provided
   const fieldPaths = encodeFields ? encodeFields.map(parseFieldPath) : null;
@@ -283,6 +324,7 @@ export function wrapBamlFunction<TInput, TOutput>(
     const ctx: EncodeContext = {
       config,
       fieldPaths,
+      encodeKeys,
       state: createEncodeState(),
     };
 
@@ -339,7 +381,7 @@ export function wrapBamlFunction<TInput, TOutput>(
  *   config: { inputFormat: 'UUID', outputFormat: 'SafeNumeric' },
  * });
  *
- * for await (const partial of streamAnalysis({ user_id: 'uuid-here' })) {
+ * for await (const partial of streamAnalysis({ user_id: '123e4567-e89b-42d3-a456-426655440000' })) {
  *   console.log(partial); // IDs decoded in real-time
  * }
  * ```
@@ -348,7 +390,7 @@ export function wrapBamlStreamingFunction<TInput, TPartial, TFinal>(
   fn: BamlStreamingFunction<TInput, TPartial, TFinal>,
   options: WrapBamlFunctionOptions
 ): BamlStreamingFunction<TInput, TPartial, TFinal> {
-  const { config, encodeFields, onEncode, onDecode, debug } = options;
+  const { config, encodeFields, encodeKeys = false, onEncode, onDecode, debug } = options;
 
   // Pre-parse field paths if provided
   const fieldPaths = encodeFields ? encodeFields.map(parseFieldPath) : null;
@@ -358,6 +400,7 @@ export function wrapBamlStreamingFunction<TInput, TPartial, TFinal>(
     const ctx: EncodeContext = {
       config,
       fieldPaths,
+      encodeKeys,
       state: createEncodeState(),
     };
 
@@ -382,34 +425,40 @@ export function wrapBamlStreamingFunction<TInput, TPartial, TFinal>(
     let totalDecoded = 0;
     const startDecode = debug ? performance.now() : 0;
 
-    while (true) {
-      const { value, done } = await generator.next();
+    // A consumer that breaks out of its loop, or throws inside it, returns this generator and
+    // nothing else tells the wrapped one to stop, which would leave the stream open
+    try {
+      while (true) {
+        const { value, done } = await generator.next();
 
-      if (done) {
-        // Final value
+        if (done) {
+          // Final value
+          const countRef = { count: 0 };
+          const decodedValue = deepDecode(value, ctx.state.mapping, countRef);
+          totalDecoded += countRef.count;
+          const decodeDurationMs = debug ? performance.now() - startDecode : 0;
+
+          onDecode?.({
+            ...(debug && {
+              debugData: {
+                decodedCount: totalDecoded,
+                input: value,
+                output: decodedValue,
+                durationMs: decodeDurationMs,
+              },
+            }),
+          });
+          return decodedValue;
+        }
+
+        // Partial value
         const countRef = { count: 0 };
         const decodedValue = deepDecode(value, ctx.state.mapping, countRef);
         totalDecoded += countRef.count;
-        const decodeDurationMs = debug ? performance.now() - startDecode : 0;
-
-        onDecode?.({
-          ...(debug && {
-            debugData: {
-              decodedCount: totalDecoded,
-              input: value,
-              output: decodedValue,
-              durationMs: decodeDurationMs,
-            },
-          }),
-        });
-        return decodedValue;
+        yield decodedValue;
       }
-
-      // Partial value
-      const countRef = { count: 0 };
-      const decodedValue = deepDecode(value, ctx.state.mapping, countRef);
-      totalDecoded += countRef.count;
-      yield decodedValue;
+    } finally {
+      await generator.return?.(undefined as TFinal);
     }
   };
 }
@@ -417,10 +466,14 @@ export function wrapBamlStreamingFunction<TInput, TPartial, TFinal>(
 /**
  * Utility function to encode a plain object (useful for manual encoding).
  *
+ * `encodeKeys` encodes identifiers sitting in object keys, for an object keyed by identifier. It
+ * is off by default because nothing at runtime tells such a key from a class's own field name, and
+ * it is ignored when `encodeFields` is given, because a field path names a value.
+ *
  * @example
  * ```typescript
  * const { encoded, mapping } = encodeObject(
- *   { user_id: 'uuid-here', data: { owner: 'other-uuid' } },
+ *   { user_id: '123e4567-e89b-42d3-a456-426655440000', data: { owner: '987fcdeb-51a2-43f7-8d9c-0123456789ab' } },
  *   { inputFormat: 'UUID', outputFormat: 'SafeNumeric' }
  * );
  * ```
@@ -428,13 +481,15 @@ export function wrapBamlStreamingFunction<TInput, TPartial, TFinal>(
 export function encodeObject<T>(
   obj: T,
   config: EncodeConfig,
-  encodeFields?: string[]
+  encodeFields?: string[],
+  encodeKeys = false
 ): { encoded: T; mapping: Record<string, string> } {
   const fieldPaths = encodeFields ? encodeFields.map(parseFieldPath) : null;
 
   const ctx: EncodeContext = {
     config,
     fieldPaths,
+    encodeKeys,
     state: createEncodeState(),
   };
 
@@ -449,8 +504,8 @@ export function encodeObject<T>(
  * @example
  * ```typescript
  * const decoded = decodeObject(
- *   { user_id: '«000»', summary: 'User «000» is active' },
- *   { '«000»': 'uuid-here' }
+ *   { user_id: '~000~', summary: 'User ~000~ is active' },
+ *   { '~000~': '123e4567-e89b-42d3-a456-426655440000' }
  * );
  * ```
  */

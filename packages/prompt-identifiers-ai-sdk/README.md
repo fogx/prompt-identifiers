@@ -127,7 +127,7 @@ for await (const chunk of result.textStream) {
 
 ## Decode Warnings
 
-`onDecode` receives a `warnings` array when the output looks wrong. Each warning has a `type`, the offending `value`, and a `source` of `text` or `tool_call`. Warnings from a tool call also carry the `toolName`.
+`onDecode` receives a `warnings` array when the output looks wrong. Each warning has a `type`, the offending `value`, and a `source` of `text`, `tool_call` or `tool_result`. A warning from either tool source also carries the `toolName`. A `tool_result` warning comes from a tool the provider ran itself, such as web search or a code interpreter, whose result the middleware decodes on the way back.
 
 | Type                    | Meaning                                                                                    |
 | ----------------------- | ------------------------------------------------------------------------------------------ |
