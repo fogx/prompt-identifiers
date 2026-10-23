@@ -441,7 +441,7 @@ const result = encode("User ABC logged in. User ABC logged out.", {
   outputFormat: "Numeric",
 });
 // result.encoded: "User 000 logged in. User 000 logged out."
-// result.mapping: { "000": "abc" }  // Only one entry
+// result.mapping: { "000": "ABC" }  // Only one entry, in the case it was written in
 ```
 
 ---

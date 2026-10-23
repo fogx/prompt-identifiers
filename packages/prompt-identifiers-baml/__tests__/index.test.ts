@@ -6,6 +6,7 @@ import {
   wrapBamlFunction,
   wrapBamlStreamingFunction,
 } from "../src/index";
+import type { BamlStreamFunction } from "../src/index";
 
 describe("prompt-identifiers-baml", () => {
   const defaultConfig: EncodeConfig = {
@@ -631,6 +632,121 @@ describe("prompt-identifiers-baml", () => {
     });
   });
 
+  // Own keys and internal slots are not exclusive: this carries both
+  class TaggedMap extends Map<string, string> {
+    label = "x";
+  }
+
+  describe("A value that is not a plain record", () => {
+    // A BAML media argument is a native handle: prototype null, no own enumerable keys, all state
+    // behind the handle. Rebuilding one from its entries hands the runtime an empty object.
+    test.each([
+      ["a native handle", Object.create(null)],
+      ["a Date", new Date("2026-01-02T03:04:05.000Z")],
+      ["a Map", new Map([["k", "v"]])],
+      ["a Set", new Set(["v"])],
+      ["a RegExp", /x/g],
+      ["a typed array", new Uint8Array([1, 2, 3])],
+      ["a Map subclass carrying a field", new TaggedMap([["k", "v"]])],
+      ["an Error with an own field", Object.assign(new Error("boom"), { code: "E1" })],
+    ])("%s reaches the function by identity", async (_label, value) => {
+      const mockFn = vi.fn(async (_input: { arg: unknown }) => ({ ok: true }));
+
+      const wrapped = wrapBamlFunction(mockFn, { config: defaultConfig });
+      await wrapped({ arg: value });
+
+      expect(mockFn.mock.calls[0][0].arg).toBe(value);
+    });
+
+    // The same rows on the way back, because the decode side carries the same rule
+    test.each([
+      ["a native handle", Object.create(null)],
+      ["a Date", new Date("2026-01-02T03:04:05.000Z")],
+      ["a Map", new Map([["k", "v"]])],
+      ["a Set", new Set(["v"])],
+      ["a RegExp", /x/g],
+      ["a typed array", new Uint8Array([1, 2, 3])],
+      ["a Map subclass carrying a field", new TaggedMap([["k", "v"]])],
+      ["an Error with an own field", Object.assign(new Error("boom"), { code: "E1" })],
+    ])("%s in a result comes back by identity too", async (_label, value) => {
+      const mockFn = vi.fn(async () => ({ held: value, note: "~000~" }));
+
+      const wrapped = wrapBamlFunction(mockFn, { config: defaultConfig });
+      const result = await wrapped({ id: uuid1 });
+
+      expect(result.held).toBe(value);
+      expect(result.note).toBe(uuid1);
+    });
+
+    test("a value with slots and a field keeps both", async () => {
+      // Own keys and internal slots are not exclusive. Rebuilding one of these carries the field
+      // across and leaves the slots behind, so the copy has the prototype and none of the state
+      const failure = Object.assign(new Error("boom"), { code: "E1" });
+      const mockFn = vi.fn(async (_input: { failure: Error }) => ({ ok: true }));
+
+      const wrapped = wrapBamlFunction(mockFn, { config: defaultConfig });
+      await wrapped({ failure });
+
+      const sent = mockFn.mock.calls[0][0].failure;
+      expect(sent).toBe(failure);
+      expect(sent.message).toBe("boom");
+    });
+
+    test("a class instance has its fields encoded and keeps its prototype", async () => {
+      class UserDto {
+        constructor(public user_id: string) {}
+        label() {
+          return `user ${this.user_id}`;
+        }
+      }
+      const mockFn = vi.fn(async (_input: UserDto) => ({ ok: true }));
+
+      const wrapped = wrapBamlFunction(mockFn, { config: defaultConfig });
+      await wrapped(new UserDto(uuid1));
+
+      const sent = mockFn.mock.calls[0][0];
+      expect(sent.user_id).toBe("~000~");
+      expect(sent).toBeInstanceOf(UserDto);
+      expect(sent.label()).toBe("user ~000~");
+    });
+
+    test("a record built with no prototype has its fields encoded", async () => {
+      const record: { user_id: string } = Object.create(null);
+      record.user_id = uuid1;
+      const mockFn = vi.fn(async (_input: { user_id: string }) => ({ ok: true }));
+
+      const wrapped = wrapBamlFunction(mockFn, { config: defaultConfig });
+      await wrapped(record);
+
+      expect(mockFn.mock.calls[0][0].user_id).toBe("~000~");
+    });
+
+    test("a class instance in a result is decoded and keeps its prototype", async () => {
+      class Answer {
+        constructor(public note: string) {}
+      }
+      const mockFn = vi.fn(async () => new Answer("~000~"));
+
+      const wrapped = wrapBamlFunction(mockFn, { config: defaultConfig });
+      const result = await wrapped({ id: uuid1 });
+
+      expect(result.note).toBe(uuid1);
+      expect(result).toBeInstanceOf(Answer);
+    });
+
+    test("a plain record beside it is still encoded", async () => {
+      const handle = Object.create(null);
+      const mockFn = vi.fn(async (_input: { img: unknown; meta: { id: string } }) => ({
+        ok: true,
+      }));
+
+      const wrapped = wrapBamlFunction(mockFn, { config: defaultConfig });
+      await wrapped({ img: handle, meta: { id: uuid1 } });
+
+      expect(mockFn.mock.calls[0][0]).toEqual({ img: handle, meta: { id: "~000~" } });
+    });
+  });
+
   describe("An identifier in an object key", () => {
     test("a map keyed by identifier is encoded when the caller asks", async () => {
       const mockFn = vi.fn(async (input: { byId: Record<string, string> }) => ({
@@ -734,6 +850,14 @@ describe("prompt-identifiers-baml", () => {
       expect(Object.getPrototypeOf(decoded)).toBe(Object.prototype);
     });
 
+    test("two keys that decode to one identifier are refused", async () => {
+      // The encode half refuses the mirror of this, and a model asked to group its answer can put
+      // the identifier in one key and the placeholder it was handed in another
+      expect(() =>
+        decodeObject<Record<string, unknown>>({ "~000~": "a", [uuid1]: "b" }, { "~000~": uuid1 })
+      ).toThrow(/same identifier/i);
+    });
+
     test("a decoded key counts towards the debug total", async () => {
       const onDecode = vi.fn();
       const mockFn = vi.fn(async () => ({ byId: { "~000~": "active" } }));
@@ -746,6 +870,374 @@ describe("prompt-identifiers-baml", () => {
       await wrapped({ id: uuid1 });
 
       expect(onDecode.mock.calls[0][0].debugData.decodedCount).toBe(1);
+    });
+  });
+
+  describe("A core too old to serve this package", () => {
+    // Every export this package uses exists on 0.1.4, so nothing fails to link and nothing reads
+    // undefined. What changed in 0.2.0 is behaviour, so the probe has to be behavioural, and it
+    // sits on every entrance a consumer can come through
+    test.each([
+      ["wrapBamlFunction", () => wrapBamlFunction(async () => ({}), { config: defaultConfig })],
+      [
+        "wrapBamlStreamingFunction",
+        () =>
+          wrapBamlStreamingFunction(
+            // eslint-disable-next-line require-yield
+            async function* (): AsyncGenerator<unknown, unknown, unknown> {
+              return {};
+            },
+            { config: defaultConfig }
+          ),
+      ],
+      ["encodeObject", () => encodeObject({ id: uuid1 }, defaultConfig)],
+    ])("is refused by %s", async (_label, build) => {
+      const core = await import("prompt-identifiers");
+      const real = core.encode;
+      Object.defineProperty(core, "encode", {
+        value: (text: string, config: unknown, state?: unknown) =>
+          real(text.toLowerCase(), config as never, state as never),
+        configurable: true,
+      });
+      try {
+        expect(build).toThrow(/prompt-identifiers 0\.2\.0 or later/);
+      } finally {
+        Object.defineProperty(core, "encode", { value: real, configurable: true });
+      }
+    });
+
+    test("a current core is accepted", () => {
+      expect(() => wrapBamlFunction(async () => ({}), { config: defaultConfig })).not.toThrow();
+    });
+  });
+
+  describe("A BAML stream, which is not a generator", () => {
+    // b.stream.<Fn>(input) returns a BamlStream: async iterable, no next, and its final value
+    // behind getFinalResponse
+    function bamlStream(partials: unknown[], final: unknown) {
+      return {
+        async *[Symbol.asyncIterator]() {
+          for (const partial of partials) yield partial;
+        },
+        async getFinalResponse() {
+          return final;
+        },
+      };
+    }
+
+    test("its partials and its final response are both decoded", async () => {
+      const wrapped = wrapBamlStreamingFunction(
+        () =>
+          bamlStream([{ text: "~000~ first" }, { text: "~000~ second" }], { text: "~000~ done" }),
+        { config: defaultConfig }
+      );
+
+      const stream = wrapped({ id: uuid1 });
+      const seen: unknown[] = [];
+      for await (const partial of stream) seen.push(partial);
+
+      expect(seen).toEqual([{ text: `${uuid1} first` }, { text: `${uuid1} second` }]);
+      expect(await stream.getFinalResponse()).toEqual({ text: `${uuid1} done` });
+    });
+
+    test("its final response is reported to onDecode", async () => {
+      const onDecode = vi.fn();
+      const wrapped = wrapBamlStreamingFunction(
+        () => bamlStream([{ text: "~000~ first" }], { text: "~000~ done" }),
+        { config: defaultConfig, debug: true, onDecode }
+      );
+
+      const stream = wrapped({ id: uuid1 });
+      for await (const _partial of stream) void _partial;
+      await stream.getFinalResponse();
+
+      expect(onDecode.mock.calls[0][0].debugData.decodedCount).toBe(2);
+    });
+
+    test("a consumer that only iterates is told what was decoded", async () => {
+      // The generator protocol hands the final value back at the end of the loop, so that branch
+      // reports there. A stream keeps its final behind a second call, which a consumer that only
+      // iterates never makes
+      const onDecode = vi.fn();
+      const wrapped = wrapBamlStreamingFunction(
+        () => bamlStream([{ text: "~000~ first" }], { text: "~000~ done" }),
+        { config: defaultConfig, debug: true, onDecode }
+      );
+
+      for await (const _partial of wrapped({ id: uuid1 })) void _partial;
+
+      expect(onDecode).toHaveBeenCalledTimes(1);
+      expect(onDecode.mock.calls[0][0].debugData.decodedCount).toBe(2);
+    });
+
+    test("asking for the final response twice decodes and reports it once", async () => {
+      const onDecode = vi.fn();
+      const wrapped = wrapBamlStreamingFunction(() => bamlStream([], { text: "~000~ done" }), {
+        config: defaultConfig,
+        debug: true,
+        onDecode,
+      });
+
+      const stream = wrapped({ id: uuid1 });
+      const first = await stream.getFinalResponse();
+      const second = await stream.getFinalResponse();
+
+      expect(second).toEqual(first);
+      expect(onDecode).toHaveBeenCalledTimes(1);
+      expect(onDecode.mock.calls[0][0].debugData.decodedCount).toBe(1);
+    });
+
+    test("a final response that throws still reaches the consumer that asked for it", async () => {
+      const wrapped = wrapBamlStreamingFunction(
+        () => ({
+          async *[Symbol.asyncIterator]() {
+            yield { text: "~000~ first" };
+          },
+          async getFinalResponse(): Promise<{ text: string }> {
+            throw new Error("coercion failed");
+          },
+        }),
+        { config: defaultConfig }
+      );
+
+      const stream = wrapped({ id: uuid1 });
+      for await (const _partial of stream) void _partial;
+
+      await expect(stream.getFinalResponse()).rejects.toThrow("coercion failed");
+    });
+
+    test("toStreamable writes decoded NDJSON", async () => {
+      // The Next.js path. Forwarding the source's own would serialise the partials and the final
+      // as the model wrote them, placeholders and all
+      const wrapped = wrapBamlStreamingFunction(
+        () => bamlStream([{ text: "~000~ first" }], { text: "~000~ done" }),
+        { config: defaultConfig }
+      );
+
+      const body = await new Response(wrapped({ id: uuid1 }).toStreamable()).text();
+
+      expect(
+        body
+          .trimEnd()
+          .split("\n")
+          .map((entry) => JSON.parse(entry))
+      ).toEqual([{ partial: { text: `${uuid1} first` } }, { final: { text: `${uuid1} done` } }]);
+    });
+
+    test("a consumer that only iterates is told what was decoded even when the final fails", async () => {
+      // A failed final is an ordinary end to a generation, so the partials already read still count
+      const onDecode = vi.fn();
+      const wrapped = wrapBamlStreamingFunction(
+        () => ({
+          async *[Symbol.asyncIterator]() {
+            yield { text: "~000~ first" };
+          },
+          async getFinalResponse(): Promise<{ text: string }> {
+            throw new Error("coercion failed");
+          },
+        }),
+        { config: defaultConfig, debug: true, onDecode }
+      );
+
+      for await (const _partial of wrapped({ id: uuid1 })) void _partial;
+
+      expect(onDecode).toHaveBeenCalledTimes(1);
+      expect(onDecode.mock.calls[0][0].debugData.decodedCount).toBe(1);
+      expect(onDecode.mock.calls[0][0].debugData.output).toEqual({ text: `${uuid1} first` });
+    });
+
+    test("a consumer that reads the stream twice is still told once", async () => {
+      // A failed final is memoised as a rejection, so the second loop reaches the catch again and
+      // the guard on the report is what holds it to one
+      const onDecode = vi.fn();
+      const wrapped = wrapBamlStreamingFunction(
+        () => ({
+          async *[Symbol.asyncIterator]() {
+            yield { text: "~000~ first" };
+          },
+          async getFinalResponse(): Promise<{ text: string }> {
+            throw new Error("coercion failed");
+          },
+        }),
+        { config: defaultConfig, debug: true, onDecode }
+      );
+
+      const stream = wrapped({ id: uuid1 });
+      for await (const _partial of stream) void _partial;
+      for await (const _partial of stream) void _partial;
+
+      expect(onDecode).toHaveBeenCalledTimes(1);
+    });
+
+    test.each([
+      [
+        "a stream",
+        () => ({
+          async *[Symbol.asyncIterator]() {
+            yield { text: "~000~ first" };
+            throw new Error("the model stopped");
+          },
+          async getFinalResponse(): Promise<{ text: string }> {
+            throw new Error("the model stopped");
+          },
+        }),
+      ],
+      [
+        "a generator",
+        async function* (): AsyncGenerator<{ text: string }, { text: string }, unknown> {
+          yield { text: "~000~ first" };
+          throw new Error("the model stopped");
+        },
+      ],
+    ])("%s that dies mid-iteration still reports what it decoded", async (_label, fn) => {
+      // The client raises a validation error, a timeout and an abort from inside its own iterator,
+      // so this is the ordinary shape of a failed generation rather than a corner
+      const onDecode = vi.fn();
+      const wrapped = wrapBamlStreamingFunction(
+        fn as BamlStreamFunction<{ id: string }, { text: string }, { text: string }>,
+        { config: defaultConfig, debug: true, onDecode }
+      );
+
+      const seen: unknown[] = [];
+      await expect(async () => {
+        for await (const partial of wrapped({ id: uuid1 })) seen.push(partial);
+      }).rejects.toThrow("the model stopped");
+
+      expect(seen).toEqual([{ text: `${uuid1} first` }]);
+      expect(onDecode).toHaveBeenCalledTimes(1);
+      expect(onDecode.mock.calls[0][0].debugData.decodedCount).toBe(1);
+    });
+
+    test("a consumer that breaks out early is not reported to", async () => {
+      // Breaking returns the iterator rather than throwing through it, so it does not reach the
+      // catch that reports a failed generation
+      const onDecode = vi.fn();
+      const wrapped = wrapBamlStreamingFunction(
+        () => bamlStream([{ text: "~000~ first" }, { text: "~000~ second" }], { text: "done" }),
+        { config: defaultConfig, debug: true, onDecode }
+      );
+
+      for await (const _partial of wrapped({ id: uuid1 })) break;
+
+      expect(onDecode).not.toHaveBeenCalled();
+    });
+
+    test("the reported duration is decode time, not the model's latency", async () => {
+      const onDecode = vi.fn();
+      const wrapped = wrapBamlStreamingFunction(
+        () => ({
+          async *[Symbol.asyncIterator]() {
+            await new Promise((resolve) => setTimeout(resolve, 120));
+            yield { text: "~000~ first" };
+          },
+          async getFinalResponse() {
+            return { text: "~000~ done" };
+          },
+        }),
+        { config: defaultConfig, debug: true, onDecode }
+      );
+
+      for await (const _partial of wrapped({ id: uuid1 })) void _partial;
+
+      expect(onDecode.mock.calls[0][0].debugData.durationMs).toBeLessThan(100);
+    });
+
+    test("an error frame carries what the error itself carries", async () => {
+      const wrapped = wrapBamlStreamingFunction(
+        () => ({
+          async *[Symbol.asyncIterator]() {},
+          async getFinalResponse(): Promise<{ text: string }> {
+            throw Object.assign(new Error("failed to parse ~000~"), {
+              type: "BamlValidationError",
+              raw_output: "~000~ half",
+            });
+          },
+        }),
+        { config: defaultConfig }
+      );
+
+      const body = await new Response(wrapped({ id: uuid1 }).toStreamable()).text();
+
+      // The frame is the reader's copy of what the model wrote, so it is decoded like everything
+      // else the wrapper hands back
+      expect(JSON.parse(body.trim())).toEqual({
+        error: {
+          type: "BamlValidationError",
+          message: `failed to parse ${uuid1}`,
+          prompt: "",
+          raw_output: `${uuid1} half`,
+        },
+      });
+    });
+
+    test("toStreamable writes an error frame when the generation fails", async () => {
+      // The error frame is the only signal a reader of the NDJSON gets that no answer is coming
+      const wrapped = wrapBamlStreamingFunction(
+        () => ({
+          async *[Symbol.asyncIterator]() {
+            yield { text: "~000~ first" };
+          },
+          async getFinalResponse(): Promise<{ text: string }> {
+            throw new Error("coercion failed");
+          },
+        }),
+        { config: defaultConfig }
+      );
+
+      const body = await new Response(wrapped({ id: uuid1 }).toStreamable()).text();
+
+      expect(
+        body
+          .trimEnd()
+          .split("\n")
+          .map((entry) => JSON.parse(entry))
+      ).toEqual([
+        { partial: { text: `${uuid1} first` } },
+        { error: { type: "StreamError", message: "coercion failed", prompt: "", raw_output: "" } },
+      ]);
+    });
+
+    test("its input is encoded the same way", async () => {
+      const seen: unknown[] = [];
+      const wrapped = wrapBamlStreamingFunction(
+        (input: unknown) => {
+          seen.push(input);
+          return bamlStream([], {});
+        },
+        { config: defaultConfig }
+      );
+
+      const stream = wrapped({ id: uuid1 });
+      for await (const _partial of stream) void _partial;
+
+      expect(seen[0]).toEqual({ id: "~000~" });
+    });
+  });
+
+  describe("A wrapped streaming function that returns something else", () => {
+    // A consumer putting a step in front of the call writes `async (input) => { await
+    // authorise(); return b.stream.F(input); }`, which hands back a promise, not the stream
+    test.each([
+      ["a promise", () => Promise.resolve({})],
+      ["undefined", () => undefined],
+      ["a string", () => "nope"],
+      [
+        "an async iterable with no final",
+        () => ({
+          async *[Symbol.asyncIterator]() {
+            yield { text: "~000~" };
+          },
+        }),
+      ],
+    ])("%s is refused where the call is made", (_label, fn) => {
+      // The types forbid every row, which is the point: this is the shape a JavaScript consumer
+      // reaches the wrapper with
+      const wrapped = wrapBamlStreamingFunction(
+        fn as unknown as BamlStreamFunction<{ id: string }, unknown, unknown>,
+        { config: defaultConfig }
+      );
+
+      expect(() => wrapped({ id: uuid1 })).toThrow(/returns the stream itself/);
     });
   });
 
