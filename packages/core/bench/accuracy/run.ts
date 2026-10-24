@@ -175,7 +175,7 @@ Options:
 
 Examples:
   # Run with Claude Haiku only
-  ANTHROPIC_API_KEY=sk-... npx tsx bench/accuracy/run.ts --model=claude-3-5-haiku-20241022
+  ANTHROPIC_API_KEY=sk-... npx tsx bench/accuracy/run.ts --model=claude-haiku-5-5
 
   # Run with fewer items for quick test
   ANTHROPIC_API_KEY=sk-... npx tsx bench/accuracy/run.ts --items=50 --classes=25 --runs=1

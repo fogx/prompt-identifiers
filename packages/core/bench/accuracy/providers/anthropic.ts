@@ -10,7 +10,7 @@ let Anthropic: typeof import("@anthropic-ai/sdk").default | undefined;
 /**
  * Supported Claude models for the benchmark
  */
-export const CLAUDE_MODELS = ["claude-sonnet-4-20250514", "claude-haiku-4-5-20251001"] as const;
+export const CLAUDE_MODELS = ["claude-sonnet-4-20250514", "claude-haiku-5-5"] as const;
 export type ClaudeModel = (typeof CLAUDE_MODELS)[number];
 
 /**
@@ -98,7 +98,7 @@ export async function callClaude(prompt: string, model: ClaudeModel): Promise<st
 export function getModelDisplayName(model: ClaudeModel): string {
   const names: Record<ClaudeModel, string> = {
     "claude-sonnet-4-20250514": "Claude Sonnet 4",
-    "claude-haiku-4-5-20251001": "Claude Haiku 4.5",
+    "claude-haiku-5-5": "Claude Haiku 5.5",
   };
   return names[model] || model;
 }
